@@ -12,6 +12,18 @@ The planned core includes link management and redirects, analytics, QR downloads
 
 ## License
 
-[Functional Source License, Version 1.1, ALv2 Future License (FSL-1.1-ALv2)](LICENSE.md).
+Copyright (C) 2026 PGHQdev.
 
-The license permits self-hosting and other permitted uses while restricting defined competing uses. Each version becomes available under Apache License 2.0 two years after it is made available. See the license for the governing terms.
+Flared core is open-source software licensed under the
+[GNU Affero General Public License, version 3 only](LICENSE.md)
+(SPDX: `AGPL-3.0-only`). This applies to this repository's original code and
+documentation unless a file states otherwise; third-party notices remain in effect.
+
+You may use, study, modify, self-host, and redistribute the core, including
+commercially, subject to the license. If you modify it and let users interact
+with that version over a network, section 13 requires offering those users
+its Corresponding Source. Distribution also carries source and notice obligations.
+There is no warranty; see the license for the full terms.
+
+The Flared core is open source. The separately maintained Flared Cloud application
+is not included in this repository or licensed by this notice.
