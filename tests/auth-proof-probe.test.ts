@@ -24,6 +24,7 @@ declare global {
 	}
 }
 const origin = 'https://flared.link';
+const guardedTest = it.skipIf(env.PROBE_BASELINE);
 const headers = new Headers({ origin });
 const captured = new Map<string, string>();
 const links = new Map<string, string>();
@@ -273,8 +274,7 @@ describe('pinned Better Auth 1.7.6 on real Workers/D1, transactions disabled', (
 		expect(responses.filter((response) => response.status === 200)).toHaveLength(1);
 		expect(await count('session')).toBe(1);
 	});
-	it('refuses unscoped proof mutation before creating a challenge', async () => {
-		if (env.PROBE_BASELINE) return;
+	guardedTest('refuses unscoped proof mutation before creating a challenge', async () => {
 		const instance = await auth();
 		await expect(
 			instance.api.sendVerificationOTP({
@@ -285,8 +285,7 @@ describe('pinned Better Auth 1.7.6 on real Workers/D1, transactions disabled', (
 		expect(await count('verification')).toBe(0);
 		expect(await count('user')).toBe(0);
 	});
-	it('does not let one invocation restore the same claim twice', async () => {
-		if (env.PROBE_BASELINE) return;
+	guardedTest('does not let one invocation restore the same claim twice', async () => {
 		const email = 'restore-once@example.com';
 		await issue(email);
 		const instance = await auth();
@@ -315,8 +314,7 @@ describe('pinned Better Auth 1.7.6 on real Workers/D1, transactions disabled', (
 			expect(row?.consumed).toBe(0);
 		});
 	});
-	it('cannot restore an altered hash or expiry in a verification scope', async () => {
-		if (env.PROBE_BASELINE) return;
+	guardedTest('cannot restore an altered hash or expiry in a verification scope', async () => {
 		const email = 'restore-data@example.com';
 		await issue(email);
 		const context = await (await auth()).$context;
@@ -345,25 +343,26 @@ describe('pinned Better Auth 1.7.6 on real Workers/D1, transactions disabled', (
 			expect(row?.consumed).toBe(1);
 		});
 	});
-	it('uses fresh storage generations even when library ID generation repeats', async () => {
-		if (env.PROBE_BASELINE) return;
-		const context = await (await auth()).$context;
-		context.generateId = () => 'repeated-storage-id';
-		const data = {
-			identifier: 'generation-probe',
-			value: 'stored-hash:0',
-			expiresAt: new Date(Date.now() + 300000)
-		};
-		const first = await withIdentityProofScope('issue', () =>
-			context.internalAdapter.createVerificationValue(data)
-		);
-		const second = await withIdentityProofScope('issue', () =>
-			context.internalAdapter.createVerificationValue(data)
-		);
-		expect(second.id).not.toBe(first.id);
-	});
-	it('cannot restore a wrong-attempt claim exactly at expiry', async () => {
-		if (env.PROBE_BASELINE) return;
+	guardedTest(
+		'uses fresh storage generations even when library ID generation repeats',
+		async () => {
+			const context = await (await auth()).$context;
+			context.generateId = () => 'repeated-storage-id';
+			const data = {
+				identifier: 'generation-probe',
+				value: 'stored-hash:0',
+				expiresAt: new Date(Date.now() + 300000)
+			};
+			const first = await withIdentityProofScope('issue', () =>
+				context.internalAdapter.createVerificationValue(data)
+			);
+			const second = await withIdentityProofScope('issue', () =>
+				context.internalAdapter.createVerificationValue(data)
+			);
+			expect(second.id).not.toBe(first.id);
+		}
+	);
+	guardedTest('cannot restore a wrong-attempt claim exactly at expiry', async () => {
 		const email = 'restore-expiry@example.com';
 		await issue(email);
 		const context = await (await auth()).$context;
@@ -388,20 +387,22 @@ describe('pinned Better Auth 1.7.6 on real Workers/D1, transactions disabled', (
 			expect(row?.consumed).toBe(1);
 		});
 	});
-	it('uses SQLite execution time to reject a proof when the bound JS clock is stale', async () => {
-		if (env.PROBE_BASELINE) return;
-		const email = 'sql-clock@example.com';
-		const code = await issue(email);
-		const earlier = Date.now();
-		await env.IDENTITY.prepare('UPDATE verification SET expiresAt=?')
-			.bind(earlier + 100)
-			.run();
-		vi.useFakeTimers({ toFake: ['Date'] });
-		vi.setSystemTime(earlier);
-		await new Promise((resolve) => setTimeout(resolve, 150));
-		expect((await verify(email, code)).status).toBeGreaterThanOrEqual(400);
-		expect(await count('session')).toBe(0);
-	});
+	guardedTest(
+		'uses SQLite execution time to reject a proof when the bound JS clock is stale',
+		async () => {
+			const email = 'sql-clock@example.com';
+			const code = await issue(email);
+			const earlier = Date.now();
+			await env.IDENTITY.prepare('UPDATE verification SET expiresAt=?')
+				.bind(earlier + 100)
+				.run();
+			vi.useFakeTimers({ toFake: ['Date'] });
+			vi.setSystemTime(earlier);
+			await new Promise((resolve) => setTimeout(resolve, 150));
+			expect((await verify(email, code)).status).toBeGreaterThanOrEqual(400);
+			expect(await count('session')).toBe(0);
+		}
+	);
 	it('exposes only fixed magic-link redirects, with secure cookies on success and none on failure', async () => {
 		await withIdentityProofScope('issue', async () =>
 			(await auth()).api.signInMagicLink({ body: { email: 'cookies@example.com' }, headers })
