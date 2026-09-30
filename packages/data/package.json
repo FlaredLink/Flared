@@ -1,0 +1,16 @@
+{
+	"name": "@flared/data",
+	"private": true,
+	"type": "module",
+	"license": "AGPL-3.0-only",
+	"exports": {
+		"./identity": "./src/identity.ts",
+		"./identity-adapter": "./src/identity-adapter.ts",
+		"./identity-proof-guards": "./src/identity-proof-guards.ts"
+	},
+	"dependencies": {
+		"better-auth": "1.7.6",
+		"@better-auth/drizzle-adapter": "1.7.6",
+		"drizzle-orm": "0.45.3"
+	}
+}

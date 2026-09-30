@@ -1,0 +1,12 @@
+{
+	"name": "flared-core-auth-probe",
+	"compatibility_date": "2026-08-22",
+	"compatibility_flags": ["nodejs_compat"],
+	"d1_databases": [
+		{
+			"binding": "IDENTITY",
+			"database_name": "auth-probe",
+			"database_id": "00000000-0000-0000-0000-000000000001"
+		}
+	]
+}
