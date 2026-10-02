@@ -99,19 +99,6 @@ function authorizeQuery(url: URL): URLSearchParams {
 	return query;
 }
 
-// Parameters that the provider adds to a signed query. The rest is the original request.
-const signatureParams = new Set(['sig', 'exp', 'ba_iat', 'ba_pl', 'ba_param']);
-
-// After sign-in, the login page sends the browser here to continue the authorization request it
-// was given. Returns null when the query does not hold an authorization request.
-export function resumeAuthorizationPath(signedQuery: string): string | null {
-	const params = new URLSearchParams(signedQuery);
-	if (!params.get('client_id') || params.get('response_type') !== 'code') return null;
-	const query = new URLSearchParams();
-	for (const [key, value] of params) if (!signatureParams.has(key)) query.append(key, value);
-	return `/oauth2/authorize?${query}`;
-}
-
 function isLoopback(hostname: string): boolean {
 	return (
 		hostname === 'localhost' ||

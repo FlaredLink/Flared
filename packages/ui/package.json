@@ -26,7 +26,16 @@
 			"types": "./src/tokens/TokenList.svelte",
 			"svelte": "./src/tokens/TokenList.svelte"
 		},
-		"./tokens/client": "./src/tokens/client.ts"
+		"./tokens/client": "./src/tokens/client.ts",
+		"./oauth/ConsentCard.svelte": {
+			"types": "./src/oauth/ConsentCard.svelte",
+			"svelte": "./src/oauth/ConsentCard.svelte"
+		},
+		"./oauth/ConnectedAppList.svelte": {
+			"types": "./src/oauth/ConnectedAppList.svelte",
+			"svelte": "./src/oauth/ConnectedAppList.svelte"
+		},
+		"./oauth/client": "./src/oauth/client.ts"
 	},
 	"dependencies": {
 		"@flared/contracts": "workspace:*",

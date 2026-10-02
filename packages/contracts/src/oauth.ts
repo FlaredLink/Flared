@@ -41,6 +41,21 @@ export interface ConnectedAppPage {
 	apps: ConnectedApp[];
 }
 
+// Parameters that the authorization server adds to the query it signs. The rest is the app's
+// original authorization request.
+const signatureParams = new Set(['sig', 'exp', 'ba_iat', 'ba_pl', 'ba_param']);
+
+// The sign-in page receives a signed authorization request. After sign-in, it sends the browser
+// to this path to continue the request, which the server validates again. Returns null when the
+// query holds no authorization request.
+export function resumeAuthorizationPath(signedQuery: string): string | null {
+	const params = new URLSearchParams(signedQuery);
+	if (!params.get('client_id') || params.get('response_type') !== 'code') return null;
+	const query = new URLSearchParams();
+	for (const [key, value] of params) if (!signatureParams.has(key)) query.append(key, value);
+	return `/oauth2/authorize?${query}`;
+}
+
 function nullableString(value: unknown): value is string | null {
 	return value === null || typeof value === 'string';
 }

@@ -10,11 +10,8 @@ import { projectPolicy } from '../packages/server/src/tenancy';
 import { createApi, type ApiPrincipal } from '../packages/server/src/api';
 import { createMcpEndpoint, mcpCallsPerMinute } from '../packages/server/src/mcp';
 import { createMetadataFetch, type OAuthServerConfig } from '../packages/server/src/oauth/provider';
-import {
-	createOAuthRoutes,
-	registrationsPerSourceHour,
-	resumeAuthorizationPath
-} from '../packages/server/src/oauth/routes';
+import { createOAuthRoutes, registrationsPerSourceHour } from '../packages/server/src/oauth/routes';
+import { resumeAuthorizationPath } from '../packages/contracts/src/oauth';
 
 const origin = 'https://app.example';
 const resource = 'https://api.example/mcp';

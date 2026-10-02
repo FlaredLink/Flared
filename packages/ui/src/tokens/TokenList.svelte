@@ -113,8 +113,8 @@
 <section class="tokens" aria-labelledby="tokens-heading">
 	<h2 id="tokens-heading">API tokens</h2>
 	<p class="lead">
-		Use a token with the Flared CLI, the MCP server, or the API. A token works only in this
-		workspace and only for the scopes you choose.
+		Use a token with the Flared CLI or the API. A token works only in this workspace and only for
+		the scopes you choose.
 	</p>
 	<p class="status" role="status" aria-live="polite">{status}</p>
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
