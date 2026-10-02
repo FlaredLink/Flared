@@ -59,7 +59,10 @@
 	}
 
 	async function create() {
-		if (!fresh()) return onReauthRequired();
+		if (!fresh()) {
+			error = tokenErrorMessage('REAUTH_REQUIRED');
+			return onReauthRequired();
+		}
 		pending = 'create';
 		error = '';
 		status = '';
