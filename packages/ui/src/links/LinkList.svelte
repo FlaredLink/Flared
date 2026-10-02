@@ -1,19 +1,27 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
-	import type { Link } from '@flared/contracts/links';
+	import type { Link, ListedLink } from '@flared/contracts/links';
 
 	interface Props {
-		links: Link[];
+		links: ListedLink[];
+		// Address of a link's analytics page. Without it, the list shows no analytics link.
+		analyticsHref?: (link: Link) => string;
 		// URL of the next page, or null on the last page.
 		nextHref?: string | null;
 		highlightId?: string | null;
 	}
 
-	let { links, nextHref = null, highlightId = null }: Props = $props();
+	let { links, analyticsHref, nextHref = null, highlightId = null }: Props = $props();
 	let status = $state('');
 	let copiedId = $state<string | null>(null);
 
 	const dates = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
+	const numbers = new Intl.NumberFormat();
+
+	function clicksText(link: ListedLink): string {
+		if (link.clicksLast30Days === null) return 'Clicks unavailable';
+		return `${numbers.format(link.clicksLast30Days)} ${link.clicksLast30Days === 1 ? 'click' : 'clicks'}`;
+	}
 
 	function display(url: string): string {
 		return url.replace(/^https?:\/\//, '');
@@ -49,6 +57,17 @@
 						<span class="destination" title={link.destination}>{link.destination}</span>
 					</div>
 					<div class="meta">
+						{#if analyticsHref}
+							<a
+								class="clicks"
+								href={analyticsHref(link)}
+								title="Clicks in the last 30 days"
+								aria-label={`${clicksText(link)} in the last 30 days for ${display(link.shortUrl)}. Open analytics.`}
+								>{clicksText(link)}</a
+							>
+						{:else}
+							<span class="clicks" title="Clicks in the last 30 days">{clicksText(link)}</span>
+						{/if}
 						<time datetime={link.createdAt}>{dates.format(new Date(link.createdAt))}</time>
 						<button
 							type="button"
@@ -141,6 +160,23 @@
 		gap: 0.75rem;
 		color: var(--color-muted, #667085);
 		font-size: 0.8rem;
+	}
+	.clicks {
+		color: var(--color-ink, #101828);
+		font-variant-numeric: tabular-nums;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+	a.clicks {
+		display: inline-flex;
+		align-items: center;
+		min-height: 40px;
+		text-decoration: underline;
+		text-decoration-color: var(--color-rule, #d0d5dd);
+		text-underline-offset: 3px;
+	}
+	a.clicks:hover {
+		text-decoration-color: currentColor;
 	}
 	button {
 		min-width: 4.5rem;

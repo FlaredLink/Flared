@@ -17,7 +17,11 @@
 			"types": "./src/passkeys/PasskeyList.svelte",
 			"svelte": "./src/passkeys/PasskeyList.svelte"
 		},
-		"./passkeys/client": "./src/passkeys/client.ts"
+		"./passkeys/client": "./src/passkeys/client.ts",
+		"./analytics/LinkAnalytics.svelte": {
+			"types": "./src/analytics/LinkAnalytics.svelte",
+			"svelte": "./src/analytics/LinkAnalytics.svelte"
+		}
 	},
 	"dependencies": {
 		"@flared/contracts": "workspace:*",
