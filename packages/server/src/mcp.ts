@@ -43,6 +43,19 @@ export function protectedResourceMetadata(resource: string, issuer: string) {
 	};
 }
 
+// An MCP server card (SEP-1649) for discovery. The format is a draft and may change.
+export function mcpServerCard(resource: string) {
+	return {
+		serverInfo: { name: 'flared', title: 'Flared', version: '1.0.0' },
+		description: 'Create, edit, and measure Flared short links.',
+		transport: { type: 'streamable-http', endpoint: resource },
+		protocolVersions: ['2026-07-28', '2025-11-25'],
+		capabilities: { tools: { listChanged: false } },
+		authentication: { required: true, schemes: ['oauth2'] },
+		tools: Object.keys(toolScopes)
+	};
+}
+
 export function protectedResourceMetadataUrl(resource: string): string {
 	const url = new URL(resource);
 	return `${url.origin}/.well-known/oauth-protected-resource${url.pathname.replace(/\/$/, '')}`;

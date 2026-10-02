@@ -8,7 +8,7 @@ import { createTenant } from '../packages/data/src/tenancy';
 import { deleteGrant, deleteExpiredOAuthRecords } from '../packages/data/src/oauth';
 import { projectPolicy } from '../packages/server/src/tenancy';
 import { createApi, type ApiPrincipal } from '../packages/server/src/api';
-import { createMcpEndpoint, mcpCallsPerMinute } from '../packages/server/src/mcp';
+import { createMcpEndpoint, mcpCallsPerMinute, mcpServerCard } from '../packages/server/src/mcp';
 import { createMetadataFetch, type OAuthServerConfig } from '../packages/server/src/oauth/provider';
 import { createOAuthRoutes, registrationsPerSourceHour } from '../packages/server/src/oauth/routes';
 import { resumeAuthorizationPath } from '../packages/contracts/src/oauth';
@@ -667,6 +667,16 @@ describe('MCP endpoint', () => {
 			);
 		}
 		expect((await mcp()(new Request(resource))).status).toBe(405);
+	});
+
+	it('describes itself in a server card that names every tool', async () => {
+		const { tokens } = await connect('user-4');
+		const listed = (await (await mcp()(rpc(tokens.access_token, 'tools/list'))).json()) as {
+			result: { tools: { name: string }[] };
+		};
+		const card = mcpServerCard(resource);
+		expect(card.transport).toEqual({ type: 'streamable-http', endpoint: resource });
+		expect(card.tools).toEqual(listed.result.tools.map((tool) => tool.name));
 	});
 
 	it('refuses a foreign Origin', async () => {
