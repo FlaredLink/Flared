@@ -36,6 +36,12 @@ Given a `clicks` sink (a Queue producer), the redirect handler sends one event a
 
 A tenant becomes active when routing and its analytics shard both hold its policy (`projectPolicy`, `retryProjections`). `purgeExpired` removes aggregates past the tenant's retention and receipts after 72 hours. The API adds `GET /v1/links/:id/analytics` (UTC days, clamped to retention), `GET /v1/usage`, and `clicksLast30Days` on listed links.
 
+## API tokens
+
+`@flared/server/auth/api-tokens` wraps the Better Auth API-key plugin (`createApiTokenPlugin`). Tokens start with `flr_`, are stored only as a SHA-256 hash, are bound to one workspace, and allow 60 requests per minute. A user has at most 25 unexpired tokens (identity migration `0005`). Never mount the plugin's `/api/auth/api-key/*` endpoints; create tokens only through the API.
+
+`createApi` takes an `authenticate` function that returns a session or token principal. `authenticateBearer` reads `Authorization: Bearer <token>` and ignores cookies. A session holds every scope; a token needs the route's scope (`links:read`, `links:write`, `analytics:read`, `domains:read`, `usage:read`), else 403 `INSUFFICIENT_SCOPE`. Session writes need the exact app origin; token requests do not. `GET`, `POST /v1/tokens` and `DELETE /v1/tokens/:id` accept sessions only. Creation needs a sign-in from the last 10 minutes (403 `REAUTH_REQUIRED`) and returns the secret once.
+
 ## Authentication integration
 
 The current sign-in proof storage integration is pinned to Better Auth 1.7.6 with the Email OTP and Magic Link plugins. Run `bun run test:auth-probe` before changing its library, schema or runtime dependencies.

@@ -425,7 +425,12 @@ describe('analytics API', () => {
 			routing: routing(),
 			analytics: analytics ?? undefined,
 			appOrigin: origin,
-			authenticate: async (request) => request.headers.get('x-test-user'),
+			authenticate: async (request) => {
+				const userId = request.headers.get('x-test-user');
+				return userId
+					? { kind: 'session', userId, signedInAt: new Date(clock).toISOString() }
+					: null;
+			},
 			now: () => clock
 		});
 	const get = (user: string, path: string, app = api()) =>

@@ -43,7 +43,10 @@ export async function readPrincipal(
 
 // The end of the window in which this session may add or delete credentials, or null once it
 // has passed.
-export function freshUntil(principal: AuthPrincipal, now = Date.now()): string | null {
+export function freshUntil(
+	principal: Pick<AuthPrincipal, 'signedInAt'>,
+	now = Date.now()
+): string | null {
 	const until = Date.parse(principal.signedInAt) + freshSessionSeconds * 1000;
 	return until > now ? new Date(until).toISOString() : null;
 }
