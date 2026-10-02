@@ -16,6 +16,7 @@
 		"drizzle-orm": "0.45.3"
 	},
 	"devDependencies": {
+		"@cfworker/json-schema": "4.1.1",
 		"@cloudflare/vitest-pool-workers": "0.22.0",
 		"@cloudflare/workers-types": "5.20260930.2",
 		"@types/node": "24.10.1",

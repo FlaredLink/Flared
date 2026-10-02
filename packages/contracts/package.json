@@ -9,6 +9,7 @@
 		"./reserved": "./src/reserved.ts",
 		"./passkeys": "./src/passkeys.ts",
 		"./analytics": "./src/analytics.ts",
-		"./tokens": "./src/tokens.ts"
+		"./tokens": "./src/tokens.ts",
+		"./openapi": "./src/openapi.ts"
 	}
 }

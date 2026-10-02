@@ -26,6 +26,7 @@ import {
 	type ApiTokenPage,
 	type TokenScope
 } from '@flared/contracts/tokens';
+import { openApiDocument } from '@flared/contracts/openapi';
 import { countCreationAttempt } from '@flared/data/links';
 import {
 	TokenLimitError,
@@ -73,6 +74,9 @@ export interface ApiDependencies {
 	authenticate(request: Request): Promise<ApiAuthentication>;
 	// Creates API tokens. Without it, token creation answers 503.
 	tokenAuth?: ApiTokenAuth;
+	// The public URL of this API from deployment configuration, such as
+	// https://api.flared.page/v1. With it, GET /v1/openapi.json serves the API description.
+	publicApiUrl?: string;
 	now?: () => number;
 	creationsPerMinute?: number;
 }
@@ -180,6 +184,15 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	app.notFound((context) =>
 		failure('NOT_FOUND', 'Route not found.', context.get('requestId') ?? crypto.randomUUID())
 	);
+
+	// Public and registered before authentication, so it needs no credential.
+	const { publicApiUrl } = dependencies;
+	if (publicApiUrl)
+		app.get('/openapi.json', () =>
+			Response.json(openApiDocument(publicApiUrl), {
+				headers: { 'cache-control': 'public, max-age=300' }
+			})
+		);
 
 	app.use('*', async (context, next) => {
 		context.set('requestId', crypto.randomUUID());

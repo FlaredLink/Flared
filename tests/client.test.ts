@@ -4,6 +4,8 @@ import { env } from 'cloudflare:workers';
 import { applyD1Migrations } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { betterAuth } from 'better-auth';
+import { Validator, type Schema } from '@cfworker/json-schema';
+import { openApiDocument } from '../packages/contracts/src/openapi';
 import { scopePresets, tokenScopes } from '../packages/contracts/src/tokens';
 import { createIdentityAdapter } from '../packages/data/src/identity-adapter';
 import { createTenant } from '../packages/data/src/tenancy';
@@ -41,6 +43,7 @@ function api() {
 		analytics: { 'analytics-1': env.CLIENT_ANALYTICS },
 		appOrigin: origin,
 		tokenAuth: auth,
+		publicApiUrl: baseUrl,
 		authenticate: async (request) => {
 			if (request.headers.has('authorization'))
 				return authenticateBearer(auth, identity(), request);
@@ -50,8 +53,46 @@ function api() {
 	});
 }
 
-// Routes the client's requests into the API in process.
-const inProcess: typeof fetch = async (input, init) => api().fetch(new Request(input, init));
+// The session-only dashboard routes, which the public description leaves out.
+const sessionOnly = ['GET /tokens', 'POST /tokens', 'DELETE /tokens/{id}'];
+const document = openApiDocument(baseUrl);
+type Operation = { responses: Record<string, { content?: Record<string, { schema: unknown }> }> };
+const paths = document.paths as Record<string, Record<string, Operation>>;
+// Each method, path template, and status seen in a response.
+const seen = new Set<string>();
+
+function template(pathname: string): string | null {
+	const path = pathname.replace(/^\/v1/, '');
+	return (
+		Object.keys(paths).find((candidate) =>
+			new RegExp(`^${candidate.replace(/\{[^}]+\}/g, '[^/]+')}$`).test(path)
+		) ?? null
+	);
+}
+
+// Checks a response body against its schema in the OpenAPI document.
+async function conforms(request: Request, response: Response) {
+	const path = template(new URL(request.url).pathname);
+	const method = request.method.toLowerCase();
+	const operation = path ? paths[path][method] : undefined;
+	if (!path || !operation) throw new Error(`Undocumented ${request.method} ${request.url}`);
+	const documented = operation.responses[String(response.status)] ?? operation.responses.default;
+	const schema = documented.content?.['application/json']?.schema;
+	if (!schema) throw new Error(`No schema for ${method} ${path} ${response.status}`);
+	const root = { components: document.components, allOf: [schema] } as unknown as Schema;
+	const result = new Validator(root, '2020-12', false).validate(await response.clone().json());
+	if (!result.valid)
+		throw new Error(`${method} ${path} ${response.status}: ${JSON.stringify(result.errors)}`);
+	seen.add(`${method} ${path} ${response.status}`);
+}
+
+// Routes the client's requests into the API in process and checks each response.
+const inProcess: typeof fetch = async (input, init) => {
+	const request = new Request(input, init);
+	const response = await api().fetch(request.clone());
+	await conforms(request, response);
+	return response;
+};
 
 let full = '';
 let readOnly = '';
@@ -246,5 +287,34 @@ describe('API client', () => {
 			'api.flared.page'
 		])
 			expect(() => normalizeBaseUrl(unsafe), unsafe).toThrow();
+	});
+});
+
+describe('OpenAPI document', () => {
+	it('describes exactly the public routes of the API', () => {
+		const served = api()
+			.routes.filter((route) => route.method !== 'ALL')
+			.map(
+				(route) => `${route.method} ${route.path.replace(/^\/v1/, '').replace(/:(\w+)/g, '{$1}')}`
+			);
+		const documented = Object.entries(paths).flatMap(([path, methods]) =>
+			Object.keys(methods).map((method) => `${method.toUpperCase()} ${path}`)
+		);
+		expect(new Set(served)).toEqual(new Set([...documented, ...sessionOnly]));
+	});
+
+	it('is served without a token and matched every success response above', async () => {
+		const response = await api().fetch(new Request(`${baseUrl}/openapi.json`));
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as { servers: { url: string }[] };
+		expect(body.servers).toEqual([{ url: baseUrl }]);
+		for (const [path, methods] of Object.entries(paths))
+			for (const [method, operation] of Object.entries(methods))
+				for (const status of Object.keys(operation.responses))
+					if (status !== 'default' && path !== '/openapi.json')
+						expect(seen.has(`${method} ${path} ${status}`), `${method} ${path} ${status}`).toBe(
+							true
+						);
+		expect([...seen].some((entry) => / 4\d\d$/.test(entry))).toBe(true);
 	});
 });
