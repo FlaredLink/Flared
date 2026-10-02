@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Publishes @flaredlink/cli to npm when a maintainer pushes a tag such as cli-v0.1.0. npm trusted
+# publishing (OIDC) authenticates the run, so no npm token is stored, and npm adds provenance.
+name: Release CLI
+
+on:
+  push:
+    tags: ['cli-v*']
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@11
+      - run: bun install --frozen-lockfile
+      - name: Check that the tag matches the package version
+        run: |
+          version=$(node -p "require('./packages/cli/package.json').version")
+          test "cli-v$version" = "$GITHUB_REF_NAME"
+      - run: bunx tsc --noEmit
+      - run: bun run test:cli
+      - run: bun run build:cli
+      # The bundle contains the workspace packages, so their workspace: specifiers are not published.
+      - run: npm pkg delete devDependencies scripts
+        working-directory: packages/cli
+      - run: npm publish --access public
+        working-directory: packages/cli
