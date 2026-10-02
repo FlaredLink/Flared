@@ -10,6 +10,7 @@
 		"./passkeys": "./src/passkeys.ts",
 		"./analytics": "./src/analytics.ts",
 		"./tokens": "./src/tokens.ts",
-		"./openapi": "./src/openapi.ts"
+		"./openapi": "./src/openapi.ts",
+		"./oauth": "./src/oauth.ts"
 	}
 }

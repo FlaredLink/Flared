@@ -15,14 +15,23 @@
 		"./analytics": "./src/analytics.ts",
 		"./clicks": "./src/clicks.ts",
 		"./shards": "./src/shards.ts",
-		"./auth/api-tokens": "./src/auth/api-tokens.ts"
+		"./auth/api-tokens": "./src/auth/api-tokens.ts",
+		"./oauth": "./src/oauth/routes.ts",
+		"./oauth/provider": "./src/oauth/provider.ts",
+		"./mcp": "./src/mcp.ts"
 	},
 	"dependencies": {
 		"@better-auth/api-key": "1.7.7",
+		"@better-auth/cimd": "1.7.7",
+		"@better-auth/mcp": "1.7.7",
+		"@better-auth/oauth-provider": "1.7.7",
 		"@better-auth/passkey": "1.7.7",
+		"@flared/client": "workspace:*",
 		"@flared/contracts": "workspace:*",
 		"@flared/data": "workspace:*",
+		"@modelcontextprotocol/server": "2.2.0",
 		"better-auth": "1.7.7",
-		"hono": "4.13.12"
+		"hono": "4.13.12",
+		"zod": "4.6.5"
 	}
 }

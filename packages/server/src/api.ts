@@ -19,6 +19,7 @@ import {
 	parseUpdateLink
 } from '@flared/contracts/links';
 import {
+	isTokenScope,
 	parseCreateToken,
 	tokenScopes,
 	type ApiIdentity,
@@ -27,6 +28,8 @@ import {
 	type TokenScope
 } from '@flared/contracts/tokens';
 import { openApiDocument } from '@flared/contracts/openapi';
+import type { ConnectedApp, ConnectedAppPage } from '@flared/contracts/oauth';
+import { deleteGrant, listGrants } from '@flared/data/oauth';
 import { countCreationAttempt } from '@flared/data/links';
 import {
 	TokenLimitError,
@@ -58,6 +61,14 @@ export type ApiPrincipal =
 			tenantId: string;
 			scopes: readonly TokenScope[];
 			token: ApiTokenIdentity;
+	  }
+	// An app connected through OAuth, such as an assistant calling the MCP endpoint in process.
+	| {
+			kind: 'oauth';
+			userId: string;
+			tenantId: string;
+			scopes: readonly TokenScope[];
+			clientId: string;
 	  };
 
 export type ApiAuthentication =
@@ -217,7 +228,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		const tenant = await resolveTenant(identity, principal.userId);
 		// A token works only while its user still belongs to the token's workspace.
 		if (
-			principal.kind === 'token' &&
+			principal.kind !== 'session' &&
 			(tenant.status !== 'active' || tenant.tenantId !== principal.tenantId)
 		)
 			throw new ApiError('UNAUTHENTICATED', 'Sign in to continue.');
@@ -310,6 +321,8 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	// Who is calling. Needs no scope, so a client can check any token.
 	app.get('/me', (context) => {
 		const { principal } = context.var;
+		if (principal.kind === 'oauth')
+			throw new ApiError('INSUFFICIENT_SCOPE', 'Connected apps cannot read this.');
 		const identity: ApiIdentity =
 			principal.kind === 'token'
 				? { kind: 'token', scopes: [...principal.scopes], token: principal.token }
@@ -361,6 +374,34 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
 	});
 
+	// Apps connected through OAuth, such as AI assistants, in the signed-in person's workspace.
+	app.get('/connected-apps', async (context) => {
+		const principal = sessionOnly(context);
+		const apps: ConnectedApp[] = (
+			await listGrants(identity, principal.userId, context.var.tenantId)
+		).map((grant) => ({
+			clientId: grant.clientId,
+			name: grant.name?.trim() || appHost(grant.clientId, grant.uri),
+			uri: grant.uri,
+			scopes: grant.scopes.filter(isTokenScope),
+			connectedAt: new Date(grant.connectedAt).toISOString(),
+			lastActiveAt: grant.lastActiveAt === null ? null : new Date(grant.lastActiveAt).toISOString()
+		}));
+		const page: ConnectedAppPage = { apps };
+		return respond({ status: 200, body: JSON.stringify(page) });
+	});
+
+	// Ends the app's access at once: its consent and all of its tokens.
+	app.delete('/connected-apps/:clientId', async (context) => {
+		const { requestId, tenantId } = context.var;
+		const principal = sessionOnly(context);
+		const clientId = context.req.param('clientId');
+		if (!(await deleteGrant(identity, principal.userId, tenantId, clientId)))
+			throw new ApiError('NOT_FOUND', 'Connected app not found.');
+		console.log(JSON.stringify({ event: 'oauth_grant_revoked', requestId }));
+		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
+	});
+
 	app.all('/links', (context) => methodNotAllowed(context, 'GET, POST'));
 	app.all('/links/:id', (context) => methodNotAllowed(context, 'GET, PATCH'));
 	app.all('/links/:id/analytics', (context) => methodNotAllowed(context, 'GET'));
@@ -368,17 +409,30 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	app.all('/me', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/tokens', (context) => methodNotAllowed(context, 'GET, POST'));
 	app.all('/tokens/:id', (context) => methodNotAllowed(context, 'DELETE'));
+	app.all('/connected-apps', (context) => methodNotAllowed(context, 'GET'));
+	app.all('/connected-apps/:clientId', (context) => methodNotAllowed(context, 'DELETE'));
 	return app;
 }
 
-// A session holds every scope; a token must hold the route's scope.
+// A session holds every scope; a token or connected app must hold the route's scope.
 function requireScope(scope: TokenScope): MiddlewareHandler<{ Variables: Variables }> {
 	return async (context, next) => {
 		const { principal } = context.var;
-		if (principal.kind === 'token' && !principal.scopes.includes(scope))
+		if (principal.kind !== 'session' && !principal.scopes.includes(scope))
 			throw new ApiError('INSUFFICIENT_SCOPE', `This token needs the ${scope} scope.`);
 		await next();
 	};
+}
+
+// A client without a name is shown by its site or client ID host.
+function appHost(clientId: string, uri: string | null): string {
+	for (const value of [uri, clientId])
+		try {
+			if (value) return new URL(value).host || 'Unnamed app';
+		} catch {
+			// Not a URL; try the next one.
+		}
+	return 'Unnamed app';
 }
 
 // Tokens cannot list, create, or revoke tokens.

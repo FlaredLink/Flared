@@ -54,7 +54,13 @@ function api() {
 }
 
 // The session-only dashboard routes, which the public description leaves out.
-const sessionOnly = ['GET /tokens', 'POST /tokens', 'DELETE /tokens/{id}'];
+const sessionOnly = [
+	'GET /tokens',
+	'POST /tokens',
+	'DELETE /tokens/{id}',
+	'GET /connected-apps',
+	'DELETE /connected-apps/{clientId}'
+];
 const document = openApiDocument(baseUrl);
 type Operation = { responses: Record<string, { content?: Record<string, { schema: unknown }> }> };
 const paths = document.paths as Record<string, Record<string, Operation>>;

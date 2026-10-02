@@ -11,7 +11,8 @@
 		"./links": "./src/links.ts",
 		"./routing-policy": "./src/routing-policy.ts",
 		"./tenancy": "./src/tenancy.ts",
-		"./tokens": "./src/tokens.ts"
+		"./tokens": "./src/tokens.ts",
+		"./oauth": "./src/oauth.ts"
 	},
 	"dependencies": {
 		"better-auth": "1.7.7",
