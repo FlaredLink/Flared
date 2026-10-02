@@ -43,6 +43,17 @@ export interface ApiTokenSummary {
 	expiresAt: string | null;
 }
 
+// What GET /v1/me says about the calling credential. A session holds every scope.
+export interface ApiTokenIdentity {
+	id: string;
+	name: string;
+	start: string;
+	expiresAt: string | null;
+}
+export type ApiIdentity =
+	| { kind: 'session'; scopes: TokenScope[] }
+	| { kind: 'token'; scopes: TokenScope[]; token: ApiTokenIdentity };
+
 export interface ApiTokenPage {
 	tokens: ApiTokenSummary[];
 	// Creating a token needs a sign-in before this time; null when it has passed.
@@ -102,6 +113,22 @@ export function isApiTokenPage(value: unknown): value is ApiTokenPage {
 		Array.isArray(page.tokens) &&
 		page.tokens.every(isApiTokenSummary) &&
 		nullableString(page.freshUntil)
+	);
+}
+
+export function isApiIdentity(value: unknown): value is ApiIdentity {
+	if (typeof value !== 'object' || value === null) return false;
+	const identity = value as Record<string, unknown>;
+	if (!Array.isArray(identity.scopes) || !identity.scopes.every(isTokenScope)) return false;
+	if (identity.kind === 'session') return true;
+	if (identity.kind !== 'token' || typeof identity.token !== 'object' || identity.token === null)
+		return false;
+	const token = identity.token as Record<string, unknown>;
+	return (
+		typeof token.id === 'string' &&
+		typeof token.name === 'string' &&
+		typeof token.start === 'string' &&
+		nullableString(token.expiresAt)
 	);
 }
 

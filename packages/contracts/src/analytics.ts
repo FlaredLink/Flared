@@ -179,3 +179,47 @@ export interface Usage {
 	clickLimit: number;
 	asOf: string;
 }
+
+// Shape checks for API responses read by clients.
+function isCount(value: unknown): value is number {
+	return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+function isRows<T>(value: unknown, key: 'day' | 'value'): value is T[] {
+	return (
+		Array.isArray(value) &&
+		value.every(
+			(row) =>
+				typeof row === 'object' &&
+				row !== null &&
+				typeof (row as Record<string, unknown>)[key] === 'string' &&
+				isCount((row as Record<string, unknown>).clicks)
+		)
+	);
+}
+
+export function isLinkAnalytics(value: unknown): value is LinkAnalytics {
+	if (typeof value !== 'object' || value === null) return false;
+	const analytics = value as Record<string, unknown>;
+	return (
+		typeof analytics.linkId === 'string' &&
+		typeof analytics.from === 'string' &&
+		typeof analytics.to === 'string' &&
+		isCount(analytics.total) &&
+		isRows<DailyClicks>(analytics.days, 'day') &&
+		isRows<DimensionClicks>(analytics.countries, 'value') &&
+		isRows<DimensionClicks>(analytics.devices, 'value') &&
+		isRows<DimensionClicks>(analytics.referrers, 'value') &&
+		typeof analytics.asOf === 'string'
+	);
+}
+
+export function isUsage(value: unknown): value is Usage {
+	if (typeof value !== 'object' || value === null) return false;
+	const usage = value as Record<string, unknown>;
+	return (
+		typeof usage.month === 'string' &&
+		isCount(usage.clicks) &&
+		isCount(usage.clickLimit) &&
+		typeof usage.asOf === 'string'
+	);
+}

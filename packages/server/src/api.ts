@@ -18,7 +18,14 @@ import {
 	parseIdempotencyKey,
 	parseUpdateLink
 } from '@flared/contracts/links';
-import { parseCreateToken, type ApiTokenPage, type TokenScope } from '@flared/contracts/tokens';
+import {
+	parseCreateToken,
+	tokenScopes,
+	type ApiIdentity,
+	type ApiTokenIdentity,
+	type ApiTokenPage,
+	type TokenScope
+} from '@flared/contracts/tokens';
 import { countCreationAttempt } from '@flared/data/links';
 import {
 	TokenLimitError,
@@ -44,7 +51,13 @@ import {
 export type ApiPrincipal =
 	// A dashboard session holds every scope. signedInAt is an ISO time.
 	| { kind: 'session'; userId: string; signedInAt: string }
-	| { kind: 'token'; userId: string; tenantId: string; scopes: readonly TokenScope[] };
+	| {
+			kind: 'token';
+			userId: string;
+			tenantId: string;
+			scopes: readonly TokenScope[];
+			token: ApiTokenIdentity;
+	  };
 
 export type ApiAuthentication =
 	ApiPrincipal | { kind: 'rate_limited'; retryAfterSeconds: number } | null;
@@ -281,6 +294,16 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		return respond({ status: 200, body: JSON.stringify({ usage }) });
 	});
 
+	// Who is calling. Needs no scope, so a client can check any token.
+	app.get('/me', (context) => {
+		const { principal } = context.var;
+		const identity: ApiIdentity =
+			principal.kind === 'token'
+				? { kind: 'token', scopes: [...principal.scopes], token: principal.token }
+				: { kind: 'session', scopes: [...tokenScopes] };
+		return respond({ status: 200, body: JSON.stringify(identity) });
+	});
+
 	app.get('/tokens', async (context) => {
 		const principal = sessionOnly(context);
 		const page: ApiTokenPage = {
@@ -329,6 +352,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	app.all('/links/:id', (context) => methodNotAllowed(context, 'GET, PATCH'));
 	app.all('/links/:id/analytics', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/usage', (context) => methodNotAllowed(context, 'GET'));
+	app.all('/me', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/tokens', (context) => methodNotAllowed(context, 'GET, POST'));
 	app.all('/tokens/:id', (context) => methodNotAllowed(context, 'DELETE'));
 	return app;

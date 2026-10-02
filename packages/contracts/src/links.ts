@@ -149,3 +149,35 @@ export function parseIdempotencyKey(value: string | null): string | null {
 		return null;
 	return value;
 }
+
+// Shape checks for API responses read by clients.
+export function isLink(value: unknown): value is Link {
+	if (!isRecord(value)) return false;
+	return (
+		typeof value.id === 'string' &&
+		typeof value.domainId === 'string' &&
+		typeof value.hostname === 'string' &&
+		typeof value.slug === 'string' &&
+		typeof value.shortUrl === 'string' &&
+		typeof value.destination === 'string' &&
+		(value.title === null || typeof value.title === 'string') &&
+		typeof value.enabled === 'boolean' &&
+		typeof value.createdAt === 'string' &&
+		typeof value.updatedAt === 'string'
+	);
+}
+
+function isListedLink(value: unknown): value is ListedLink {
+	if (!isRecord(value) || !isLink(value)) return false;
+	const clicks: unknown = value.clicksLast30Days;
+	return clicks === null || (Number.isSafeInteger(clicks) && (clicks as number) >= 0);
+}
+
+export function isLinkPage(value: unknown): value is LinkPage {
+	return (
+		isRecord(value) &&
+		Array.isArray(value.links) &&
+		value.links.every(isListedLink) &&
+		(value.nextCursor === null || typeof value.nextCursor === 'string')
+	);
+}

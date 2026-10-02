@@ -99,7 +99,17 @@ describe('API tokens', () => {
 		const verified = await verifyToken(auth(), identity(), created.secret);
 		expect(verified).toEqual({
 			status: 'valid',
-			principal: { userId: 'user-1', tenantId: 'tenant-1', scopes: scopePresets.read }
+			principal: {
+				userId: 'user-1',
+				tenantId: 'tenant-1',
+				scopes: scopePresets.read,
+				token: {
+					id: created.token.id,
+					name: 'CI',
+					start: created.token.start,
+					expiresAt: created.token.expiresAt
+				}
+			}
 		});
 		const [listed] = await listTokens(identity(), 'user-1', 'tenant-1', Date.now());
 		expect(listed.id).toBe(created.token.id);

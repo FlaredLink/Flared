@@ -92,6 +92,21 @@
 			"binding": "TOKENS_ANALYTICS",
 			"database_name": "tokens-analytics",
 			"database_id": "00000000-0000-0000-0000-000000000027"
+		},
+		{
+			"binding": "CLIENT_IDENTITY",
+			"database_name": "client-identity",
+			"database_id": "00000000-0000-0000-0000-000000000028"
+		},
+		{
+			"binding": "CLIENT_ROUTING",
+			"database_name": "client-routing",
+			"database_id": "00000000-0000-0000-0000-000000000029"
+		},
+		{
+			"binding": "CLIENT_ANALYTICS",
+			"database_name": "client-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000030"
 		}
 	]
 }

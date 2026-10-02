@@ -9,6 +9,7 @@ import {
 	maxTokenNameLength,
 	tokenPrefix,
 	tokenScopes,
+	type ApiTokenIdentity,
 	type ApiTokenSummary,
 	type CreateTokenInput,
 	type CreatedApiToken,
@@ -43,6 +44,7 @@ export interface TokenPrincipal {
 	userId: string;
 	tenantId: string;
 	scopes: TokenScope[];
+	token: ApiTokenIdentity;
 }
 
 export type TokenVerification =
@@ -199,9 +201,23 @@ export async function verifyToken(
 	const stored = record(result.key);
 	const userId = stored?.referenceId;
 	const tenantId = record(stored?.metadata)?.tenantId;
-	if (typeof userId !== 'string' || typeof tenantId !== 'string') return { status: 'invalid' };
+	const id = stored?.id;
+	const start = stored?.start;
+	if (
+		typeof userId !== 'string' ||
+		typeof tenantId !== 'string' ||
+		typeof id !== 'string' ||
+		typeof start !== 'string'
+	)
+		return { status: 'invalid' };
+	const token: ApiTokenIdentity = {
+		id,
+		name: typeof stored?.name === 'string' ? stored.name : '',
+		start,
+		expiresAt: isoOrNull(timeOf(stored?.expiresAt))
+	};
 	const tenant = await resolveTenant(identity, userId);
 	if (tenant.status !== 'active' || tenant.tenantId !== tenantId) return { status: 'invalid' };
 	const scopes = toScopes(stored?.permissions).filter(isTokenScope);
-	return { status: 'valid', principal: { userId, tenantId, scopes } };
+	return { status: 'valid', principal: { userId, tenantId, scopes, token } };
 }
