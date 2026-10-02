@@ -15,6 +15,9 @@ declare namespace Cloudflare {
 		ANALYTICS: D1Database;
 		ANALYTICS_IDENTITY: D1Database;
 		ANALYTICS_ROUTING: D1Database;
+		TOKENS_IDENTITY: D1Database;
+		TOKENS_ROUTING: D1Database;
+		TOKENS_ANALYTICS: D1Database;
 		IDENTITY_MIGRATIONS: import('cloudflare:test').D1Migration[];
 		ROUTING_MIGRATIONS: import('cloudflare:test').D1Migration[];
 		ANALYTICS_MIGRATIONS: import('cloudflare:test').D1Migration[];

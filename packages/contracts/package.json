@@ -8,6 +8,7 @@
 		"./errors": "./src/errors.ts",
 		"./reserved": "./src/reserved.ts",
 		"./passkeys": "./src/passkeys.ts",
-		"./analytics": "./src/analytics.ts"
+		"./analytics": "./src/analytics.ts",
+		"./tokens": "./src/tokens.ts"
 	}
 }

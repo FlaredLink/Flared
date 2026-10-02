@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Matches getAuthTables from Better Auth 1.7.6 with emailOTP, magicLink, and passkey.
+// Matches getAuthTables from Better Auth 1.7.6 with emailOTP, magicLink, passkey, and apiKey.
 import { sqliteTable, text, integer, index } from 'drizzle-orm/sqlite-core';
 const time = (name: string) => integer(name, { mode: 'timestamp_ms' });
 export const user = sqliteTable('user', {
@@ -80,4 +80,37 @@ export const passkey = sqliteTable(
 	},
 	(table) => [index('passkey_userId_idx').on(table.userId)]
 );
-export const identitySchema = { user, session, account, verification, passkey };
+export const apikey = sqliteTable(
+	'apikey',
+	{
+		id: text('id').primaryKey(),
+		configId: text('configId').notNull().default('default'),
+		name: text('name'),
+		start: text('start'),
+		referenceId: text('referenceId')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		prefix: text('prefix'),
+		key: text('key').notNull().unique(),
+		refillInterval: integer('refillInterval'),
+		refillAmount: integer('refillAmount'),
+		lastRefillAt: time('lastRefillAt'),
+		enabled: integer('enabled', { mode: 'boolean' }).default(true),
+		rateLimitEnabled: integer('rateLimitEnabled', { mode: 'boolean' }).default(true),
+		rateLimitTimeWindow: integer('rateLimitTimeWindow').default(86400000),
+		rateLimitMax: integer('rateLimitMax').default(10),
+		requestCount: integer('requestCount').default(0),
+		remaining: integer('remaining'),
+		lastRequest: time('lastRequest'),
+		expiresAt: time('expiresAt'),
+		createdAt: time('createdAt').notNull(),
+		updatedAt: time('updatedAt').notNull(),
+		permissions: text('permissions'),
+		metadata: text('metadata')
+	},
+	(table) => [
+		index('apikey_configId_idx').on(table.configId),
+		index('apikey_referenceId_idx').on(table.referenceId)
+	]
+);
+export const identitySchema = { user, session, account, verification, passkey, apikey };

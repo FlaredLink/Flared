@@ -14,9 +14,11 @@
 		"./redirect": "./src/redirect.ts",
 		"./analytics": "./src/analytics.ts",
 		"./clicks": "./src/clicks.ts",
-		"./shards": "./src/shards.ts"
+		"./shards": "./src/shards.ts",
+		"./auth/api-tokens": "./src/auth/api-tokens.ts"
 	},
 	"dependencies": {
+		"@better-auth/api-key": "1.7.6",
 		"@better-auth/passkey": "1.7.6",
 		"@flared/contracts": "workspace:*",
 		"@flared/data": "workspace:*",

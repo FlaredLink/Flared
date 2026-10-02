@@ -10,7 +10,8 @@
 		"./identity-proof-guards": "./src/identity-proof-guards.ts",
 		"./links": "./src/links.ts",
 		"./routing-policy": "./src/routing-policy.ts",
-		"./tenancy": "./src/tenancy.ts"
+		"./tenancy": "./src/tenancy.ts",
+		"./tokens": "./src/tokens.ts"
 	},
 	"dependencies": {
 		"better-auth": "1.7.6",

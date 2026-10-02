@@ -77,6 +77,21 @@
 			"binding": "LINKS_ANALYTICS",
 			"database_name": "links-analytics",
 			"database_id": "00000000-0000-0000-0000-000000000024"
+		},
+		{
+			"binding": "TOKENS_IDENTITY",
+			"database_name": "tokens-identity",
+			"database_id": "00000000-0000-0000-0000-000000000025"
+		},
+		{
+			"binding": "TOKENS_ROUTING",
+			"database_name": "tokens-routing",
+			"database_id": "00000000-0000-0000-0000-000000000026"
+		},
+		{
+			"binding": "TOKENS_ANALYTICS",
+			"database_name": "tokens-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000027"
 		}
 	]
 }
