@@ -8,7 +8,9 @@
 		"test:auth-probe": "vitest run --config tests/vitest.config.ts tests/auth-proof-probe.test.ts",
 		"check": "tsc --noEmit && svelte-check --workspace packages/ui --tsconfig ./tsconfig.json --fail-on-warnings",
 		"format:check": "prettier --check package.json tsconfig.json .prettierrc.json packages tests",
-		"test": "vitest run --config tests/vitest.config.ts"
+		"test": "vitest run --config tests/vitest.config.ts",
+		"test:cli": "vitest run --config packages/cli/vitest.config.ts",
+		"build:cli": "bun run --cwd packages/cli build && bun run --cwd packages/cli smoke"
 	},
 	"dependencies": {
 		"better-auth": "1.7.6",
