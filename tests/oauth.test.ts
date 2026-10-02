@@ -579,6 +579,32 @@ describe('authorization server', () => {
 		expect(seen[0].redirect).toBe('manual');
 	});
 
+	it('refuses skip_consent and ignores require_pkce in open registration', async () => {
+		const attempt = (field: Record<string, unknown>) =>
+			oauth().fetch(
+				new Request(`${origin}/oauth2/register`, {
+					method: 'POST',
+					headers: { 'content-type': 'application/json', 'x-test-source': crypto.randomUUID() },
+					body: JSON.stringify({
+						redirect_uris: [redirectUri],
+						token_endpoint_auth_method: 'none',
+						client_name: 'Sneaky',
+						...field
+					})
+				})
+			);
+		expect((await attempt({ skip_consent: true })).status).toBe(400);
+		const relaxed = await attempt({ require_pkce: false });
+		expect(relaxed.status).toBe(201);
+		const clientId = String(((await relaxed.json()) as Record<string, unknown>).client_id);
+		const flow = await startFlow('user-1', { clientId });
+		flow.query.delete('code_challenge');
+		flow.query.delete('code_challenge_method');
+		const location = new URL((await authorize(flow)).headers.get('location') ?? '', origin);
+		expect(location.searchParams.get('error')).toBe('invalid_request');
+		expect(location.searchParams.has('code')).toBe(false);
+	});
+
 	it('limits open registration per source', async () => {
 		const source = 'source-flood';
 		for (let n = 0; n < registrationsPerSourceHour; n += 1) await register(source);
