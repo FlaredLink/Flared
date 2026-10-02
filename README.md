@@ -19,10 +19,14 @@ Tests run locally in Cloudflare's workerd runtime with real D1 storage. They req
 
 ## Shared packages
 
-- `@flared/data`: identity tables, the D1/Drizzle adapter and versioned identity migration.
-- `@flared/server`: absolute session defaults, safe principal extraction, structured Cloudflare email delivery and trusted service forwarding.
+- `@flared/contracts`: link input validation, stable error codes and the shared reserved-path list.
+- `@flared/data`: identity, tenancy and routing tables, the D1/Drizzle adapter and versioned migrations.
+- `@flared/server`: absolute session defaults, safe principal extraction, structured Cloudflare email delivery, trusted service forwarding, the `/v1` links API and the short-link redirect handler.
+- `@flared/ui`: the link create form and link list.
 
-Import declared subpath exports. Apply `packages/data/migrations/identity/0001_auth.sql` to the selected identity database through a migration runner; never modify a released migration. No workspace, link-management or analytics tables are created by this milestone.
+Import declared subpath exports. Apply `packages/data/migrations/identity` to the identity database and `packages/data/migrations/routing` to the routing database through a migration runner; never modify a released migration. No analytics tables exist yet.
+
+The redirect handler (`@flared/server/redirect`) accepts only GET and HEAD. It sends reserved paths to the configured app origin, answers unknown hosts and links with a generic 404, and keeps each resolved link in a Workers Cache entry for at most 60 seconds from the start of its database lookup. A database failure without a valid entry returns 503.
 
 ## Authentication integration
 

@@ -7,6 +7,8 @@ declare namespace Cloudflare {
 		ROUTING: D1Database;
 		LINKS_IDENTITY: D1Database;
 		LINKS_ROUTING: D1Database;
+		REDIRECT_ROUTING: D1Database;
+		BROKEN_ROUTING: D1Database;
 		IDENTITY_MIGRATIONS: import('cloudflare:test').D1Migration[];
 		ROUTING_MIGRATIONS: import('cloudflare:test').D1Migration[];
 	}

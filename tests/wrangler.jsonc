@@ -37,6 +37,16 @@
 			"binding": "LINKS_ROUTING",
 			"database_name": "links-routing",
 			"database_id": "00000000-0000-0000-0000-000000000016"
+		},
+		{
+			"binding": "REDIRECT_ROUTING",
+			"database_name": "redirect-routing",
+			"database_id": "00000000-0000-0000-0000-000000000017"
+		},
+		{
+			"binding": "BROKEN_ROUTING",
+			"database_name": "redirect-broken-routing",
+			"database_id": "00000000-0000-0000-0000-000000000018"
 		}
 	]
 }

@@ -9,7 +9,8 @@
 		"./email": "./src/email/transport.ts",
 		"./web": "./src/web/forward.ts",
 		"./tenancy": "./src/tenancy.ts",
-		"./api": "./src/api.ts"
+		"./api": "./src/api.ts",
+		"./redirect": "./src/redirect.ts"
 	},
 	"dependencies": {
 		"@flared/contracts": "workspace:*",

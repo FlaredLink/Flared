@@ -340,3 +340,47 @@ export async function deleteExpiredCreationRecords(
 			.bind(now - 3600000, limit)
 	]);
 }
+
+export interface RedirectTarget {
+	tenantId: string;
+	linkId: string;
+	destination: string;
+}
+
+// Redirects read the primary so a committed edit or disable is never hidden by replica lag.
+// A link resolves only on an active domain its tenant may use and while the tenant's policy
+// exists in routing.
+export async function findRedirectTarget(
+	db: D1Database,
+	hostname: string,
+	slug: string
+): Promise<RedirectTarget | null> {
+	const row = await db
+		.withSession('first-primary')
+		.prepare(
+			`SELECT l.tenant_id, l.id, l.destination FROM domain_namespaces n
+			JOIN domains d ON d.id = n.id AND d.state = 'active'
+			JOIN links l ON l.domain_id = n.id AND l.slug = ? AND l.status = 'active'
+			JOIN tenant_policy p ON p.tenant_id = l.tenant_id
+			WHERE n.hostname = ? AND (d.tenant_id IS NULL OR d.tenant_id = l.tenant_id)`
+		)
+		.bind(slug, hostname)
+		.first<Record<string, unknown>>();
+	if (!row) return null;
+	return {
+		tenantId: text(row.tenant_id, 'tenant'),
+		linkId: text(row.id, 'link'),
+		destination: text(row.destination, 'destination')
+	};
+}
+
+export async function isActiveDomain(db: D1Database, hostname: string): Promise<boolean> {
+	const row = await db
+		.withSession('first-primary')
+		.prepare(
+			"SELECT 1 AS found FROM domain_namespaces n JOIN domains d ON d.id = n.id WHERE n.hostname = ? AND d.state = 'active'"
+		)
+		.bind(hostname)
+		.first();
+	return row !== null;
+}
