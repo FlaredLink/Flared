@@ -81,6 +81,30 @@ describe('shared authentication boundaries', () => {
 			expect(String(error)).not.toContain('private-provider');
 		}
 	});
+	it('sends from a display name only when one is configured and rejects header injection', async () => {
+		const sent: unknown[] = [];
+		const provider = {
+			async send(message: { from: unknown }) {
+				sent.push(message.from);
+			}
+		};
+		const message = {
+			to: 'user@example.com',
+			subject: 'Sign in',
+			text: 'code',
+			html: '<p>code</p>'
+		};
+		await createEmailTransport(provider, 'no-reply@example.com').send(message);
+		await createEmailTransport(provider, 'no-reply@example.com', 'Flared').send(message);
+		expect(sent).toEqual([
+			'no-reply@example.com',
+			{ name: 'Flared', email: 'no-reply@example.com' }
+		]);
+		for (const name of ['', 'Flared\r\nBcc: x@example.com', 'Flared <x@example.com>', '"Flared"'])
+			expect(() => createEmailTransport(provider, 'no-reply@example.com', name)).toThrow(
+				'Invalid email sender name'
+			);
+	});
 	it('preserves multiple cookies and rebuilds trusted request provenance', async () => {
 		const responseHeaders = new Headers();
 		responseHeaders.append('set-cookie', 'first=one; Path=/');

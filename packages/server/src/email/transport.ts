@@ -17,9 +17,17 @@ export class EmailDeliveryError extends Error {
 		this.name = 'EmailDeliveryError';
 	}
 }
-export function createEmailTransport(binding: EmailSender, from: string): EmailTransport {
-	if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(from))
+export function createEmailTransport(
+	binding: EmailSender,
+	address: string,
+	name?: string
+): EmailTransport {
+	if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(address))
 		throw new Error('Invalid email sender configuration');
+	// The display name becomes a mail header, so reject anything that could break it.
+	if (name !== undefined && !/^[\p{L}\p{N} .'-]{1,64}$/u.test(name))
+		throw new Error('Invalid email sender name');
+	const from = name === undefined ? address : { name, email: address };
 	return {
 		async send(message) {
 			try {
