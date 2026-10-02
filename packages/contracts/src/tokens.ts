@@ -74,3 +74,43 @@ export function parseCreateToken(value: unknown): CreateTokenInput {
 		throw new LinkInputError('expiresInDays', 'Choose 30, 90, or 365 days, or no expiry.');
 	return { name, scopes, expiresInDays: expiresInDays as TokenExpiryDays };
 }
+
+function nullableString(value: unknown): value is string | null {
+	return value === null || typeof value === 'string';
+}
+
+// Shape checks for API responses read by clients.
+export function isApiTokenSummary(value: unknown): value is ApiTokenSummary {
+	if (typeof value !== 'object' || value === null) return false;
+	const token = value as Record<string, unknown>;
+	return (
+		typeof token.id === 'string' &&
+		typeof token.name === 'string' &&
+		typeof token.start === 'string' &&
+		Array.isArray(token.scopes) &&
+		token.scopes.every(isTokenScope) &&
+		typeof token.createdAt === 'string' &&
+		nullableString(token.lastUsedAt) &&
+		nullableString(token.expiresAt)
+	);
+}
+
+export function isApiTokenPage(value: unknown): value is ApiTokenPage {
+	if (typeof value !== 'object' || value === null) return false;
+	const page = value as Record<string, unknown>;
+	return (
+		Array.isArray(page.tokens) &&
+		page.tokens.every(isApiTokenSummary) &&
+		nullableString(page.freshUntil)
+	);
+}
+
+export function isCreatedApiToken(value: unknown): value is CreatedApiToken {
+	if (typeof value !== 'object' || value === null) return false;
+	const created = value as Record<string, unknown>;
+	return (
+		typeof created.secret === 'string' &&
+		created.secret.startsWith(tokenPrefix) &&
+		isApiTokenSummary(created.token)
+	);
+}

@@ -21,7 +21,12 @@
 		"./analytics/LinkAnalytics.svelte": {
 			"types": "./src/analytics/LinkAnalytics.svelte",
 			"svelte": "./src/analytics/LinkAnalytics.svelte"
-		}
+		},
+		"./tokens/TokenList.svelte": {
+			"types": "./src/tokens/TokenList.svelte",
+			"svelte": "./src/tokens/TokenList.svelte"
+		},
+		"./tokens/client": "./src/tokens/client.ts"
 	},
 	"dependencies": {
 		"@flared/contracts": "workspace:*",
