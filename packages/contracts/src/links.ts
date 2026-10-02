@@ -19,8 +19,14 @@ export interface Link {
 	updatedAt: string;
 }
 
+// A listed link also carries its clicks in the last 30 UTC days, or null when analytics are
+// not available at the moment.
+export interface ListedLink extends Link {
+	clicksLast30Days: number | null;
+}
+
 export interface LinkPage {
-	links: Link[];
+	links: ListedLink[];
 	nextCursor: string | null;
 }
 

@@ -10,7 +10,13 @@ declare namespace Cloudflare {
 		REDIRECT_ROUTING: D1Database;
 		BROKEN_ROUTING: D1Database;
 		PASSKEY_IDENTITY: D1Database;
+		TENANCY_ANALYTICS: D1Database;
+		LINKS_ANALYTICS: D1Database;
+		ANALYTICS: D1Database;
+		ANALYTICS_IDENTITY: D1Database;
+		ANALYTICS_ROUTING: D1Database;
 		IDENTITY_MIGRATIONS: import('cloudflare:test').D1Migration[];
 		ROUTING_MIGRATIONS: import('cloudflare:test').D1Migration[];
+		ANALYTICS_MIGRATIONS: import('cloudflare:test').D1Migration[];
 	}
 }

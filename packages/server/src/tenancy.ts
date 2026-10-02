@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
+import { applyAnalyticsPolicy } from '@flared/data/analytics';
 import { applyRoutingPolicy } from '@flared/data/routing-policy';
 import {
-	acknowledgeRoutingProjection,
+	acknowledgeProjection,
 	listMemberships,
-	listPendingRoutingProjections,
-	readPolicyProjection
+	listPendingProjections,
+	readPolicyProjection,
+	type PolicyStore
 } from '@flared/data/tenancy';
+import { resolveShard, type AnalyticsShards } from './shards';
 
 export type TenantResolution =
 	| { status: 'active'; tenantId: string }
@@ -55,25 +58,66 @@ export async function projectRoutingPolicy(
 			domainLimit: policy.domainLimit,
 			now
 		});
-	await acknowledgeRoutingProjection(identity, tenantId, policy.revision, now);
+	await acknowledgeProjection(identity, 'routing', tenantId, policy.revision, now);
 }
 
-export async function retryRoutingProjections(
+// The policy goes only to the tenant's assigned shard.
+export async function projectAnalyticsPolicy(
 	identity: D1Database,
-	routing: D1Database,
+	shards: AnalyticsShards,
+	tenantId: string,
+	now: number
+): Promise<void> {
+	const policy = await readPolicyProjection(identity, tenantId);
+	if (!policy) throw new TenancyError('POLICY_MISSING');
+	if (policy.analyticsRevision < policy.revision)
+		await applyAnalyticsPolicy(resolveShard(shards, policy.analyticsShardId), {
+			tenantId,
+			revision: policy.revision,
+			monthlyClickLimit: policy.monthlyClickLimit,
+			retentionDays: policy.retentionDays,
+			now
+		});
+	await acknowledgeProjection(identity, 'analytics', tenantId, policy.revision, now);
+}
+
+export interface PolicyStores {
+	routing: D1Database;
+	analytics: AnalyticsShards;
+}
+
+// Projects a tenant's policy into every store that has not acknowledged its revision yet.
+export async function projectPolicy(
+	identity: D1Database,
+	stores: PolicyStores,
+	tenantId: string,
+	now: number
+): Promise<void> {
+	await projectRoutingPolicy(identity, stores.routing, tenantId, now);
+	await projectAnalyticsPolicy(identity, stores.analytics, tenantId, now);
+}
+
+export async function retryProjections(
+	identity: D1Database,
+	stores: PolicyStores,
 	now: number,
 	limit: number
 ): Promise<{ projected: number; failed: number }> {
 	let projected = 0;
 	let failed = 0;
-	for (const tenantId of await listPendingRoutingProjections(identity, limit)) {
-		try {
-			await projectRoutingPolicy(identity, routing, tenantId, now);
-			projected += 1;
-		} catch {
-			failed += 1;
-			console.error(JSON.stringify({ event: 'policy_projection_failed', tenantId }));
+	const project: Record<PolicyStore, (tenantId: string) => Promise<void>> = {
+		routing: (tenantId) => projectRoutingPolicy(identity, stores.routing, tenantId, now),
+		analytics: (tenantId) => projectAnalyticsPolicy(identity, stores.analytics, tenantId, now)
+	};
+	for (const store of ['routing', 'analytics'] as const)
+		for (const tenantId of await listPendingProjections(identity, store, limit)) {
+			try {
+				await project[store](tenantId);
+				projected += 1;
+			} catch {
+				failed += 1;
+				console.error(JSON.stringify({ event: 'policy_projection_failed', store, tenantId }));
+			}
 		}
-	}
 	return { projected, failed };
 }

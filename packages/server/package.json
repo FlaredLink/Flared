@@ -11,7 +11,10 @@
 		"./web": "./src/web/forward.ts",
 		"./tenancy": "./src/tenancy.ts",
 		"./api": "./src/api.ts",
-		"./redirect": "./src/redirect.ts"
+		"./redirect": "./src/redirect.ts",
+		"./analytics": "./src/analytics.ts",
+		"./clicks": "./src/clicks.ts",
+		"./shards": "./src/shards.ts"
 	},
 	"dependencies": {
 		"@better-auth/passkey": "1.7.6",

@@ -5,6 +5,14 @@ import type { D1Database } from '@cloudflare/workers-types/index.ts';
 import { Hono, type Context } from 'hono';
 import type { ErrorCode } from '@flared/contracts/errors';
 import {
+	AnalyticsRangeError,
+	AnalyticsUnavailableError,
+	getLinkAnalytics,
+	getRecentClicks,
+	getUsage
+} from './analytics';
+import type { AnalyticsShards } from './shards';
+import {
 	LinkInputError,
 	parseCreateLink,
 	parseIdempotencyKey,
@@ -26,6 +34,8 @@ import {
 export interface ApiDependencies {
 	identity: D1Database;
 	routing: D1Database;
+	// Analytics shards by ID. Without them, analytics routes answer 503 and lists carry no clicks.
+	analytics?: AnalyticsShards;
 	// The exact application origin from deployment configuration.
 	appOrigin: string;
 	// Returns the signed-in user's ID, or null when the request carries no valid session.
@@ -108,6 +118,12 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			);
 		if (error instanceof LinkInputError)
 			return failure('INVALID_INPUT', error.message, requestId, {}, error.field);
+		if (error instanceof AnalyticsRangeError)
+			return failure('INVALID_INPUT', error.message, requestId);
+		if (error instanceof AnalyticsUnavailableError) {
+			console.error(JSON.stringify({ event: 'analytics_unavailable', requestId }));
+			return failure('SERVICE_UNAVAILABLE', 'Analytics are not available. Try again.', requestId);
+		}
 		console.error(JSON.stringify({ event: 'api_failed', requestId }));
 		return failure('SERVICE_UNAVAILABLE', 'The service is not available. Try again.', requestId);
 	});
@@ -157,11 +173,17 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	});
 
 	app.get('/links', async (context) => {
-		const page = await listLinks(routing, context.var.tenantId, {
-			limit: pageSize(context.req.query('limit')),
-			cursor: context.req.query('cursor') ?? null,
-			search: search(context.req.query('q'))
-		});
+		const { tenantId } = context.var;
+		const page = await listLinks(
+			routing,
+			tenantId,
+			{
+				limit: pageSize(context.req.query('limit')),
+				cursor: context.req.query('cursor') ?? null,
+				search: search(context.req.query('q'))
+			},
+			(linkIds) => getRecentClicks(identity, dependencies.analytics, tenantId, linkIds, now())
+		);
 		return respond({ status: 200, body: JSON.stringify(page) });
 	});
 
@@ -182,8 +204,31 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		return respond({ status: 200, body: JSON.stringify({ link }) });
 	});
 
+	app.get('/links/:id/analytics', async (context) => {
+		const { tenantId } = context.var;
+		const link = await getLink(routing, tenantId, context.req.param('id'));
+		if (!dependencies.analytics) throw new AnalyticsUnavailableError();
+		const analytics = await getLinkAnalytics(
+			identity,
+			dependencies.analytics,
+			tenantId,
+			link.id,
+			{ from: context.req.query('from'), to: context.req.query('to') },
+			now()
+		);
+		return respond({ status: 200, body: JSON.stringify({ analytics }) });
+	});
+
+	app.get('/usage', async (context) => {
+		if (!dependencies.analytics) throw new AnalyticsUnavailableError();
+		const usage = await getUsage(identity, dependencies.analytics, context.var.tenantId, now());
+		return respond({ status: 200, body: JSON.stringify({ usage }) });
+	});
+
 	app.all('/links', (context) => methodNotAllowed(context, 'GET, POST'));
 	app.all('/links/:id', (context) => methodNotAllowed(context, 'GET, PATCH'));
+	app.all('/links/:id/analytics', (context) => methodNotAllowed(context, 'GET'));
+	app.all('/usage', (context) => methodNotAllowed(context, 'GET'));
 	return app;
 }
 

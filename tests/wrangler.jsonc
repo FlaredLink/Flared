@@ -52,6 +52,31 @@
 			"binding": "PASSKEY_IDENTITY",
 			"database_name": "passkey-identity",
 			"database_id": "00000000-0000-0000-0000-000000000019"
+		},
+		{
+			"binding": "TENANCY_ANALYTICS",
+			"database_name": "tenancy-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000020"
+		},
+		{
+			"binding": "ANALYTICS",
+			"database_name": "analytics-shard",
+			"database_id": "00000000-0000-0000-0000-000000000021"
+		},
+		{
+			"binding": "ANALYTICS_IDENTITY",
+			"database_name": "analytics-identity",
+			"database_id": "00000000-0000-0000-0000-000000000022"
+		},
+		{
+			"binding": "ANALYTICS_ROUTING",
+			"database_name": "analytics-routing",
+			"database_id": "00000000-0000-0000-0000-000000000023"
+		},
+		{
+			"binding": "LINKS_ANALYTICS",
+			"database_name": "links-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000024"
 		}
 	]
 }

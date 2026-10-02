@@ -4,6 +4,7 @@
 	"type": "module",
 	"license": "AGPL-3.0-only",
 	"exports": {
+		"./analytics": "./src/analytics.ts",
 		"./identity": "./src/identity.ts",
 		"./identity-adapter": "./src/identity-adapter.ts",
 		"./identity-proof-guards": "./src/identity-proof-guards.ts",

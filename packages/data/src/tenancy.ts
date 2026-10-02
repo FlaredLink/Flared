@@ -29,9 +29,12 @@ export interface PolicyProjection {
 	tenantId: string;
 	revision: number;
 	routingRevision: number;
+	analyticsRevision: number;
 	analyticsShardId: string;
 	activeLinkLimit: number;
 	domainLimit: number;
+	monthlyClickLimit: number;
+	retentionDays: number;
 }
 
 function text(value: unknown, field: string): string {
@@ -103,13 +106,21 @@ export async function createTenant(db: D1Database, tenant: NewTenant): Promise<v
 	]);
 }
 
+export async function readTenantShard(db: D1Database, tenantId: string): Promise<string | null> {
+	const row = await db
+		.prepare('SELECT analytics_shard_id FROM tenants WHERE id = ?')
+		.bind(tenantId)
+		.first<{ analytics_shard_id: unknown }>();
+	return row ? text(row.analytics_shard_id, 'shard') : null;
+}
+
 export async function readPolicyProjection(
 	db: D1Database,
 	tenantId: string
 ): Promise<PolicyProjection | null> {
 	const row = await db
 		.prepare(
-			'SELECT p.revision, p.routing_revision, t.analytics_shard_id, p.active_link_limit, p.domain_limit FROM tenant_policy p JOIN tenants t ON t.id = p.tenant_id WHERE p.tenant_id = ?'
+			'SELECT p.revision, p.routing_revision, p.analytics_revision, t.analytics_shard_id, p.active_link_limit, p.domain_limit, p.monthly_click_limit, p.retention_days FROM tenant_policy p JOIN tenants t ON t.id = p.tenant_id WHERE p.tenant_id = ?'
 		)
 		.bind(tenantId)
 		.first<Record<string, unknown>>();
@@ -118,43 +129,56 @@ export async function readPolicyProjection(
 		tenantId,
 		revision: count(row.revision, 'revision'),
 		routingRevision: count(row.routing_revision, 'routing revision'),
+		analyticsRevision: count(row.analytics_revision, 'analytics revision'),
 		analyticsShardId: text(row.analytics_shard_id, 'shard'),
 		activeLinkLimit: count(row.active_link_limit, 'link limit'),
-		domainLimit: count(row.domain_limit, 'domain limit')
+		domainLimit: count(row.domain_limit, 'domain limit'),
+		monthlyClickLimit: count(row.monthly_click_limit, 'click limit'),
+		retentionDays: count(row.retention_days, 'retention')
 	};
 }
 
-export async function listPendingRoutingProjections(
+export type PolicyStore = 'routing' | 'analytics';
+
+const revisionColumn: Record<PolicyStore, string> = {
+	routing: 'routing_revision',
+	analytics: 'analytics_revision'
+};
+
+export async function listPendingProjections(
 	db: D1Database,
+	store: PolicyStore,
 	limit: number
 ): Promise<string[]> {
 	if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
 		throw new Error('Invalid projection batch size');
+	const column = revisionColumn[store];
 	const { results } = await db
 		.prepare(
-			'SELECT tenant_id FROM tenant_policy WHERE routing_revision < revision ORDER BY updated_at, tenant_id LIMIT ?'
+			`SELECT tenant_id FROM tenant_policy WHERE ${column} < revision ORDER BY updated_at, tenant_id LIMIT ?`
 		)
 		.bind(limit)
 		.all<{ tenant_id: unknown }>();
 	return results.map((row) => text(row.tenant_id, 'tenant'));
 }
 
-// Routing holds the revision, so record it and activate the tenant in the same batch.
-export async function acknowledgeRoutingProjection(
+// The store holds the revision, so record it and activate the tenant in the same batch. A
+// tenant activates once routing and analytics both hold a policy; activation never reverts.
+export async function acknowledgeProjection(
 	db: D1Database,
+	store: PolicyStore,
 	tenantId: string,
 	revision: number,
 	now: number
 ): Promise<void> {
+	const column = revisionColumn[store];
 	await db.batch([
 		db
-			.prepare(
-				'UPDATE tenant_policy SET routing_revision = ? WHERE tenant_id = ? AND routing_revision < ?'
-			)
+			.prepare(`UPDATE tenant_policy SET ${column} = ? WHERE tenant_id = ? AND ${column} < ?`)
 			.bind(revision, tenantId, revision),
 		db
 			.prepare(
-				'UPDATE tenants SET activated_at = ? WHERE id = ? AND activated_at IS NULL AND EXISTS (SELECT 1 FROM tenant_policy WHERE tenant_id = ? AND routing_revision >= 1)'
+				'UPDATE tenants SET activated_at = ? WHERE id = ? AND activated_at IS NULL AND EXISTS (SELECT 1 FROM tenant_policy WHERE tenant_id = ? AND routing_revision >= 1 AND analytics_revision >= 1)'
 			)
 			.bind(now, tenantId, tenantId)
 	]);

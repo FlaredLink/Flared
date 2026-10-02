@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { createTenant } from '../packages/data/src/tenancy';
 import { createApi } from '../packages/server/src/api';
 import { createLink, createKeyLifetimeMs, generateSlug } from '../packages/server/src/links';
-import { projectRoutingPolicy } from '../packages/server/src/tenancy';
+import { projectPolicy } from '../packages/server/src/tenancy';
 
 const origin = 'https://app.example';
 const identity = () => env.LINKS_IDENTITY;
@@ -70,7 +70,12 @@ async function addTenant(userId: string, tenantId: string, activeLinkLimit: numb
 		limits: { activeLinkLimit, monthlyClickLimit: 5000, retentionDays: 30, domainLimit: 1 },
 		now: 1
 	});
-	await projectRoutingPolicy(identity(), routing(), tenantId, 1);
+	await projectPolicy(
+		identity(),
+		{ routing: routing(), analytics: { 'analytics-1': env.LINKS_ANALYTICS } },
+		tenantId,
+		1
+	);
 }
 
 async function linkCount(tenantId: string) {
@@ -84,6 +89,7 @@ async function linkCount(tenantId: string) {
 beforeAll(async () => {
 	await applyD1Migrations(identity(), env.IDENTITY_MIGRATIONS, 'flared_core_migrations');
 	await applyD1Migrations(routing(), env.ROUTING_MIGRATIONS, 'flared_core_migrations');
+	await applyD1Migrations(env.LINKS_ANALYTICS, env.ANALYTICS_MIGRATIONS, 'flared_core_migrations');
 	await identity()
 		.prepare("INSERT INTO installation (id, mode, created_at) VALUES (1, 'multi', 0)")
 		.run();

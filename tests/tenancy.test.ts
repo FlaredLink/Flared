@@ -5,9 +5,11 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { applyRoutingPolicy } from '../packages/data/src/routing-policy';
 import { createTenant, readInstallationMode, type NewTenant } from '../packages/data/src/tenancy';
 import {
+	projectAnalyticsPolicy,
+	projectPolicy,
 	projectRoutingPolicy,
 	resolveTenant,
-	retryRoutingProjections,
+	retryProjections,
 	TenancyError
 } from '../packages/server/src/tenancy';
 
@@ -34,6 +36,17 @@ async function routingRow(tenantId: string) {
 		.first();
 }
 
+async function analyticsRow(tenantId: string) {
+	return env.TENANCY_ANALYTICS.prepare(
+		'SELECT revision, monthly_click_limit, retention_days FROM tenant_policy WHERE tenant_id = ?'
+	)
+		.bind(tenantId)
+		.first();
+}
+
+const shards = () => ({ 'analytics-1': env.TENANCY_ANALYTICS });
+const stores = () => ({ routing: env.ROUTING, analytics: shards() });
+
 const unavailableRouting = {
 	prepare() {
 		throw new Error('routing unavailable');
@@ -44,6 +57,11 @@ beforeAll(async () => {
 	for (const db of [env.UNCONFIGURED_IDENTITY, env.SINGLE_IDENTITY, env.MULTI_IDENTITY])
 		await applyD1Migrations(db, env.IDENTITY_MIGRATIONS, 'flared_core_migrations');
 	await applyD1Migrations(env.ROUTING, env.ROUTING_MIGRATIONS, 'flared_core_migrations');
+	await applyD1Migrations(
+		env.TENANCY_ANALYTICS,
+		env.ANALYTICS_MIGRATIONS,
+		'flared_core_migrations'
+	);
 	await env.SINGLE_IDENTITY.prepare(
 		"INSERT INTO installation (id, mode, created_at) VALUES (1, 'single', 0)"
 	).run();
@@ -138,7 +156,7 @@ describe('multi mode', () => {
 });
 
 describe('policy projection', () => {
-	it('keeps a tenant pending until routing holds its policy', async () => {
+	it('keeps a tenant pending until routing and analytics hold its policy', async () => {
 		const db = env.MULTI_IDENTITY;
 		await addUser(db, 'owner-project');
 		await createTenant(db, tenant('tenant-project', 'owner-project'));
@@ -147,6 +165,17 @@ describe('policy projection', () => {
 		).rejects.toThrow();
 		expect((await resolveTenant(db, 'owner-project')).status).toBe('pending');
 		await projectRoutingPolicy(db, env.ROUTING, 'tenant-project', 11);
+		expect((await resolveTenant(db, 'owner-project')).status).toBe('pending');
+		await expect(projectAnalyticsPolicy(db, {}, 'tenant-project', 11)).rejects.toThrow(
+			'Analytics shard is not bound'
+		);
+		expect((await resolveTenant(db, 'owner-project')).status).toBe('pending');
+		await projectAnalyticsPolicy(db, shards(), 'tenant-project', 11);
+		expect(await analyticsRow('tenant-project')).toEqual({
+			revision: 1,
+			monthly_click_limit: 5000,
+			retention_days: 30
+		});
 		expect(await resolveTenant(db, 'owner-project')).toEqual({
 			status: 'active',
 			tenantId: 'tenant-project'
@@ -165,11 +194,17 @@ describe('policy projection', () => {
 		const db = env.MULTI_IDENTITY;
 		await db
 			.prepare(
-				"UPDATE tenant_policy SET revision = 2, active_link_limit = 10000, updated_at = 20 WHERE tenant_id = 'tenant-project'"
+				"UPDATE tenant_policy SET revision = 2, active_link_limit = 10000, monthly_click_limit = 100000, retention_days = 365, updated_at = 20 WHERE tenant_id = 'tenant-project'"
 			)
 			.run();
-		await projectRoutingPolicy(db, env.ROUTING, 'tenant-project', 21);
+		await projectPolicy(db, stores(), 'tenant-project', 21);
 		expect((await routingRow('tenant-project'))?.active_link_limit).toBe(10000);
+		expect(await analyticsRow('tenant-project')).toEqual({
+			revision: 2,
+			monthly_click_limit: 100000,
+			retention_days: 365
+		});
+		expect((await resolveTenant(db, 'owner-project')).status).toBe('active');
 		await applyRoutingPolicy(env.ROUTING, {
 			tenantId: 'tenant-project',
 			revision: 1,
@@ -186,15 +221,15 @@ describe('policy projection', () => {
 
 	it('retries only outstanding projections', async () => {
 		const db = env.MULTI_IDENTITY;
-		const result = await retryRoutingProjections(db, env.ROUTING, 30, 100);
-		// race winner, tenant-a, tenant-b
-		expect(result).toEqual({ projected: 3, failed: 0 });
+		// An unbound shard fails each analytics projection and leaves the tenants pending.
+		const partial = await retryProjections(db, { routing: env.ROUTING, analytics: {} }, 30, 100);
+		// race winner, tenant-a, tenant-b: routing succeeds, analytics fails
+		expect(partial).toEqual({ projected: 3, failed: 3 });
+		expect((await resolveTenant(db, 'owner-a')).status).toBe('pending');
+		expect(await retryProjections(db, stores(), 31, 100)).toEqual({ projected: 3, failed: 0 });
 		expect((await resolveTenant(db, 'owner-a')).status).toBe('active');
-		expect(await retryRoutingProjections(db, env.ROUTING, 31, 100)).toEqual({
-			projected: 0,
-			failed: 0
-		});
-		await expect(retryRoutingProjections(db, env.ROUTING, 32, 101)).rejects.toThrow();
+		expect(await retryProjections(db, stores(), 32, 100)).toEqual({ projected: 0, failed: 0 });
+		await expect(retryProjections(db, stores(), 33, 101)).rejects.toThrow();
 	});
 
 	it('fails closed when a user has two memberships', async () => {

@@ -2,7 +2,13 @@
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createRedirectHandler, snapshotLifetimeMs } from '../packages/server/src/redirect';
+import type { ClickEvent } from '../packages/contracts/src/analytics';
+import { deviceCategory, isAutomated } from '../packages/server/src/clicks';
+import {
+	createRedirectHandler,
+	snapshotLifetimeMs,
+	type ClickSink
+} from '../packages/server/src/redirect';
 
 const appOrigin = 'https://app.example';
 const routing = () => env.REDIRECT_ROUTING;
@@ -10,12 +16,15 @@ const start = Date.UTC(2026, 9, 2);
 
 // Each handler gets its own cache, so snapshots never leak between tests.
 let cacheCounter = 0;
-function handler(options: { now?: () => number; db?: D1Database; cacheName?: string } = {}) {
+function handler(
+	options: { now?: () => number; db?: D1Database; cacheName?: string; clicks?: ClickSink } = {}
+) {
 	cacheCounter += 1;
 	return createRedirectHandler({
 		routing: options.db ?? routing(),
 		appOrigin,
 		cacheName: options.cacheName ?? `redirect-test-${cacheCounter}`,
+		clicks: options.clicks,
 		now: options.now ?? (() => start)
 	});
 }
@@ -225,5 +234,137 @@ describe('snapshot bound', () => {
 		const miss = handler({ db: env.BROKEN_ROUTING });
 		expect((await visit(miss, 'https://short.example/launch')).status).toBe(503);
 		expect((await visit(miss, 'https://short.example/pricing')).status).toBe(503);
+	});
+});
+
+const browser =
+	'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+
+function recorder() {
+	const events: ClickEvent[] = [];
+	return { events, sink: { send: async (event: ClickEvent) => void events.push(event) } };
+}
+
+function browse(
+	app: ReturnType<typeof handler>,
+	url: string,
+	headers: Record<string, string> = { 'user-agent': browser },
+	method = 'GET'
+) {
+	return app.fetch(new Request(url, { method, headers, redirect: 'manual' }));
+}
+
+describe('click events', () => {
+	it('sends one minimized event for a counted GET, also on a cache hit', async () => {
+		await addLink('counted', 'https://example.com/private-destination?token=secret');
+		const { events, sink } = recorder();
+		const app = handler({ clicks: sink });
+		const headers = {
+			'user-agent': browser,
+			referer: 'https://www.news.example/story?id=1',
+			'cf-connecting-ip': '192.0.2.1'
+		};
+		expect((await browse(app, 'https://short.example/counted?utm=x', headers)).status).toBe(302);
+		expect((await browse(app, 'https://short.example/counted', headers)).status).toBe(302);
+		expect(events).toHaveLength(2);
+		const [event] = events;
+		expect(Object.keys(event).sort()).toEqual([
+			'analyticsShardId',
+			'country',
+			'deviceCategory',
+			'eventId',
+			'kind',
+			'linkId',
+			'occurredAt',
+			'referrerHostname',
+			'schemaVersion',
+			'tenantId'
+		]);
+		expect(event).toMatchObject({
+			schemaVersion: 1,
+			tenantId: 'tenant-a',
+			analyticsShardId: 'analytics-1',
+			kind: 'production',
+			occurredAt: start,
+			country: 'unknown',
+			deviceCategory: 'mobile',
+			referrerHostname: 'news.example'
+		});
+		expect(events[1].eventId).not.toBe(event.eventId);
+		expect(JSON.stringify(events)).not.toMatch(/secret|192\.0\.2\.1|story|iPhone/);
+	});
+
+	it('sends nothing for HEAD, bots, reserved paths, 404, and 405', async () => {
+		await addLink('quiet', 'https://example.com/quiet');
+		const { events, sink } = recorder();
+		const app = handler({ clicks: sink });
+		await browse(app, 'https://short.example/quiet', { 'user-agent': browser }, 'HEAD');
+		await browse(app, 'https://short.example/quiet', {
+			'user-agent': 'Slackbot-LinkExpanding 1.0'
+		});
+		await browse(app, 'https://short.example/quiet', { 'user-agent': 'curl/8.7.1' });
+		await browse(app, 'https://short.example/quiet', {});
+		await browse(app, 'https://short.example/pricing');
+		await browse(app, 'https://short.example/missing');
+		await browse(app, 'https://short.example/quiet', { 'user-agent': browser }, 'POST');
+		expect(events).toHaveLength(0);
+	});
+
+	it('still redirects when the Queue fails', async () => {
+		await addLink('queue-down', 'https://example.com/up');
+		const app = handler({
+			clicks: {
+				send: async () => {
+					throw new Error('queue unavailable');
+				}
+			}
+		});
+		const response = await browse(app, 'https://short.example/queue-down');
+		expect(response.status).toBe(302);
+		expect(response.headers.get('location')).toBe('https://example.com/up');
+	});
+});
+
+describe('automation classifier', () => {
+	it('excludes crawlers, link previews, and HTTP libraries', () => {
+		for (const agent of [
+			'',
+			'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+			'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+			'Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)',
+			'Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)',
+			'Twitterbot/1.0',
+			'LinkedInBot/1.0 (compatible; Mozilla/5.0)',
+			'WhatsApp/2.23.20.0 A',
+			'TelegramBot (like TwitterBot)',
+			'curl/8.7.1',
+			'python-requests/2.32.3',
+			'Go-http-client/2.0',
+			'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/120.0 Safari/537.36'
+		])
+			expect(isAutomated(agent), agent).toBe(true);
+	});
+
+	it('counts browsers, including in-app browsers and a CUBOT phone', () => {
+		for (const agent of [
+			browser,
+			'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36',
+			'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 [FBAN/FBIOS;FBAV/470.0]',
+			'Mozilla/5.0 (Linux; Android 10; CUBOT X30) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36'
+		])
+			expect(isAutomated(agent), agent).toBe(false);
+	});
+
+	it('maps user agents to a coarse device category', () => {
+		expect(deviceCategory(browser)).toBe('mobile');
+		expect(
+			deviceCategory(
+				'Mozilla/5.0 (Linux; Android 14; SM-X710) AppleWebKit/537.36 Chrome/129.0 Safari/537.36'
+			)
+		).toBe('tablet');
+		expect(deviceCategory('Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) Safari/605.1.15')).toBe(
+			'desktop'
+		);
+		expect(deviceCategory('Something else')).toBe('unknown');
 	});
 });

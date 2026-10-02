@@ -344,6 +344,7 @@ export async function deleteExpiredCreationRecords(
 export interface RedirectTarget {
 	tenantId: string;
 	linkId: string;
+	analyticsShardId: string;
 	destination: string;
 }
 
@@ -358,7 +359,7 @@ export async function findRedirectTarget(
 	const row = await db
 		.withSession('first-primary')
 		.prepare(
-			`SELECT l.tenant_id, l.id, l.destination FROM domain_namespaces n
+			`SELECT l.tenant_id, l.id, p.analytics_shard_id, l.destination FROM domain_namespaces n
 			JOIN domains d ON d.id = n.id AND d.state = 'active'
 			JOIN links l ON l.domain_id = n.id AND l.slug = ? AND l.status = 'active'
 			JOIN tenant_policy p ON p.tenant_id = l.tenant_id
@@ -370,6 +371,7 @@ export async function findRedirectTarget(
 	return {
 		tenantId: text(row.tenant_id, 'tenant'),
 		linkId: text(row.id, 'link'),
+		analyticsShardId: text(row.analytics_shard_id, 'shard'),
 		destination: text(row.destination, 'destination')
 	};
 }
