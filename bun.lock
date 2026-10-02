@@ -49,6 +49,7 @@
       "name": "@flared/ui",
       "dependencies": {
         "@flared/contracts": "workspace:*",
+        "@simplewebauthn/browser": "13.3.0",
       },
       "peerDependencies": {
         "svelte": "^5.57.1",

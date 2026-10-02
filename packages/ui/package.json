@@ -12,10 +12,16 @@
 			"types": "./src/links/LinkList.svelte",
 			"svelte": "./src/links/LinkList.svelte"
 		},
-		"./links/messages": "./src/links/messages.ts"
+		"./links/messages": "./src/links/messages.ts",
+		"./passkeys/PasskeyList.svelte": {
+			"types": "./src/passkeys/PasskeyList.svelte",
+			"svelte": "./src/passkeys/PasskeyList.svelte"
+		},
+		"./passkeys/client": "./src/passkeys/client.ts"
 	},
 	"dependencies": {
-		"@flared/contracts": "workspace:*"
+		"@flared/contracts": "workspace:*",
+		"@simplewebauthn/browser": "13.3.0"
 	},
 	"peerDependencies": {
 		"svelte": "^5.57.1"

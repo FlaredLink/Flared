@@ -19,10 +19,10 @@ Tests run locally in Cloudflare's workerd runtime with real D1 storage. They req
 
 ## Shared packages
 
-- `@flared/contracts`: link input validation, stable error codes and the shared reserved-path list.
+- `@flared/contracts`: link input validation, stable error codes, the shared reserved-path list and the passkey summary shown to account pages.
 - `@flared/data`: identity, tenancy and routing tables, the D1/Drizzle adapter and versioned migrations.
 - `@flared/server`: absolute session defaults, safe principal extraction, structured Cloudflare email delivery, trusted service forwarding, the `/v1` links API and the short-link redirect handler.
-- `@flared/ui`: the link create form and link list.
+- `@flared/ui`: the link create form and link list, the passkey list, and the browser passkey ceremonies (`@flared/ui/passkeys/client`) against the shared `/api/auth/passkey/*` routes.
 
 Import declared subpath exports. Apply `packages/data/migrations/identity` to the identity database and `packages/data/migrations/routing` to the routing database through a migration runner; never modify a released migration. No analytics tables exist yet.
 

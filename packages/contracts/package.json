@@ -6,6 +6,7 @@
 	"exports": {
 		"./links": "./src/links.ts",
 		"./errors": "./src/errors.ts",
-		"./reserved": "./src/reserved.ts"
+		"./reserved": "./src/reserved.ts",
+		"./passkeys": "./src/passkeys.ts"
 	}
 }
