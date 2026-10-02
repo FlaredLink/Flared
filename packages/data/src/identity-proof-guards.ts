@@ -9,7 +9,7 @@ interface ProofScope {
 	claimed: Map<string, Verification>;
 }
 const scopes = new AsyncLocalStorage<ProofScope>();
-/** Only sign-in OTP and magic-link server methods may run in this scope. */
+/** Only sign-in OTP, magic-link, and passkey ceremony server methods may run in this scope. */
 export function withIdentityProofScope<T>(
 	mode: ProofMode,
 	operation: () => Promise<T>
@@ -52,8 +52,9 @@ function nextAttempt(previous: string, replacement: string): boolean {
 	);
 }
 /**
- * Storage correction for Better Auth 1.7.6 sign-in OTP / magic-link plugins.
- * Install only after awaited $context, before exposing the six-route facade.
+ * Storage correction for Better Auth 1.7.6 sign-in OTP / magic-link plugins, also used by
+ * passkey ceremonies: options issue a challenge, verification consumes it exactly once.
+ * Install only after awaited $context, before exposing the route facade.
  * Requires the fixed shared schema, plain identifiers, D1, and no verification
  * hooks/secondary storage. The composer must construct the trusted pinned
  * plugins directly: plugin-supplied hooks cannot be introspected here. Unsupported endpoints must never call this adapter.
@@ -70,7 +71,9 @@ export function installD1ProofGuards(
 		options.databaseHooks?.verification ||
 		options.verification?.modelName ||
 		options.verification?.fields ||
-		options.plugins?.some((plugin) => plugin.id !== 'email-otp' && plugin.id !== 'magic-link')
+		options.plugins?.some(
+			(plugin) => plugin.id !== 'email-otp' && plugin.id !== 'magic-link' && plugin.id !== 'passkey'
+		)
 	) {
 		throw new Error('Unsupported verification configuration for D1 proof guards');
 	}

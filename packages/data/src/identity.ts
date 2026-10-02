@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Matches getAuthTables from Better Auth 1.7.6 with emailOTP + magicLink.
+// Matches getAuthTables from Better Auth 1.7.6 with emailOTP, magicLink, and passkey.
 import { sqliteTable, text, integer, index } from 'drizzle-orm/sqlite-core';
 const time = (name: string) => integer(name, { mode: 'timestamp_ms' });
 export const user = sqliteTable('user', {
@@ -61,4 +61,23 @@ export const verification = sqliteTable(
 	},
 	(table) => [index('verification_identifier_idx').on(table.identifier)]
 );
-export const identitySchema = { user, session, account, verification };
+export const passkey = sqliteTable(
+	'passkey',
+	{
+		id: text('id').primaryKey(),
+		name: text('name'),
+		publicKey: text('publicKey').notNull(),
+		userId: text('userId')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		credentialID: text('credentialID').notNull().unique(),
+		counter: integer('counter').notNull(),
+		deviceType: text('deviceType').notNull(),
+		backedUp: integer('backedUp', { mode: 'boolean' }).notNull(),
+		transports: text('transports'),
+		createdAt: time('createdAt'),
+		aaguid: text('aaguid')
+	},
+	(table) => [index('passkey_userId_idx').on(table.userId)]
+);
+export const identitySchema = { user, session, account, verification, passkey };

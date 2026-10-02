@@ -18,7 +18,14 @@ export function createSessionOptions(
 	return {
 		baseURL: origin,
 		trustedOrigins: [origin],
-		session: { expiresIn: 604800, disableSessionRefresh: true, cookieCache: { enabled: false } },
+		// Credential changes need a sign-in from the last 10 minutes. Sessions never refresh,
+		// so session age is sign-in age.
+		session: {
+			expiresIn: 604800,
+			freshAge: 600,
+			disableSessionRefresh: true,
+			cookieCache: { enabled: false }
+		},
 		advanced: {
 			useSecureCookies: url.protocol === 'https:',
 			defaultCookieAttributes: {

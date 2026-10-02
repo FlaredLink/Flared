@@ -37,11 +37,17 @@ The unmodified library fails three tested D1 invariants: wrong-attempt restorati
 Callers must:
 
 1. Use the shared identity migration and adapter, without secondary storage, custom verification schema/identifier settings or verification hooks.
-2. Construct only the trusted pinned sign-in OTP and magic-link plugins. Plugin initialization hooks are a trusted composer concern; they cannot all be introspected by the guard.
+2. Construct only the trusted pinned sign-in OTP, magic-link and passkey plugins; build the passkey plugin with `createPasskeyPlugin` from `@flared/server/auth/passkey`. Plugin initialization hooks are a trusted composer concern; they cannot all be introspected by the guard.
 3. Await the auth instance's `$context`, then install guards before exposing any API.
-4. Wrap each sign-in issuance/verification call in its own `withIdentityProofScope('issue' | 'verify', ...)`. Scope state is isolated across simultaneous calls, including calls sharing an instance.
+4. Wrap each sign-in issuance/verification call in its own `withIdentityProofScope('issue' | 'verify', ...)`. Passkey options calls issue a challenge; passkey verification calls consume it. Scope state is isolated across simultaneous calls, including calls sharing an instance.
 5. Expose only intended sign-in server methods through validated routes. Do not mount the generic library HTTP handler or expose password reset, email change, other OTP types or unscoped proof operations.
 6. Clean expired verification rows, including consumed tombstones, in bounded batches using an expiry predicate.
+
+## Passkeys
+
+`createPasskeyPlugin(origin, rpName)` pins `@better-auth/passkey` 1.7.6 to the configured app origin and its host as the relying party. It requires a discoverable credential and user verification. The library itself skips the user-verification check, so the plugin's hooks refuse a ceremony without it before anything is stored. Registration needs a session created in the last 10 minutes (`freshAge`). Library deletion needs only a session, so the composing application must check freshness before it deletes a passkey. Identity migration `0003_passkey.sql` adds the `passkey` table; deleting a user deletes their passkeys.
+
+`tests/passkey-probe.test.ts` proves the plugin under workerd and D1 with a software authenticator: single-use challenges under concurrent verification, replay refusal, wrong origin and relying party, missing user verification, ownership on rename and delete, immediate effect of deletion, and the seven-day session. The library answers a registration with a wrong origin or relying party with 500, not 400.
 
 The harness uses `2026-08-22` and `nodejs_compat`; this is the latest compatibility date supported by the pinned test runtime. The guarded probe passes 16 tests. `FLARED_PROBE_BASELINE=1 bun run test:auth-probe` deliberately reproduces the three failures against unmodified storage and exits nonzero; it is diagnostic, not the passing CI command.
 

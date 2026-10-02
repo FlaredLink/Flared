@@ -5,6 +5,7 @@
 	"license": "AGPL-3.0-only",
 	"exports": {
 		"./auth/options": "./src/auth/options.ts",
+		"./auth/passkey": "./src/auth/passkey.ts",
 		"./auth/session": "./src/auth/session.ts",
 		"./email": "./src/email/transport.ts",
 		"./web": "./src/web/forward.ts",
@@ -13,6 +14,7 @@
 		"./redirect": "./src/redirect.ts"
 	},
 	"dependencies": {
+		"@better-auth/passkey": "1.7.6",
 		"@flared/contracts": "workspace:*",
 		"@flared/data": "workspace:*",
 		"better-auth": "1.7.6",

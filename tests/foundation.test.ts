@@ -11,6 +11,7 @@ describe('shared authentication boundaries', () => {
 	it('configures an absolute host-only secure session', () => {
 		const options = createSessionOptions('https://flared.link');
 		expect(options.session?.expiresIn).toBe(604800);
+		expect(options.session?.freshAge).toBe(600);
 		expect(options.session?.disableSessionRefresh).toBe(true);
 		expect(options.session?.cookieCache?.enabled).toBe(false);
 		expect(options.advanced?.defaultCookieAttributes).toEqual({
