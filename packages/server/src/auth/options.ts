@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { BetterAuthOptions } from 'better-auth';
+
+// Credential changes need a sign-in from this many seconds ago. Sessions never refresh, so
+// session age is sign-in age.
+export const freshSessionSeconds = 600;
+
 export function createSessionOptions(
 	origin: string
 ): Pick<BetterAuthOptions, 'baseURL' | 'trustedOrigins' | 'session' | 'advanced'> {
@@ -18,11 +23,9 @@ export function createSessionOptions(
 	return {
 		baseURL: origin,
 		trustedOrigins: [origin],
-		// Credential changes need a sign-in from the last 10 minutes. Sessions never refresh,
-		// so session age is sign-in age.
 		session: {
 			expiresIn: 604800,
-			freshAge: 600,
+			freshAge: freshSessionSeconds,
 			disableSessionRefresh: true,
 			cookieCache: { enabled: false }
 		},

@@ -3,7 +3,7 @@ import { env } from 'cloudflare:workers';
 import migration from '../packages/data/migrations/identity/0001_auth.sql?raw';
 import { describe, expect, it } from 'vitest';
 import { createSessionOptions } from '../packages/server/src/auth/options';
-import { readPrincipal } from '../packages/server/src/auth/session';
+import { freshUntil, readPrincipal } from '../packages/server/src/auth/session';
 import { createEmailTransport } from '../packages/server/src/email/transport';
 import { forwardAuthRequest } from '../packages/server/src/web/forward';
 
@@ -29,7 +29,7 @@ describe('shared authentication boundaries', () => {
 			async getSession() {
 				return {
 					user: { id: 'user-1', email: 'user@example.com', emailVerified: false },
-					session: { expiresAt: new Date(now + 10000) }
+					session: { expiresAt: new Date(now + 10000), createdAt: new Date(now - 1000) }
 				};
 			}
 		};
@@ -38,23 +38,36 @@ describe('shared authentication boundaries', () => {
 			async getSession() {
 				return {
 					user: { id: 'user-1', email: 'user@example.com', emailVerified: true },
-					session: { expiresAt: new Date(now + 10000) }
+					session: { expiresAt: new Date(now + 10000), createdAt: new Date(now - 1000) }
 				};
 			}
 		};
 		expect(await readPrincipal(valid, new Headers())).toEqual({
 			user: { id: 'user-1', email: 'user@example.com' },
-			expiresAt: new Date(now + 10000).toISOString()
+			expiresAt: new Date(now + 10000).toISOString(),
+			signedInAt: new Date(now - 1000).toISOString()
 		});
 		const expired = {
 			async getSession() {
 				return {
 					user: { id: 'user-1', email: 'user@example.com', emailVerified: true },
-					session: { expiresAt: new Date(now - 1) }
+					session: { expiresAt: new Date(now - 1), createdAt: new Date(now - 1000) }
 				};
 			}
 		};
 		expect(await readPrincipal(expired, new Headers())).toBeNull();
+	});
+	it('counts a session as fresh for 10 minutes after its sign-in', () => {
+		const principal = {
+			user: { id: 'user-1', email: 'user@example.com' },
+			expiresAt: new Date(Date.UTC(2026, 9, 9)).toISOString(),
+			signedInAt: new Date(Date.UTC(2026, 9, 2)).toISOString()
+		};
+		const signedIn = Date.UTC(2026, 9, 2);
+		expect(freshUntil(principal, signedIn + 599999)).toBe(
+			new Date(signedIn + 600000).toISOString()
+		);
+		expect(freshUntil(principal, signedIn + 600000)).toBeNull();
 	});
 	it('turns provider rejection into a sanitized delivery error', async () => {
 		const provider = {
