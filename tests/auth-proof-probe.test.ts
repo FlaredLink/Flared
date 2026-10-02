@@ -130,7 +130,7 @@ beforeEach(async () => {
 });
 afterEach(() => vi.useRealTimers());
 
-describe('pinned Better Auth 1.7.6 on real Workers/D1, transactions disabled', () => {
+describe('pinned Better Auth 1.7.7 on real Workers/D1, transactions disabled', () => {
 	it('allows exactly one session from 20 parallel OTP redemptions, then rejects replay', async () => {
 		for (let round = 0; round < 3; round++) {
 			const email = `otp-${round}@example.com`;

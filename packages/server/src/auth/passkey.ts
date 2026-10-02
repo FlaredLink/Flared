@@ -11,7 +11,7 @@ function notVerified(): never {
 	});
 }
 
-// 1.7.6 verifies both ceremonies with requireUserVerification: false. The hooks run before the
+// 1.7.7 verifies both ceremonies with requireUserVerification: false. The hooks run before the
 // passkey, counter, or session is written, so a credential without user verification is
 // refused there.
 export function createPasskeyPlugin(origin: string, rpName: string) {

@@ -52,7 +52,7 @@ function nextAttempt(previous: string, replacement: string): boolean {
 	);
 }
 /**
- * Storage correction for Better Auth 1.7.6 sign-in OTP / magic-link plugins, also used by
+ * Storage correction for Better Auth 1.7.7 sign-in OTP / magic-link plugins, also used by
  * passkey ceremonies: options issue a challenge, verification consumes it exactly once.
  * Install only after awaited $context, before exposing the route facade.
  * Requires the fixed shared schema, plain identifiers, D1, and no verification

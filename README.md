@@ -46,7 +46,7 @@ A tenant becomes active when routing and its analytics shard both hold its polic
 
 ## Authentication integration
 
-The current sign-in proof storage integration is pinned to Better Auth 1.7.6 with the Email OTP and Magic Link plugins. Run `bun run test:auth-probe` before changing its library, schema or runtime dependencies.
+The current sign-in proof storage integration is pinned to Better Auth 1.7.7 with the Email OTP and Magic Link plugins. Run `bun run test:auth-probe` before changing its library, schema or runtime dependencies.
 
 The unmodified library fails three tested D1 invariants: wrong-attempt restoration overlapping resend, expiry deletion overlapping resend, and rejection exactly at expiry. `installD1ProofGuards` fixes only the verification storage layer, using atomic D1 claims and generation-bound restoration. The library retains hashing, code/token verification, attempt policy, accounts and sessions.
 
@@ -61,7 +61,7 @@ Callers must:
 
 ## Passkeys
 
-`createPasskeyPlugin(origin, rpName)` pins `@better-auth/passkey` 1.7.6 to the configured app origin and its host as the relying party. It requires a discoverable credential and user verification. The library itself skips the user-verification check, so the plugin's hooks refuse a ceremony without it before anything is stored. Registration needs a session created in the last 10 minutes (`freshAge`). Library deletion needs only a session, so the composing application must check freshness before it deletes a passkey. `confirmWithPasskey` in `@flared/ui/passkeys/client` posts to `/api/auth/reauth/passkey/options` and `/verify`. The library signs in whoever owns the passkey, so an edition that serves those routes must refuse a passkey that does not belong to the signed-in user before verification. Identity migration `0003_passkey.sql` adds the `passkey` table; deleting a user deletes their passkeys.
+`createPasskeyPlugin(origin, rpName)` pins `@better-auth/passkey` 1.7.7 to the configured app origin and its host as the relying party. It requires a discoverable credential and user verification. The library itself skips the user-verification check, so the plugin's hooks refuse a ceremony without it before anything is stored. Registration needs a session created in the last 10 minutes (`freshAge`). Library deletion needs only a session, so the composing application must check freshness before it deletes a passkey. `confirmWithPasskey` in `@flared/ui/passkeys/client` posts to `/api/auth/reauth/passkey/options` and `/verify`. The library signs in whoever owns the passkey, so an edition that serves those routes must refuse a passkey that does not belong to the signed-in user before verification. Identity migration `0003_passkey.sql` adds the `passkey` table; deleting a user deletes their passkeys.
 
 `tests/passkey-probe.test.ts` proves the plugin under workerd and D1 with a software authenticator: single-use challenges under concurrent verification, replay refusal, wrong origin and relying party, missing user verification, ownership on rename and delete, immediate effect of deletion, and the seven-day session. The library answers a registration with a wrong origin or relying party with 500, not 400.
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Matches getAuthTables from Better Auth 1.7.6 with emailOTP, magicLink, passkey, and apiKey.
+// Matches getAuthTables from Better Auth 1.7.7 with emailOTP, magicLink, passkey, and apiKey.
 import { sqliteTable, text, integer, index } from 'drizzle-orm/sqlite-core';
 const time = (name: string) => integer(name, { mode: 'timestamp_ms' });
 export const user = sqliteTable('user', {

@@ -181,7 +181,7 @@ describe('passkey registration', () => {
 		expect(await registrationOptions(stale)).toMatchObject({ status: 403 });
 	});
 
-	// 1.7.6 wraps SimpleWebAuthn's origin and relying-party errors as 500; the user-verification
+	// 1.7.7 wraps SimpleWebAuthn's origin and relying-party errors as 500; the user-verification
 	// hook raises 400. Each stores nothing, and the facade reports them all the same way.
 	it('refuses a wrong origin, a wrong relying party, and a missing user verification', async () => {
 		const cases: [CeremonyChanges, number][] = [

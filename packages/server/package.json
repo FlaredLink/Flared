@@ -18,11 +18,11 @@
 		"./auth/api-tokens": "./src/auth/api-tokens.ts"
 	},
 	"dependencies": {
-		"@better-auth/api-key": "1.7.6",
-		"@better-auth/passkey": "1.7.6",
+		"@better-auth/api-key": "1.7.7",
+		"@better-auth/passkey": "1.7.7",
 		"@flared/contracts": "workspace:*",
 		"@flared/data": "workspace:*",
-		"better-auth": "1.7.6",
+		"better-auth": "1.7.7",
 		"hono": "4.13.12"
 	}
 }
