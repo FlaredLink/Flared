@@ -1,0 +1,11 @@
+{
+	"name": "@flared/contracts",
+	"private": true,
+	"type": "module",
+	"license": "AGPL-3.0-only",
+	"exports": {
+		"./links": "./src/links.ts",
+		"./errors": "./src/errors.ts",
+		"./reserved": "./src/reserved.ts"
+	}
+}

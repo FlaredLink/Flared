@@ -1,0 +1,23 @@
+{
+	"name": "@flared/ui",
+	"private": true,
+	"type": "module",
+	"license": "AGPL-3.0-only",
+	"exports": {
+		"./links/LinkCreateForm.svelte": {
+			"types": "./src/links/LinkCreateForm.svelte",
+			"svelte": "./src/links/LinkCreateForm.svelte"
+		},
+		"./links/LinkList.svelte": {
+			"types": "./src/links/LinkList.svelte",
+			"svelte": "./src/links/LinkList.svelte"
+		},
+		"./links/messages": "./src/links/messages.ts"
+	},
+	"dependencies": {
+		"@flared/contracts": "workspace:*"
+	},
+	"peerDependencies": {
+		"svelte": "^5.57.1"
+	}
+}

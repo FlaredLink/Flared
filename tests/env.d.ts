@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+declare namespace Cloudflare {
+	interface Env {
+		UNCONFIGURED_IDENTITY: D1Database;
+		SINGLE_IDENTITY: D1Database;
+		MULTI_IDENTITY: D1Database;
+		ROUTING: D1Database;
+		LINKS_IDENTITY: D1Database;
+		LINKS_ROUTING: D1Database;
+		IDENTITY_MIGRATIONS: import('cloudflare:test').D1Migration[];
+		ROUTING_MIGRATIONS: import('cloudflare:test').D1Migration[];
+	}
+}

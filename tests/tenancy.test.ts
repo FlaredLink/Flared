@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { env } from 'cloudflare:workers';
-import { applyD1Migrations, type D1Migration } from 'cloudflare:test';
+import { applyD1Migrations } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { applyRoutingPolicy } from '../packages/data/src/routing-policy';
 import { createTenant, readInstallationMode, type NewTenant } from '../packages/data/src/tenancy';
@@ -10,19 +10,6 @@ import {
 	retryRoutingProjections,
 	TenancyError
 } from '../packages/server/src/tenancy';
-
-declare global {
-	namespace Cloudflare {
-		interface Env {
-			UNCONFIGURED_IDENTITY: D1Database;
-			SINGLE_IDENTITY: D1Database;
-			MULTI_IDENTITY: D1Database;
-			ROUTING: D1Database;
-			IDENTITY_MIGRATIONS: D1Migration[];
-			ROUTING_MIGRATIONS: D1Migration[];
-		}
-	}
-}
 
 const limits = { activeLinkLimit: 100, monthlyClickLimit: 5000, retentionDays: 30, domainLimit: 1 };
 

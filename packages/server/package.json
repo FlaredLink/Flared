@@ -8,10 +8,13 @@
 		"./auth/session": "./src/auth/session.ts",
 		"./email": "./src/email/transport.ts",
 		"./web": "./src/web/forward.ts",
-		"./tenancy": "./src/tenancy.ts"
+		"./tenancy": "./src/tenancy.ts",
+		"./api": "./src/api.ts"
 	},
 	"dependencies": {
+		"@flared/contracts": "workspace:*",
 		"@flared/data": "workspace:*",
-		"better-auth": "1.7.6"
+		"better-auth": "1.7.6",
+		"hono": "4.13.12"
 	}
 }

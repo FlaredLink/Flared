@@ -27,6 +27,16 @@
 			"binding": "ROUTING",
 			"database_name": "tenancy-routing",
 			"database_id": "00000000-0000-0000-0000-000000000014"
+		},
+		{
+			"binding": "LINKS_IDENTITY",
+			"database_name": "links-identity",
+			"database_id": "00000000-0000-0000-0000-000000000015"
+		},
+		{
+			"binding": "LINKS_ROUTING",
+			"database_name": "links-routing",
+			"database_id": "00000000-0000-0000-0000-000000000016"
 		}
 	]
 }
