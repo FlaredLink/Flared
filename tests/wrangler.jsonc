@@ -7,6 +7,26 @@
 			"binding": "IDENTITY",
 			"database_name": "auth-probe",
 			"database_id": "00000000-0000-0000-0000-000000000001"
+		},
+		{
+			"binding": "UNCONFIGURED_IDENTITY",
+			"database_name": "tenancy-unconfigured",
+			"database_id": "00000000-0000-0000-0000-000000000011"
+		},
+		{
+			"binding": "SINGLE_IDENTITY",
+			"database_name": "tenancy-single",
+			"database_id": "00000000-0000-0000-0000-000000000012"
+		},
+		{
+			"binding": "MULTI_IDENTITY",
+			"database_name": "tenancy-multi",
+			"database_id": "00000000-0000-0000-0000-000000000013"
+		},
+		{
+			"binding": "ROUTING",
+			"database_name": "tenancy-routing",
+			"database_id": "00000000-0000-0000-0000-000000000014"
 		}
 	]
 }

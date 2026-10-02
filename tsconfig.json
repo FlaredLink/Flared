@@ -6,7 +6,7 @@
 		"strict": true,
 		"noEmit": true,
 		"skipLibCheck": true,
-		"types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers", "node"],
+		"types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers/types", "node"],
 		"lib": ["ES2022"]
 	},
 	"include": ["tests/**/*.ts", "packages/**/*.ts"]

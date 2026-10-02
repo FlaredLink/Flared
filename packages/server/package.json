@@ -7,9 +7,11 @@
 		"./auth/options": "./src/auth/options.ts",
 		"./auth/session": "./src/auth/session.ts",
 		"./email": "./src/email/transport.ts",
-		"./web": "./src/web/forward.ts"
+		"./web": "./src/web/forward.ts",
+		"./tenancy": "./src/tenancy.ts"
 	},
 	"dependencies": {
+		"@flared/data": "workspace:*",
 		"better-auth": "1.7.6"
 	}
 }

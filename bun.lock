@@ -32,6 +32,7 @@
     "packages/server": {
       "name": "@flared/server",
       "dependencies": {
+        "@flared/data": "workspace:*",
         "better-auth": "1.7.6",
       },
     },

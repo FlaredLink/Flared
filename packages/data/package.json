@@ -6,7 +6,9 @@
 	"exports": {
 		"./identity": "./src/identity.ts",
 		"./identity-adapter": "./src/identity-adapter.ts",
-		"./identity-proof-guards": "./src/identity-proof-guards.ts"
+		"./identity-proof-guards": "./src/identity-proof-guards.ts",
+		"./routing-policy": "./src/routing-policy.ts",
+		"./tenancy": "./src/tenancy.ts"
 	},
 	"dependencies": {
 		"better-auth": "1.7.6",
