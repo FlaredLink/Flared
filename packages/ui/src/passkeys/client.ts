@@ -17,7 +17,10 @@ export const passkeyRoutes = {
 	registerVerify: '/api/auth/passkey/register/verify',
 	list: '/api/auth/passkeys',
 	rename: '/api/auth/passkey/rename',
-	delete: '/api/auth/passkey/delete'
+	delete: '/api/auth/passkey/delete',
+	// Confirms the signed-in user with one of their own passkeys; a fresh sign-in follows.
+	reauthOptions: '/api/auth/reauth/passkey/options',
+	reauthVerify: '/api/auth/reauth/passkey/verify'
 } as const;
 
 // CANCELLED: the person closed the browser prompt or it timed out. UNSUPPORTED: no WebAuthn.
@@ -75,9 +78,21 @@ export function passkeyAutofillSupported(): Promise<boolean> {
 
 // With autofill, the browser offers saved passkeys from an input marked
 // autocomplete="username webauthn" and waits until the person picks one.
-export async function signInWithPasskey(autofill = false): Promise<PasskeyResult> {
+export function signInWithPasskey(autofill = false): Promise<PasskeyResult> {
+	return authenticate(passkeyRoutes.signInOptions, passkeyRoutes.signInVerify, autofill);
+}
+
+export function confirmWithPasskey(): Promise<PasskeyResult> {
+	return authenticate(passkeyRoutes.reauthOptions, passkeyRoutes.reauthVerify, false);
+}
+
+async function authenticate(
+	optionsPath: string,
+	verifyPath: string,
+	autofill: boolean
+): Promise<PasskeyResult> {
 	if (!passkeysSupported()) return { ok: false, code: 'UNSUPPORTED' };
-	const issued = await post(passkeyRoutes.signInOptions, {});
+	const issued = await post(optionsPath, {});
 	const optionsJSON = options(issued.value);
 	if (!optionsJSON) return outcome(issued);
 	let response: unknown;
@@ -89,7 +104,7 @@ export async function signInWithPasskey(autofill = false): Promise<PasskeyResult
 	} catch (error) {
 		return failure(error);
 	}
-	return outcome(await post(passkeyRoutes.signInVerify, { response }));
+	return outcome(await post(verifyPath, { response }));
 }
 
 export async function addPasskey(name: string): Promise<PasskeyResult> {
