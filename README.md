@@ -19,10 +19,10 @@ Tests run locally in Cloudflare's workerd runtime with real D1 storage. They req
 
 ## Shared packages
 
-- `@flared/contracts`: link input validation, stable error codes, the shared reserved-path list, the passkey summary shown to account pages, and the click event and analytics response contracts (`@flared/contracts/analytics`).
+- `@flared/contracts`: link input validation, stable error codes, API token scopes and responses (`@flared/contracts/tokens`), the shared reserved-path list, the passkey summary shown to account pages, and the click event and analytics response contracts (`@flared/contracts/analytics`).
 - `@flared/data`: identity, tenancy, routing and analytics tables, the D1/Drizzle adapter and versioned migrations.
 - `@flared/server`: absolute session defaults, safe principal extraction, structured Cloudflare email delivery, trusted service forwarding, the `/v1` links and analytics API, the short-link redirect handler, the click Queue consumer (`@flared/server/analytics`) and the analytics shard map (`@flared/server/shards`).
-- `@flared/ui`: the link create form and link list, the link analytics view, the passkey list, and the browser passkey ceremonies (`@flared/ui/passkeys/client`) against the shared `/api/auth/passkey/*` routes.
+- `@flared/ui`: the link create form and link list, the link analytics view, the API token list (`@flared/ui/tokens/TokenList.svelte`), the passkey list, and the browser passkey ceremonies (`@flared/ui/passkeys/client`) against the shared `/api/auth/passkey/*` routes.
 
 Import declared subpath exports. Apply `packages/data/migrations/identity` to the identity database, `packages/data/migrations/routing` to the routing database, and `packages/data/migrations/analytics` to every analytics shard through a migration runner; never modify a released migration.
 
