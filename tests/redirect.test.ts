@@ -17,12 +17,19 @@ const start = Date.UTC(2026, 9, 2);
 // Each handler gets its own cache, so snapshots never leak between tests.
 let cacheCounter = 0;
 function handler(
-	options: { now?: () => number; db?: D1Database; cacheName?: string; clicks?: ClickSink } = {}
+	options: {
+		now?: () => number;
+		db?: D1Database;
+		cacheName?: string;
+		clicks?: ClickSink;
+		homeUrl?: string;
+	} = {}
 ) {
 	cacheCounter += 1;
 	return createRedirectHandler({
 		routing: options.db ?? routing(),
 		appOrigin,
+		homeUrl: options.homeUrl,
 		cacheName: options.cacheName ?? `redirect-test-${cacheCounter}`,
 		clicks: options.clicks,
 		now: options.now ?? (() => start)
@@ -165,6 +172,56 @@ describe('methods', () => {
 			expect(response.status, method).toBe(405);
 			expect(response.headers.get('allow'), method).toBe('GET, HEAD');
 		}
+	});
+});
+
+describe('unavailable page', () => {
+	const html = { accept: 'text/html,application/xhtml+xml,*/*;q=0.8' };
+	const open = (app: ReturnType<typeof handler>, url: string, method = 'GET') =>
+		app.fetch(new Request(url, { method, headers: html, redirect: 'manual' }));
+
+	it('shows browsers one page for unknown and disabled links without repeating the path', async () => {
+		await addLink('page-off', 'https://example.com/off');
+		await setLink('page-off', { status: 'disabled' });
+		const app = handler({ homeUrl: appOrigin });
+		const bodies = new Set<string>();
+		for (const path of ['/page-missing', '/page-off', '/%3Cscript%3E']) {
+			const response = await open(app, `https://short.example${path}`);
+			expect(response.status, path).toBe(404);
+			expect(response.headers.get('content-type'), path).toBe('text/html; charset=utf-8');
+			expect(response.headers.get('content-security-policy'), path).toContain("default-src 'none'");
+			expect(response.headers.get('cache-control'), path).toBe('no-store');
+			expect(response.headers.get('vary'), path).toBe('Accept');
+			const body = await response.text();
+			expect(body, path).toContain('This link isn’t available');
+			expect(body, path).not.toContain('page-');
+			expect(body, path).not.toContain('script');
+			bodies.add(body);
+		}
+		expect(bodies.size).toBe(1);
+		expect([...bodies][0]).toContain(`<a href="${appOrigin}">Flared</a>`);
+	});
+
+	it('leaves out the home link without a home URL', async () => {
+		const body = await (await open(handler(), 'https://short.example/page-missing')).text();
+		expect(body).toContain('This link isn’t available');
+		expect(body).not.toContain('<a ');
+	});
+
+	it('shows browsers a retry page on an outage and keeps HEAD empty', async () => {
+		const app = handler({ db: env.BROKEN_ROUTING });
+		const response = await open(app, 'https://short.example/launch');
+		expect(response.status).toBe(503);
+		expect(await response.text()).toContain('Try the link again in a minute');
+		const head = await open(app, 'https://short.example/launch', 'HEAD');
+		expect(head.status).toBe(503);
+		expect(await head.text()).toBe('');
+	});
+
+	it('keeps plain text for clients that do not ask for HTML', async () => {
+		const response = await visit(handler(), 'https://short.example/page-missing');
+		expect(response.headers.get('content-type')).toBe('text/plain; charset=utf-8');
+		expect(await response.text()).toBe('Not found');
 	});
 });
 

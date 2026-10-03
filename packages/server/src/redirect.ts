@@ -9,6 +9,11 @@ import { slugPattern } from '@flared/contracts/links';
 import { isReservedPath } from '@flared/contracts/reserved';
 import { findRedirectTarget, isActiveDomain, type RedirectTarget } from '@flared/data/links';
 import { buildClickEvent, isAutomated } from './clicks';
+import {
+	unavailablePage,
+	unavailablePageHeaders,
+	type UnavailableReason
+} from './unavailable-page';
 
 // The click Queue producer, or any sink with the same contract.
 export interface ClickSink {
@@ -19,6 +24,8 @@ export interface RedirectDependencies {
 	routing: D1Database;
 	// The exact application origin from deployment configuration. Reserved paths go there.
 	appOrigin: string;
+	// The product home that the not-found page links to. Without it, the page has no link.
+	homeUrl?: string;
 	// A new name discards every snapshot, for example after a routing restore.
 	cacheName?: string;
 	// Without a sink, redirects work and no click is recorded.
@@ -49,6 +56,23 @@ function plain(
 			'cache-control': 'no-store',
 			...headers
 		}
+	});
+}
+
+// Browsers get a page; other clients keep the plain-text body.
+function unavailable(
+	request: Request,
+	reason: UnavailableReason,
+	homeUrl: string | undefined
+): Response {
+	const status = reason === 'not-found' ? 404 : 503;
+	if (!request.headers.get('accept')?.includes('text/html'))
+		return plain(request, status, reason === 'not-found' ? 'Not found' : 'Service unavailable', {
+			vary: 'Accept'
+		});
+	return new Response(request.method === 'HEAD' ? null : unavailablePage(reason, homeUrl), {
+		status,
+		headers: { ...unavailablePageHeaders, 'cache-control': 'no-store', vary: 'Accept' }
 	});
 }
 
@@ -125,6 +149,9 @@ export function createRedirectHandler(dependencies: RedirectDependencies) {
 		return pending.then(() => response);
 	}
 
+	const notFound = (request: Request) => unavailable(request, 'not-found', dependencies.homeUrl);
+	const failed = (request: Request) => unavailable(request, 'unavailable', dependencies.homeUrl);
+
 	async function fetch(request: Request, background?: BackgroundWork): Promise<Response> {
 		if (request.method !== 'GET' && request.method !== 'HEAD')
 			return plain(request, 405, 'Method not allowed', { allow: 'GET, HEAD' });
@@ -137,14 +164,14 @@ export function createRedirectHandler(dependencies: RedirectDependencies) {
 				known = await isActiveDomain(dependencies.routing, hostname);
 			} catch {
 				console.error(JSON.stringify({ event: 'redirect_lookup_failed' }));
-				return plain(request, 503, 'Service unavailable');
+				return failed(request);
 			}
-			if (!known) return plain(request, 404, 'Not found');
+			if (!known) return notFound(request);
 			return redirect(new URL(`${url.pathname}${url.search}`, dependencies.appOrigin).toString());
 		}
 
 		const slug = url.pathname.slice(1);
-		if (!slugPattern.test(slug)) return plain(request, 404, 'Not found');
+		if (!slugPattern.test(slug)) return notFound(request);
 
 		const key = new Request(`https://${hostname}/${slug}`);
 		const cached = await readSnapshot(key);
@@ -157,10 +184,10 @@ export function createRedirectHandler(dependencies: RedirectDependencies) {
 			target = await findRedirectTarget(dependencies.routing, hostname, slug);
 		} catch {
 			console.error(JSON.stringify({ event: 'redirect_lookup_failed' }));
-			return plain(request, 503, 'Service unavailable');
+			return failed(request);
 		}
-		if (!target) return plain(request, 404, 'Not found');
-		if (now() >= validUntil) return plain(request, 503, 'Service unavailable');
+		if (!target) return notFound(request);
+		if (now() >= validUntil) return failed(request);
 
 		return redirectTo(request, target, background, [storeSnapshot(key, { ...target, validUntil })]);
 	}
