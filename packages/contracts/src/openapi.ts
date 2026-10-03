@@ -3,9 +3,13 @@
 // in this package; tests check it against the API's routes and real responses. The session-only
 // token management routes for the dashboard are not part of the public API.
 import { deviceCategories } from './analytics';
+import { domainFailures, domainStates } from './domains';
 import { errorStatus } from './errors';
 import { maxDestinationLength, maxIdempotencyKeyLength, maxTitleLength } from './links';
 import { tokenScopes, type TokenScope } from './tokens';
+
+// Duplicated from the client's QR module, which this package cannot import.
+const qrSizes = { minimum: 128, maximum: 2048, default: 512 };
 
 export const openApiVersion = '1.0.0';
 
@@ -115,6 +119,44 @@ const schemas = {
 		clickLimit: count,
 		asOf: dateTime
 	}),
+	Domain: object({
+		id: { type: 'string' },
+		hostname: { type: 'string' },
+		kind: {
+			type: 'string',
+			enum: ['platform', 'workspace'],
+			description: 'platform: provided for every workspace. workspace: added by yours.'
+		},
+		state: {
+			type: 'string',
+			enum: [...domainStates],
+			description: 'Only an active domain serves links.'
+		},
+		isDefault: { type: 'boolean', description: 'Used for links created without a domain.' },
+		records: {
+			type: 'array',
+			items: object({
+				type: { const: 'CNAME' },
+				name: { type: 'string' },
+				value: { type: 'string' }
+			}),
+			description: 'The DNS records to create. Empty for platform domains.'
+		},
+		error: nullable(
+			object({ code: { type: 'string', enum: [...domainFailures] }, message: { type: 'string' } })
+		),
+		activeLinks: {
+			...nullable(count),
+			description: 'Active links that stop when the domain is removed; null for platform domains.'
+		},
+		createdAt: dateTime,
+		activatedAt: nullable(dateTime)
+	}),
+	DomainPage: object({
+		domains: { type: 'array', items: ref('Domain') },
+		used: { ...count, description: 'Workspace domains that count against the limit.' },
+		limit: count
+	}),
 	Identity: {
 		oneOf: [
 			object({
@@ -138,6 +180,11 @@ const schemas = {
 const json = (schema: unknown) => ({ 'application/json': { schema } });
 const errorResponse = { description: 'An error. See the code.', content: json(ref('Error')) };
 const linkId = { name: 'id', in: 'path', required: true, schema: { type: 'string' } };
+const domainId = { name: 'id', in: 'path', required: true, schema: { type: 'string' } };
+const domainResponse = (description: string) => ({
+	description,
+	content: json(object({ domain: ref('Domain') }))
+});
 
 function operation(
 	summary: string,
@@ -258,6 +305,94 @@ export function openApiDocument(serverUrl: string) {
 							{ name: 'to', in: 'query', schema: day }
 						]
 					}
+				)
+			},
+			'/links/{id}/qr': {
+				get: operation(
+					'Download a QR code for a link',
+					'links:read',
+					{
+						'200': {
+							description: 'A QR code of the short URL, black on white.',
+							content: {
+								'image/svg+xml': { schema: { type: 'string' } },
+								'image/png': { schema: { type: 'string', format: 'binary' } }
+							}
+						}
+					},
+					{
+						parameters: [
+							linkId,
+							{
+								name: 'format',
+								in: 'query',
+								schema: { type: 'string', enum: ['svg', 'png'], default: 'svg' }
+							},
+							{
+								name: 'size',
+								in: 'query',
+								description: 'The image width and height in pixels.',
+								schema: { type: 'integer', ...qrSizes }
+							},
+							{
+								name: 'download',
+								in: 'query',
+								description: 'Send 1 to download the image as a file.',
+								schema: { type: 'string', enum: ['1'] }
+							}
+						]
+					}
+				)
+			},
+			'/domains': {
+				get: operation('List domains you can use', 'domains:read', {
+					'200': {
+						description: 'Platform domains, then your workspace domains.',
+						content: json(ref('DomainPage'))
+					}
+				}),
+				post: operation(
+					'Add a custom domain',
+					'domains:write',
+					{
+						'201': domainResponse('The domain. Create its DNS records next.'),
+						'200': domainResponse('Your workspace already has this domain.')
+					},
+					{
+						requestBody: {
+							required: true,
+							content: json(
+								object({
+									hostname: {
+										type: 'string',
+										description: 'A subdomain such as go.example.com.'
+									}
+								})
+							)
+						}
+					}
+				)
+			},
+			'/domains/{id}': {
+				get: operation(
+					'Read a domain',
+					'domains:read',
+					{ '200': domainResponse('The domain.') },
+					{ parameters: [domainId] }
+				),
+				delete: operation(
+					'Remove a custom domain',
+					'domains:write',
+					{ '204': { description: 'Removed. Its links stop within a minute.' } },
+					{ parameters: [domainId] }
+				)
+			},
+			'/domains/{id}/check': {
+				post: operation(
+					'Check a custom domain now',
+					'domains:write',
+					{ '200': domainResponse('The domain after the check.') },
+					{ parameters: [domainId] }
 				)
 			},
 			'/usage': {

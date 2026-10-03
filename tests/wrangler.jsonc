@@ -122,6 +122,21 @@
 			"binding": "OAUTH_ANALYTICS",
 			"database_name": "oauth-analytics",
 			"database_id": "00000000-0000-0000-0000-000000000033"
+		},
+		{
+			"binding": "DOMAINS_IDENTITY",
+			"database_name": "domains-identity",
+			"database_id": "00000000-0000-0000-0000-000000000034"
+		},
+		{
+			"binding": "DOMAINS_ROUTING",
+			"database_name": "domains-routing",
+			"database_id": "00000000-0000-0000-0000-000000000035"
+		},
+		{
+			"binding": "DOMAINS_ANALYTICS",
+			"database_name": "domains-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000036"
 		}
 	]
 }

@@ -28,6 +28,8 @@ import {
 	type TokenScope
 } from '@flared/contracts/tokens';
 import { openApiDocument } from '@flared/contracts/openapi';
+import { parseAddDomain } from '@flared/contracts/domains';
+import { defaultQrSize, maxQrSize, minQrSize, qrPng, qrSvg } from '@flared/client/qr';
 import type { ConnectedApp, ConnectedAppPage } from '@flared/contracts/oauth';
 import { deleteGrant, listGrants } from '@flared/data/oauth';
 import { countCreationAttempt } from '@flared/data/links';
@@ -41,6 +43,14 @@ import {
 } from './auth/api-tokens';
 import { freshUntil } from './auth/session';
 import { resolveTenant } from './tenancy';
+import {
+	addDomain,
+	checkDomain,
+	getDomain,
+	listDomainPage,
+	removeDomain,
+	type DomainSettings
+} from './domains';
 import {
 	ApiError,
 	changeLink,
@@ -88,6 +98,8 @@ export interface ApiDependencies {
 	// The public URL of this API from deployment configuration, such as
 	// https://api.flared.page/v1. With it, GET /v1/openapi.json serves the API description.
 	publicApiUrl?: string;
+	// Custom domains. Without a provider, domains are listed but cannot be added.
+	domains?: DomainSettings;
 	now?: () => number;
 	creationsPerMinute?: number;
 }
@@ -170,6 +182,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	const { identity, routing, appOrigin } = dependencies;
 	const now = dependencies.now ?? Date.now;
 	const creationsPerMinute = dependencies.creationsPerMinute ?? 60;
+	const domainSettings: DomainSettings = dependencies.domains ?? { reservedHostnames: [] };
 	const app = new Hono<{ Variables: Variables }>().basePath('/v1');
 
 	app.onError((error, context) => {
@@ -312,6 +325,91 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		return respond({ status: 200, body: JSON.stringify({ analytics }) });
 	});
 
+	// The short URL never changes, so the image can be kept. A disabled link keeps its code,
+	// because its address stays reserved.
+	app.get('/links/:id/qr', requireScope('links:read'), async (context) => {
+		const link = await getLink(routing, context.var.tenantId, context.req.param('id'));
+		const format = context.req.query('format') ?? 'svg';
+		if (format !== 'svg' && format !== 'png')
+			throw new ApiError('INVALID_INPUT', 'Use the format svg or png.');
+		const sizeText = context.req.query('size');
+		const size = sizeText === undefined ? defaultQrSize : Number(sizeText);
+		if (!Number.isInteger(size) || size < minQrSize || size > maxQrSize)
+			throw new ApiError('INVALID_INPUT', `Use a size from ${minQrSize} to ${maxQrSize}.`);
+		const headers: Record<string, string> = {
+			'content-type': format === 'svg' ? 'image/svg+xml' : 'image/png',
+			'cache-control': 'private, max-age=86400',
+			'x-content-type-options': 'nosniff',
+			'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'"
+		};
+		if (context.req.query('download') === '1')
+			headers['content-disposition'] = `attachment; filename="${link.slug}.${format}"`;
+		const body = format === 'svg' ? qrSvg(link.shortUrl, size) : await qrPng(link.shortUrl, size);
+		return new Response(body, { headers });
+	});
+
+	app.get('/domains', requireScope('domains:read'), async (context) => {
+		const page = await listDomainPage(routing, domainSettings, context.var.tenantId, now());
+		return respond({ status: 200, body: JSON.stringify(page) });
+	});
+
+	app.post('/domains', requireScope('domains:write'), async (context) => {
+		const { requestId, tenantId } = context.var;
+		const time = now();
+		// A separate budget from link creation, in the same table.
+		const allowance = await countCreationAttempt(routing, `${tenantId}:domains`, time, 10);
+		if (!allowance.allowed)
+			throw new ApiError(
+				'RATE_LIMITED',
+				'Too many domains added. Try again soon.',
+				allowance.retryAfterSeconds
+			);
+		const input = parseAddDomain(await readJson(context.req.raw));
+		const result = await addDomain(routing, domainSettings, {
+			tenantId,
+			hostname: input.hostname,
+			now: time
+		});
+		if (result.created)
+			console.log(JSON.stringify({ event: 'domain_added', requestId, domainId: result.domain.id }));
+		return respond({
+			status: result.created ? 201 : 200,
+			body: JSON.stringify({ domain: result.domain })
+		});
+	});
+
+	app.get('/domains/:id', requireScope('domains:read'), async (context) => {
+		const domain = await getDomain(
+			routing,
+			domainSettings,
+			context.var.tenantId,
+			context.req.param('id'),
+			now()
+		);
+		return respond({ status: 200, body: JSON.stringify({ domain }) });
+	});
+
+	app.post('/domains/:id/check', requireScope('domains:write'), async (context) => {
+		const domain = await checkDomain(routing, domainSettings, {
+			tenantId: context.var.tenantId,
+			domainId: context.req.param('id'),
+			now: now()
+		});
+		return respond({ status: 200, body: JSON.stringify({ domain }) });
+	});
+
+	app.delete('/domains/:id', requireScope('domains:write'), async (context) => {
+		const { requestId } = context.var;
+		const domainId = context.req.param('id');
+		await removeDomain(routing, domainSettings, {
+			tenantId: context.var.tenantId,
+			domainId,
+			now: now()
+		});
+		console.log(JSON.stringify({ event: 'domain_removed', requestId, domainId }));
+		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
+	});
+
 	app.get('/usage', requireScope('usage:read'), async (context) => {
 		if (!dependencies.analytics) throw new AnalyticsUnavailableError();
 		const usage = await getUsage(identity, dependencies.analytics, context.var.tenantId, now());
@@ -405,6 +503,10 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	app.all('/links', (context) => methodNotAllowed(context, 'GET, POST'));
 	app.all('/links/:id', (context) => methodNotAllowed(context, 'GET, PATCH'));
 	app.all('/links/:id/analytics', (context) => methodNotAllowed(context, 'GET'));
+	app.all('/links/:id/qr', (context) => methodNotAllowed(context, 'GET'));
+	app.all('/domains', (context) => methodNotAllowed(context, 'GET, POST'));
+	app.all('/domains/:id', (context) => methodNotAllowed(context, 'GET, DELETE'));
+	app.all('/domains/:id/check', (context) => methodNotAllowed(context, 'POST'));
 	app.all('/usage', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/me', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/tokens', (context) => methodNotAllowed(context, 'GET, POST'));

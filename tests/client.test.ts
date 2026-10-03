@@ -44,6 +44,15 @@ function api() {
 		appOrigin: origin,
 		tokenAuth: auth,
 		publicApiUrl: baseUrl,
+		domains: {
+			provider: {
+				records: (hostname) => [{ type: 'CNAME', name: hostname, value: 'customers.example' }],
+				start: async () => ({ status: 'waiting' }),
+				check: async () => ({ status: 'ready' }),
+				stop: async () => {}
+			},
+			reservedHostnames: ['brand.dev']
+		},
 		authenticate: async (request) => {
 			if (request.headers.has('authorization'))
 				return authenticateBearer(auth, identity(), request);
@@ -83,6 +92,13 @@ async function conforms(request: Request, response: Response) {
 	const operation = path ? paths[path][method] : undefined;
 	if (!path || !operation) throw new Error(`Undocumented ${request.method} ${request.url}`);
 	const documented = operation.responses[String(response.status)] ?? operation.responses.default;
+	const type = response.headers.get('content-type')?.split(';')[0] ?? '';
+	if (response.status === 204 || type.startsWith('image/')) {
+		if (response.status === 204 ? documented.content : !documented.content?.[type])
+			throw new Error(`Undocumented ${type || 'empty'} body for ${method} ${path}`);
+		seen.add(`${method} ${path} ${response.status}`);
+		return;
+	}
 	const schema = documented.content?.['application/json']?.schema;
 	if (!schema) throw new Error(`No schema for ${method} ${path} ${response.status}`);
 	const root = { components: document.components, allOf: [schema] } as unknown as Schema;
@@ -293,6 +309,44 @@ describe('API client', () => {
 			'api.flared.page'
 		])
 			expect(() => normalizeBaseUrl(unsafe), unsafe).toThrow();
+	});
+});
+
+describe('domains and QR codes', () => {
+	const raw = (path: string, token = full) =>
+		inProcess(`${baseUrl}${path}`, { headers: { authorization: `Bearer ${token}` } });
+
+	it('adds, reads, checks, and removes a domain', async () => {
+		const before = await client().listDomains();
+		expect(before).toMatchObject({ used: 0, limit: 1 });
+		expect(before.domains.map((domain) => domain.hostname)).toEqual(['short.example']);
+
+		const added = await client().addDomain('go.client.example.com');
+		expect(added).toMatchObject({ created: true, domain: { state: 'pending' } });
+		const again = await client().addDomain('go.client.example.com');
+		expect(again).toMatchObject({ created: false, domain: { id: added.domain.id } });
+
+		const read = await raw(`/domains/${added.domain.id}`);
+		expect(read.status).toBe(200);
+		expect((await client().checkDomain(added.domain.id)).state).toBe('active');
+
+		const refused = await failureOf(client(readOnly).addDomain('go.reader.example.com'));
+		expect(refused.code).toBe('INSUFFICIENT_SCOPE');
+		const taken = await failureOf(client().addDomain('go.brand.dev'));
+		expect(taken.code).toBe('DOMAIN_TAKEN');
+
+		await client().removeDomain(added.domain.id);
+		expect((await client().listDomains()).used).toBe(0);
+		const gone = await failureOf(client().checkDomain(added.domain.id));
+		expect(gone.code).toBe('NOT_FOUND');
+	});
+
+	it('serves QR codes as SVG and PNG', async () => {
+		const { link } = await client().createLink({ destination: 'https://example.com/qr' });
+		const svg = await raw(`/links/${link.id}/qr`);
+		expect(svg.headers.get('content-type')).toBe('image/svg+xml');
+		const png = await raw(`/links/${link.id}/qr?format=png`, readOnly);
+		expect(png.headers.get('content-type')).toBe('image/png');
 	});
 });
 

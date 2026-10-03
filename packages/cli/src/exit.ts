@@ -32,13 +32,17 @@ export function exitCodeFor(code: ClientErrorCode): number {
 		case 'IDEMPOTENCY_KEY_REQUIRED':
 		case 'DEFAULT_DOMAIN_UNAVAILABLE':
 		case 'DOMAIN_UNAVAILABLE':
+		case 'DOMAIN_TAKEN':
 			return exitCodes.rejected;
 		case 'PLAN_LIMIT_REACHED':
 		case 'TOKEN_LIMIT_REACHED':
+		case 'DOMAIN_LIMIT_REACHED':
 			return exitCodes.planLimit;
 		case 'RATE_LIMITED':
+		case 'DOMAIN_CHECK_TOO_SOON':
 			return exitCodes.rateLimited;
 		case 'SERVICE_UNAVAILABLE':
+		case 'DOMAINS_UNAVAILABLE':
 		case 'WORKSPACE_PENDING':
 		case 'NETWORK_ERROR':
 			return exitCodes.unavailable;

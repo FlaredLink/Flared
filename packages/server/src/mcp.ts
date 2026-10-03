@@ -32,12 +32,15 @@ export interface McpEndpointOptions {
 	now?: () => number;
 }
 
+// No tool adds or removes domains, so assistants never ask for that scope.
+const mcpScopes = tokenScopes.filter((scope) => scope !== 'domains:write');
+
 // RFC 9728 metadata for the endpoint. offline_access is a matter for the authorization server.
 export function protectedResourceMetadata(resource: string, issuer: string) {
 	return {
 		resource,
 		authorization_servers: [issuer],
-		scopes_supported: [...tokenScopes],
+		scopes_supported: [...mcpScopes],
 		bearer_methods_supported: ['header'],
 		resource_name: 'Flared'
 	};
@@ -374,7 +377,7 @@ export function createMcpEndpoint(options: McpEndpointOptions) {
 	const now = options.now ?? Date.now;
 	const metadataUrl = protectedResourceMetadataUrl(options.resource);
 	const challenge = (extra = '') =>
-		`Bearer resource_metadata="${metadataUrl}", scope="${tokenScopes.join(' ')}"${extra}`;
+		`Bearer resource_metadata="${metadataUrl}", scope="${mcpScopes.join(' ')}"${extra}`;
 
 	return async function handle(request: Request): Promise<Response> {
 		const origin = request.headers.get('origin');

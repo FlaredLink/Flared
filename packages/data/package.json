@@ -12,9 +12,11 @@
 		"./routing-policy": "./src/routing-policy.ts",
 		"./tenancy": "./src/tenancy.ts",
 		"./tokens": "./src/tokens.ts",
-		"./oauth": "./src/oauth.ts"
+		"./oauth": "./src/oauth.ts",
+		"./domains": "./src/domains.ts"
 	},
 	"dependencies": {
+		"@flared/contracts": "workspace:*",
 		"better-auth": "1.7.7",
 		"@better-auth/drizzle-adapter": "1.7.7",
 		"drizzle-orm": "0.45.3"

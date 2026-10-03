@@ -375,14 +375,3 @@ export async function findRedirectTarget(
 		destination: text(row.destination, 'destination')
 	};
 }
-
-export async function isActiveDomain(db: D1Database, hostname: string): Promise<boolean> {
-	const row = await db
-		.withSession('first-primary')
-		.prepare(
-			"SELECT 1 AS found FROM domain_namespaces n JOIN domains d ON d.id = n.id WHERE n.hostname = ? AND d.state = 'active'"
-		)
-		.bind(hostname)
-		.first();
-	return row !== null;
-}

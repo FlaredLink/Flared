@@ -7,7 +7,8 @@ import type { D1Database } from '@cloudflare/workers-types/index.ts';
 import type { ClickEvent } from '@flared/contracts/analytics';
 import { slugPattern } from '@flared/contracts/links';
 import { isReservedPath } from '@flared/contracts/reserved';
-import { findRedirectTarget, isActiveDomain, type RedirectTarget } from '@flared/data/links';
+import { activeDomainKind } from '@flared/data/domains';
+import { findRedirectTarget, type RedirectTarget } from '@flared/data/links';
 import { buildClickEvent, isAutomated } from './clicks';
 import {
 	unavailablePage,
@@ -159,14 +160,15 @@ export function createRedirectHandler(dependencies: RedirectDependencies) {
 		const hostname = url.hostname.replace(/\.$/, '');
 
 		if (isReservedPath(url.pathname)) {
-			let known: boolean;
+			let kind: Awaited<ReturnType<typeof activeDomainKind>>;
 			try {
-				known = await isActiveDomain(dependencies.routing, hostname);
+				kind = await activeDomainKind(dependencies.routing, hostname);
 			} catch {
 				console.error(JSON.stringify({ event: 'redirect_lookup_failed' }));
 				return failed(request);
 			}
-			if (!known) return notFound(request);
+			// A workspace domain serves only its links; its root is not a Flared page.
+			if (kind !== 'platform') return notFound(request);
 			return redirect(new URL(`${url.pathname}${url.search}`, dependencies.appOrigin).toString());
 		}
 

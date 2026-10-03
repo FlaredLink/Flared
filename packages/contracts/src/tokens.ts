@@ -7,13 +7,14 @@ export const tokenScopes = [
 	'links:write',
 	'analytics:read',
 	'domains:read',
+	'domains:write',
 	'usage:read'
 ] as const;
 export type TokenScope = (typeof tokenScopes)[number];
 
 export const scopePresets = {
 	full: [...tokenScopes],
-	read: tokenScopes.filter((scope) => scope !== 'links:write')
+	read: tokenScopes.filter((scope) => scope.endsWith(':read'))
 } satisfies Record<string, TokenScope[]>;
 
 // Lifetimes in days; null means the token does not expire.

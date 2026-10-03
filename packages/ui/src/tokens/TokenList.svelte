@@ -30,6 +30,7 @@
 		'links:write': 'Create and edit links',
 		'analytics:read': 'Read analytics',
 		'domains:read': 'Read domains',
+		'domains:write': 'Add and remove domains',
 		'usage:read': 'Read usage'
 	};
 	const expiryChoices: { days: TokenExpiryDays; label: string }[] = [

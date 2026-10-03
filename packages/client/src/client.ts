@@ -7,6 +7,7 @@ import {
 	type LinkAnalytics,
 	type Usage
 } from '@flared/contracts/analytics';
+import { isDomain, isDomainPage, type Domain, type DomainPage } from '@flared/contracts/domains';
 import { isErrorCode, type ErrorCode } from '@flared/contracts/errors';
 import { isLink, isLinkPage, type Link, type LinkPage } from '@flared/contracts/links';
 import { isApiIdentity, type ApiIdentity } from '@flared/contracts/tokens';
@@ -70,6 +71,11 @@ export interface FlaredClient {
 	updateLink(id: string, change: UpdateLinkRequest): Promise<Link>;
 	getAnalytics(id: string, range?: { from?: string; to?: string }): Promise<LinkAnalytics>;
 	getUsage(): Promise<Usage>;
+	listDomains(): Promise<DomainPage>;
+	// Returns the domain and whether this call added it (false: the workspace already had it).
+	addDomain(hostname: string): Promise<{ domain: Domain; created: boolean }>;
+	checkDomain(id: string): Promise<Domain>;
+	removeDomain(id: string): Promise<void>;
 }
 
 const maxRetryWaitSeconds = 30;
@@ -151,6 +157,7 @@ export function createClient(options: ClientOptions): FlaredClient {
 				}
 				throw new FlaredApiError('NETWORK_ERROR', 'Could not reach the Flared API.', null);
 			}
+			if (response.status === 204) return { status: 204, headers: response.headers, body: null };
 			if (response.ok) {
 				const body: unknown = await response.json().catch(() => undefined);
 				if (body === undefined) throw invalid(response.status);
@@ -168,6 +175,12 @@ export function createClient(options: ClientOptions): FlaredClient {
 	}
 
 	const id = (value: string) => encodeURIComponent(value);
+	async function domainFrom(promise: ReturnType<typeof request>): Promise<Domain> {
+		const { status, body } = await promise;
+		const domain = record(body)?.domain;
+		if (!isDomain(domain)) throw invalid(status);
+		return domain;
+	}
 	async function linkFrom(promise: ReturnType<typeof request>): Promise<Link> {
 		const { status, body } = await promise;
 		const link = record(body)?.link;
@@ -225,6 +238,23 @@ export function createClient(options: ClientOptions): FlaredClient {
 			const usage = record(body)?.usage;
 			if (!isUsage(usage)) throw invalid(status);
 			return usage;
+		},
+		async listDomains() {
+			const { status, body } = await request('GET', '/domains', { retry: true });
+			if (!isDomainPage(body)) throw invalid(status);
+			return body;
+		},
+		// Adding the same hostname again returns it, so a retry is safe.
+		async addDomain(hostname) {
+			const response = request('POST', '/domains', { body: { hostname }, retry: true });
+			const { status } = await response;
+			return { domain: await domainFrom(response), created: status === 201 };
+		},
+		checkDomain(domainId) {
+			return domainFrom(request('POST', `/domains/${id(domainId)}/check`, { retry: false }));
+		},
+		async removeDomain(domainId) {
+			await request('DELETE', `/domains/${id(domainId)}`, { retry: false });
 		}
 	};
 }

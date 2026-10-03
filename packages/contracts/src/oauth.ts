@@ -8,6 +8,7 @@ export const scopeDescriptions: Record<TokenScope, string> = {
 	'links:write': 'Create, edit, and turn off links',
 	'analytics:read': 'See click analytics',
 	'domains:read': 'See your domains',
+	'domains:write': 'Add and remove domains',
 	'usage:read': 'See your plan usage'
 };
 
