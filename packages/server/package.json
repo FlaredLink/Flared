@@ -18,7 +18,8 @@
 		"./auth/api-tokens": "./src/auth/api-tokens.ts",
 		"./oauth": "./src/oauth/routes.ts",
 		"./oauth/provider": "./src/oauth/provider.ts",
-		"./mcp": "./src/mcp.ts"
+		"./mcp": "./src/mcp.ts",
+		"./domains": "./src/domains.ts"
 	},
 	"dependencies": {
 		"@better-auth/api-key": "1.7.7",
