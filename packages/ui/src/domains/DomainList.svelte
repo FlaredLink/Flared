@@ -1,7 +1,12 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
 	import type { Action } from 'svelte/action';
-	import { normalizeHostname, type Domain, type DomainPage } from '@flared/contracts/domains';
+	import {
+		domainCheckIntervalMs,
+		normalizeHostname,
+		type Domain,
+		type DomainPage
+	} from '@flared/contracts/domains';
 	import { LinkInputError } from '@flared/contracts/links';
 	import { addDomain, checkDomain, domainErrorMessage, removeDomain } from './client';
 
@@ -22,6 +27,30 @@
 	let status = $state('');
 	let error = $state('');
 	let confirmingId = $state<string | null>(null);
+	// When each domain can be checked again, in epoch milliseconds. The API allows one check a
+	// minute per domain, so the button counts down instead of failing.
+	let cooldowns = $state<Record<string, number>>({});
+	let now = $state(Date.now());
+
+	$effect(() => {
+		if (Object.keys(cooldowns).length === 0) return;
+		const timer = setInterval(() => {
+			now = Date.now();
+			const waiting = Object.entries(cooldowns).filter(([, until]) => until > now);
+			if (waiting.length !== Object.keys(cooldowns).length) cooldowns = Object.fromEntries(waiting);
+		}, 1000);
+		return () => clearInterval(timer);
+	});
+
+	function secondsLeft(domainId: string): number {
+		const until = cooldowns[domainId];
+		return until === undefined ? 0 : Math.max(0, Math.ceil((until - now) / 1000));
+	}
+
+	function coolDown(domainId: string, seconds: number) {
+		now = Date.now();
+		cooldowns = { ...cooldowns, [domainId]: now + seconds * 1000 };
+	}
 
 	const dates = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 	const numbers = new Intl.NumberFormat();
@@ -82,9 +111,12 @@
 		try {
 			const result = await checkDomain(apiBase, domain.id);
 			if (!result.ok) {
-				error = domainErrorMessage(result.failure);
+				if (result.failure.code === 'DOMAIN_CHECK_TOO_SOON')
+					coolDown(domain.id, result.failure.retryAfterSeconds ?? domainCheckIntervalMs / 1000);
+				else error = domainErrorMessage(result.failure);
 				return;
 			}
+			coolDown(domain.id, domainCheckIntervalMs / 1000);
 			await onChanged();
 			status =
 				result.value.state === 'active'
@@ -163,8 +195,8 @@
 						</p>
 					{:else}
 						<p class="meta">
-							At your DNS provider, add the CNAME record below. If your DNS is on Cloudflare, either
-							proxy setting works.
+							At your DNS provider, add the CNAME record below. If your DNS is on Cloudflare, set
+							the proxy status to DNS only.
 						</p>
 						<p class="meta">
 							Checks run automatically; the certificate is usually ready within an hour.
@@ -229,12 +261,19 @@
 							>
 						{:else}
 							{#if domain.state !== 'active'}
+								{@const wait = secondsLeft(domain.id)}
 								<button
 									type="button"
-									disabled={pending !== null}
-									aria-label={`Check ${domain.hostname} now`}
+									disabled={pending !== null || wait > 0}
+									aria-label={wait > 0
+										? `Check ${domain.hostname} again in ${wait} seconds`
+										: `Check ${domain.hostname} now`}
 									onclick={() => void check(domain)}
-									>{pending === `check:${domain.id}` ? 'Checking…' : 'Check now'}</button
+									>{pending === `check:${domain.id}`
+										? 'Checking…'
+										: wait > 0
+											? `Check again in ${wait}s`
+											: 'Check now'}</button
 								>
 							{/if}
 							<button
