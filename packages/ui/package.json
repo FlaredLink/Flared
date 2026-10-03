@@ -12,6 +12,10 @@
 			"types": "./src/links/LinkList.svelte",
 			"svelte": "./src/links/LinkList.svelte"
 		},
+		"./links/LinkQr.svelte": {
+			"types": "./src/links/LinkQr.svelte",
+			"svelte": "./src/links/LinkQr.svelte"
+		},
 		"./links/messages": "./src/links/messages.ts",
 		"./passkeys/PasskeyList.svelte": {
 			"types": "./src/passkeys/PasskeyList.svelte",
@@ -35,7 +39,12 @@
 			"types": "./src/oauth/ConnectedAppList.svelte",
 			"svelte": "./src/oauth/ConnectedAppList.svelte"
 		},
-		"./oauth/client": "./src/oauth/client.ts"
+		"./oauth/client": "./src/oauth/client.ts",
+		"./domains/DomainList.svelte": {
+			"types": "./src/domains/DomainList.svelte",
+			"svelte": "./src/domains/DomainList.svelte"
+		},
+		"./domains/client": "./src/domains/client.ts"
 	},
 	"dependencies": {
 		"@flared/contracts": "workspace:*",

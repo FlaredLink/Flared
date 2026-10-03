@@ -7,6 +7,7 @@ const messages: Partial<Record<ErrorCode, string>> = {
 	PLAN_LIMIT_REACHED: 'You have reached your active link limit. Disable a link to create another.',
 	RATE_LIMITED: 'You are creating links too quickly. Wait a minute and try again.',
 	DEFAULT_DOMAIN_UNAVAILABLE: 'Short links are not available right now. Try again soon.',
+	DOMAIN_UNAVAILABLE: 'This domain is not active. Choose another domain.',
 	WORKSPACE_PENDING: 'Your workspace is still being set up. Try again in a minute.',
 	UNAUTHENTICATED: 'Your session ended. Sign in again.'
 };

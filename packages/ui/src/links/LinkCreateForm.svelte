@@ -4,10 +4,19 @@
 		destination: string;
 		slug: string;
 		title: string;
+		// Empty or absent means the installation default.
+		domainId?: string;
+	}
+
+	export interface LinkFormDomain {
+		id: string;
+		hostname: string;
+		isDefault: boolean;
 	}
 </script>
 
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import type { Action } from 'svelte/action';
 
 	interface Props {
@@ -20,6 +29,8 @@
 		error?: { message: string; field: string | null } | null;
 		pending?: boolean;
 		enhance?: Action<HTMLFormElement>;
+		// Active domains for the picker. Without it, or with only one, links use shortHost.
+		domains?: LinkFormDomain[];
 	}
 
 	let {
@@ -29,13 +40,72 @@
 		values = { destination: '', slug: '', title: '' },
 		error = null,
 		pending = false,
-		enhance = () => {}
+		enhance = () => {},
+		domains = []
 	}: Props = $props();
 
 	const invalid = (field: string) => error?.field === field;
+
+	// The last domain used in this browser. Only a preference: a stale ID is ignored.
+	const storageKey = 'flared:link-domain';
+	// The default domain is sent as an empty value, so the API applies its own default.
+	const choices = $derived([
+		...(domains.some((domain) => domain.isDefault) ? [] : [{ value: '', hostname: shortHost }]),
+		...domains.map((domain) => ({
+			value: domain.isDefault ? '' : domain.id,
+			hostname: domain.hostname
+		}))
+	]);
+	const showPicker = $derived(choices.length > 1);
+	const isChoice = (value: string) => choices.some((choice) => choice.value === value);
+	let selected = $state('');
+	let picker = $state<HTMLSelectElement>();
+	const previewHost = $derived(
+		choices.find((choice) => choice.value === selected)?.hostname ?? shortHost
+	);
+
+	function remembered(): string {
+		try {
+			const value = localStorage.getItem(storageKey) ?? '';
+			return isChoice(value) ? value : '';
+		} catch {
+			return '';
+		}
+	}
+
+	function remember() {
+		try {
+			if (selected) localStorage.setItem(storageKey, selected);
+			else localStorage.removeItem(storageKey);
+		} catch {
+			// Storage can be blocked; the picker still works for this page.
+		}
+	}
+
+	onMount(() => {
+		const submitted = values.domainId ?? '';
+		selected = submitted && isChoice(submitted) ? submitted : remembered();
+	});
+
+	// A successful create resets the form; keep the domain that was just used.
+	function restoreAfterReset() {
+		setTimeout(() => {
+			const value = remembered();
+			if (picker) picker.value = value;
+			selected = value;
+		}, 0);
+	}
 </script>
 
-<form method="post" {action} class="link-form" use:enhance aria-labelledby="create-link-heading">
+<form
+	method="post"
+	{action}
+	class="link-form"
+	use:enhance
+	onsubmit={remember}
+	onreset={restoreAfterReset}
+	aria-labelledby="create-link-heading"
+>
 	<h2 id="create-link-heading">Create a short link</h2>
 	<input type="hidden" name="idempotencyKey" value={idempotencyKey} />
 	<div class="field">
@@ -54,11 +124,28 @@
 			aria-describedby={invalid('destination') ? 'link-form-error' : undefined}
 		/>
 	</div>
+	{#if showPicker}
+		<div class="field domain">
+			<label for="link-domain">Domain</label>
+			<select
+				id="link-domain"
+				name="domainId"
+				bind:this={picker}
+				bind:value={selected}
+				aria-invalid={invalid('domainId') || undefined}
+				aria-describedby={invalid('domainId') ? 'link-form-error' : undefined}
+			>
+				{#each choices as choice (choice.value)}
+					<option value={choice.value}>{choice.hostname}</option>
+				{/each}
+			</select>
+		</div>
+	{/if}
 	<div class="row">
 		<div class="field">
 			<label for="link-slug">Slug <span class="optional">optional</span></label>
 			<div class="slug">
-				<span class="prefix" aria-hidden="true">{shortHost}/</span>
+				<span class="prefix" aria-hidden="true">{previewHost}/</span>
 				<input
 					id="link-slug"
 					name="slug"
@@ -132,7 +219,8 @@
 		color: var(--color-muted, #667085);
 		font-weight: 500;
 	}
-	input {
+	input,
+	select {
 		width: 100%;
 		min-width: 0;
 		min-height: 44px;
@@ -142,12 +230,17 @@
 		border-radius: var(--radius-sm, 6px);
 		background: var(--color-paper, #fff);
 	}
-	input:focus-visible {
+	input:focus-visible,
+	select:focus-visible {
 		border-color: var(--color-muted, #667085);
 		outline: 1px solid var(--color-muted, #667085);
 		outline-offset: -1px;
 	}
-	input[aria-invalid='true'] {
+	.domain {
+		max-width: 20rem;
+	}
+	input[aria-invalid='true'],
+	select[aria-invalid='true'] {
 		border-color: var(--color-accent-ink, #b42318);
 	}
 	.slug {
