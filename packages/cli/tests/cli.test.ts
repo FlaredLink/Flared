@@ -4,6 +4,7 @@ import { mkdtemp, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import { qrPng, qrSvg } from '@flared/client/qr';
 import { errorStatus, type ErrorCode } from '@flared/contracts/errors';
 import { run, type CliIo } from '../src/cli';
 import { exitCodes } from '../src/exit';
@@ -28,6 +29,42 @@ const link = (id: string, slug: string) => ({
 const launch = link('1ca8ae68-76d7-4acf-8599-3d3b5f23c2e7', 'launch');
 const twin = link('2ca8ae68-76d7-4acf-8599-3d3b5f23c2e7', 'launch');
 
+const domain = (
+	id: string,
+	hostname: string,
+	state: string,
+	extra: Record<string, unknown> = {}
+) => ({
+	id,
+	hostname,
+	kind: 'workspace',
+	state,
+	isDefault: false,
+	records: [{ type: 'CNAME', name: hostname, value: 'customers.flared.link' }],
+	error: null,
+	activeLinks: 0,
+	createdAt: '2026-10-03T09:00:00.000Z',
+	activatedAt: null,
+	...extra
+});
+const platform = {
+	...domain('flared-link', 'flared.link', 'active'),
+	kind: 'platform',
+	isDefault: true,
+	records: [],
+	activeLinks: null
+};
+const brand = domain('dom-brand', 'go.brand.com', 'active', {
+	activeLinks: 3,
+	activatedAt: '2026-10-03T10:00:00.000Z'
+});
+const pending = domain('dom-pending', 'links.shop.com', 'failed', {
+	error: {
+		code: 'dns_not_found',
+		message: 'We could not find the DNS record. Check the record and try again.'
+	}
+});
+
 interface Seen {
 	method: string;
 	url: string;
@@ -36,7 +73,7 @@ interface Seen {
 }
 
 // A fake /v1 API. failWith makes every call fail with that error code.
-function fakeApi(state: { failWith?: ErrorCode; links?: object[] } = {}) {
+function fakeApi(state: { failWith?: ErrorCode; links?: object[]; domains?: object[] } = {}) {
 	const seen: Seen[] = [];
 	const fetch: typeof globalThis.fetch = async (input, init) => {
 		const request = new Request(input, init);
@@ -55,6 +92,21 @@ function fakeApi(state: { failWith?: ErrorCode; links?: object[] } = {}) {
 			);
 		const path = url.pathname.replace(/^\/v1/, '');
 		const links = state.links ?? [{ ...launch, clicksLast30Days: 3 }];
+		const domains = state.domains ?? [platform, brand, pending];
+		if (path === '/domains' && request.method === 'GET')
+			return Response.json({ domains, used: 2, limit: 5 });
+		if (path === '/domains' && request.method === 'POST') {
+			const hostname = (body as { hostname: string }).hostname;
+			const known = domains.find((item) => (item as { hostname: string }).hostname === hostname);
+			if (known) return Response.json({ domain: known });
+			return Response.json({ domain: domain('dom-new', hostname, 'pending') }, { status: 201 });
+		}
+		const domainPath = /^\/domains\/([^/]+)(\/check)?$/.exec(path);
+		const found = domains.find((item) => (item as { id: string }).id === domainPath?.[1]);
+		if (domainPath && found && domainPath[2] && request.method === 'POST')
+			return Response.json({ domain: { ...found, state: 'verifying', error: null } });
+		if (domainPath && found && !domainPath[2] && request.method === 'DELETE')
+			return new Response(null, { status: 204 });
 		if (path === '/me')
 			return Response.json({
 				kind: 'token',
@@ -155,6 +207,11 @@ describe('flared CLI', () => {
 			['link', 'update', 'launch', '--title', 'x', '--clear-title'],
 			['link', 'update', 'launch'],
 			['link', 'qr', 'launch', '--format', 'png'],
+			['domain'],
+			['domain', 'nope'],
+			['domain', 'add'],
+			['domain', 'list', '--yes'],
+			['link', 'create', 'https://example.com', '--yes'],
 			['usage', '--unknown'],
 			['usage', '--api-url', 'http://api.example/v1']
 		]) {
@@ -340,15 +397,144 @@ describe('flared CLI', () => {
 		expect((await cli(['usage'], { env: signedIn })).stdout).toContain('3 of 5000 clicks');
 	});
 
-	it('draws QR codes as SVG or PNG', async () => {
+	it('draws QR codes of the short URL as SVG or PNG', async () => {
 		const svg = await cli(['link', 'qr', 'launch'], { env: signedIn });
-		expect(svg.stdout).toMatch(/^<svg/);
+		expect(svg.stdout).toBe(qrSvg(launch.shortUrl, 512));
+		const saved = await cli(['link', 'qr', 'launch', '--out', 'launch.svg', '--json'], {
+			env: signedIn
+		});
+		expect(saved.files.get('launch.svg')).toBe(qrSvg(launch.shortUrl, 512));
+		expect(JSON.parse(saved.stdout)).toEqual({
+			shortUrl: launch.shortUrl,
+			format: 'svg',
+			file: 'launch.svg'
+		});
 		const png = await cli(['link', 'qr', 'launch', '--format', 'png', '--out', 'launch.png'], {
 			env: signedIn
 		});
 		const data = png.files.get('launch.png');
 		if (!(data instanceof Uint8Array)) throw new Error('Expected PNG bytes');
-		expect([...data.slice(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+		expect([...data.slice(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+		expect(data).toEqual(await qrPng(launch.shortUrl, 512));
+	});
+
+	it('lists domains with their status, DNS records, and problems', async () => {
+		const listed = await cli(['domain', 'list'], { env: signedIn });
+		expect(listed.code).toBe(exitCodes.ok);
+		expect(listed.stdout).toContain('flared.link');
+		expect(listed.stdout).toMatch(/go\.brand\.com\s+active/);
+		expect(listed.stdout).toContain('CNAME links.shop.com -> customers.flared.link');
+		expect(listed.stdout).toContain('2 of 5 domains used.');
+		expect(listed.stdout).toContain(
+			'links.shop.com: We could not find the DNS record. Check the record and try again.'
+		);
+		const json = await cli(['domain', 'list', '--json'], { env: signedIn });
+		expect(JSON.parse(json.stdout)).toEqual({
+			domains: [platform, brand, pending],
+			used: 2,
+			limit: 5
+		});
+	});
+
+	it('adds a domain and prints the CNAME record to create', async () => {
+		const api = fakeApi();
+		const added = await cli(['domain', 'add', 'go.example.com'], { env: signedIn, api });
+		expect(added.code).toBe(exitCodes.ok);
+		expect(api.seen[0]).toMatchObject({ method: 'POST', body: { hostname: 'go.example.com' } });
+		expect(added.stdout).toContain('Added go.example.com.');
+		expect(added.stdout).toMatch(/CNAME\s+go\.example\.com\s+customers\.flared\.link/);
+		const again = await cli(['domain', 'add', 'go.brand.com', '--json'], { env: signedIn });
+		expect(JSON.parse(again.stdout)).toEqual({ domain: brand, created: false });
+		const refused = await cli(['domain', 'add', 'example.com', '--json'], {
+			env: signedIn,
+			api: fakeApi({ failWith: 'INVALID_INPUT' })
+		});
+		expect(refused.code).toBe(exitCodes.rejected);
+	});
+
+	it('checks a workspace domain by hostname or ID only', async () => {
+		const api = fakeApi();
+		const checked = await cli(['domain', 'check', 'Links.Shop.com.'], { env: signedIn, api });
+		expect(checked.code).toBe(exitCodes.ok);
+		expect(api.seen.at(-1)).toMatchObject({
+			method: 'POST',
+			url: 'https://api.flared.page/v1/domains/dom-pending/check'
+		});
+		expect(checked.stdout).toMatch(/Status\s+verifying/);
+		const byId = await cli(['domain', 'check', 'dom-brand', '--json'], { env: signedIn });
+		expect(JSON.parse(byId.stdout)).toMatchObject({ domain: { id: 'dom-brand' } });
+		for (const reference of ['flared.link', 'flared-link', 'go.other.com']) {
+			const missing = await cli(['domain', 'check', reference, '--json'], { env: signedIn });
+			expect(missing.code, reference).toBe(exitCodes.notFound);
+			expect(JSON.parse(missing.stderr).error.code).toBe('NOT_FOUND');
+		}
+		const early = await cli(['domain', 'check', 'go.brand.com'], {
+			env: signedIn,
+			api: fakeApi({ failWith: 'DOMAIN_CHECK_TOO_SOON' })
+		});
+		expect(early.code).toBe(exitCodes.rateLimited);
+	});
+
+	it('removes a domain only with --yes, after saying how many links stop', async () => {
+		const api = fakeApi();
+		const unconfirmed = await cli(['domain', 'remove', 'go.brand.com'], { env: signedIn, api });
+		expect(unconfirmed.code).toBe(exitCodes.usage);
+		expect(unconfirmed.stderr).toContain('Removing go.brand.com stops 3 active links.');
+		expect(api.seen.some((call) => call.method === 'DELETE')).toBe(false);
+
+		const removed = await cli(['domain', 'remove', 'go.brand.com', '--yes'], {
+			env: signedIn,
+			api
+		});
+		expect(removed.code).toBe(exitCodes.ok);
+		expect(removed.stdout).toContain('Removed go.brand.com. 3 active links stopped redirecting.');
+		expect(api.seen.at(-1)).toMatchObject({
+			method: 'DELETE',
+			url: 'https://api.flared.page/v1/domains/dom-brand'
+		});
+		const json = await cli(['domain', 'remove', 'dom-pending', '--yes', '--json'], {
+			env: signedIn
+		});
+		expect(JSON.parse(json.stdout)).toEqual({
+			removed: true,
+			domain: { id: 'dom-pending', hostname: 'links.shop.com' },
+			activeLinks: 0
+		});
+		expect((await cli(['domain', 'remove', 'flared.link', '--yes'], { env: signedIn })).code).toBe(
+			exitCodes.notFound
+		);
+	});
+
+	it('creates a link on an active domain named by its hostname', async () => {
+		const api = fakeApi();
+		const created = await cli(
+			['link', 'create', 'https://example.com/launch', '--domain', 'GO.brand.com'],
+			{ env: signedIn, api }
+		);
+		expect(created.code).toBe(exitCodes.ok);
+		expect(api.seen.at(-1)?.body).toEqual({
+			destination: 'https://example.com/launch',
+			domainId: 'dom-brand'
+		});
+		const shared = fakeApi();
+		await cli(['link', 'create', 'https://example.com', '--domain', 'flared.link'], {
+			env: signedIn,
+			api: shared
+		});
+		expect(shared.seen.at(-1)?.body).toMatchObject({ domainId: 'flared-link' });
+
+		const waiting = fakeApi();
+		const inactive = await cli(
+			['link', 'create', 'https://example.com', '--domain', 'links.shop.com', '--json'],
+			{ env: signedIn, api: waiting }
+		);
+		expect(inactive.code).toBe(exitCodes.rejected);
+		expect(JSON.parse(inactive.stderr).error.code).toBe('DOMAIN_UNAVAILABLE');
+		expect(waiting.seen.some((call) => call.method === 'POST')).toBe(false);
+		const unknown = await cli(['link', 'create', 'https://example.com', '--domain', 'go.x.com'], {
+			env: signedIn
+		});
+		expect(unknown.code).toBe(exitCodes.notFound);
 	});
 });
 

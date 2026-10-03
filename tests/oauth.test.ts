@@ -8,6 +8,8 @@ import { createTenant } from '../packages/data/src/tenancy';
 import { deleteGrant, deleteExpiredOAuthRecords } from '../packages/data/src/oauth';
 import { projectPolicy } from '../packages/server/src/tenancy';
 import { createApi, type ApiPrincipal } from '../packages/server/src/api';
+import type { DomainProvider } from '../packages/server/src/domains';
+import { qrPng } from '../packages/client/src/qr';
 import { createMcpEndpoint, mcpCallsPerMinute, mcpServerCard } from '../packages/server/src/mcp';
 import { createMetadataFetch, type OAuthServerConfig } from '../packages/server/src/oauth/provider';
 import { createOAuthRoutes, registrationsPerSourceHour } from '../packages/server/src/oauth/routes';
@@ -65,12 +67,21 @@ const oauth = () =>
 		sourceKey: async (request) => request.headers.get('x-test-source') ?? 'source-default'
 	});
 
+// Only the records matter here: no MCP tool adds, checks, or removes a domain.
+const domainProvider: DomainProvider = {
+	records: (hostname) => [{ type: 'CNAME', name: hostname, value: 'customers.short.example' }],
+	start: async () => ({ status: 'waiting' }),
+	check: async () => ({ status: 'waiting' }),
+	stop: async () => {}
+};
+
 function api(principal: ApiPrincipal) {
 	return createApi({
 		identity: identity(),
 		routing: routing(),
 		analytics: { 'analytics-1': env.OAUTH_ANALYTICS },
 		appOrigin: origin,
+		domains: { provider: domainProvider, reservedHostnames: ['short.example'] },
 		authenticate: async () => principal
 	});
 }
@@ -262,7 +273,7 @@ async function call(token: string, name: string, args: Record<string, unknown> =
 		result?: {
 			structuredContent?: Record<string, unknown>;
 			isError?: boolean;
-			content: { text: string }[];
+			content: { type: string; text?: string; data?: string; mimeType?: string }[];
 		};
 		error?: unknown;
 	};
@@ -284,7 +295,24 @@ beforeAll(async () => {
 			"INSERT INTO domains (id, tenant_id, state, is_default, created_at, updated_at) VALUES ('dom-short', NULL, 'active', 1, 0, 0)"
 		)
 	]);
-	for (const n of [1, 2, 3, 4, 5, 6, 7]) await addTenant(`user-${n}`, `tenant-${n}`);
+	for (const n of [1, 2, 3, 4, 5, 6, 7, 8]) await addTenant(`user-${n}`, `tenant-${n}`);
+	// Workspace domains for tenant-8, and one of tenant-5's that tenant-8 must not see.
+	const later = Date.now() + 86_400_000;
+	for (const [id, hostname, tenant, state] of [
+		['dom-brand', 'go.brand.com', 'tenant-8', 'active'],
+		['dom-shop', 'links.shop.com', 'tenant-8', 'pending'],
+		['dom-other', 'go.other.com', 'tenant-5', 'active']
+	])
+		await routing().batch([
+			routing()
+				.prepare('INSERT INTO domain_namespaces (id, hostname, created_at) VALUES (?, ?, 0)')
+				.bind(id, hostname),
+			routing()
+				.prepare(
+					'INSERT INTO domains (id, tenant_id, state, is_default, created_at, updated_at, claimed_at, claim_expires_at, activated_at) VALUES (?, ?, ?, 0, 1, 1, 1, ?, ?)'
+				)
+				.bind(id, tenant, state, state === 'active' ? null : later, state === 'active' ? 1 : null)
+		]);
 });
 
 describe('authorization server', () => {
@@ -722,8 +750,10 @@ describe('MCP endpoint', () => {
 		expect(names).toEqual([
 			'list_links',
 			'get_link',
+			'get_link_qr',
 			'get_link_analytics',
 			'get_usage',
+			'list_domains',
 			'create_link',
 			'update_link',
 			'disable_link',
@@ -833,6 +863,128 @@ describe('MCP endpoint', () => {
 		expect(missing.body.result?.content[0].text).toContain('NOT_FOUND');
 		const otherSlug = await call(other.tokens.access_token, 'get_link', { link: 'mcp-first' });
 		expect(otherSlug.body.result?.isError).toBe(true);
+	});
+
+	it('lists the workspace domains and creates links on an active one by hostname', async () => {
+		const { tokens } = await connect(
+			'user-8',
+			'links:read links:write domains:read offline_access'
+		);
+		const token = tokens.access_token;
+		const listed = await call(token, 'list_domains');
+		expect(listed.status).toBe(200);
+		const page = listed.body.result?.structuredContent as {
+			domains: Record<string, unknown>[];
+			used: number;
+			limit: number;
+		};
+		expect(page).toEqual({
+			domains: [
+				{
+					hostname: 'short.example',
+					state: 'active',
+					kind: 'platform',
+					isDefault: true,
+					records: [],
+					error: null
+				},
+				{
+					hostname: 'go.brand.com',
+					state: 'active',
+					kind: 'workspace',
+					isDefault: false,
+					records: [{ type: 'CNAME', name: 'go.brand.com', value: 'customers.short.example' }],
+					error: null
+				},
+				{
+					hostname: 'links.shop.com',
+					state: 'pending',
+					kind: 'workspace',
+					isDefault: false,
+					records: [{ type: 'CNAME', name: 'links.shop.com', value: 'customers.short.example' }],
+					error: null
+				}
+			],
+			used: 2,
+			limit: 1
+		});
+
+		const input = { destination: 'https://example.com/brand', slug: 'mcp-brand' };
+		const created = await call(token, 'create_link', { ...input, domain: 'GO.Brand.com.' });
+		expect(created.body.result?.structuredContent).toMatchObject({
+			replayed: false,
+			link: { hostname: 'go.brand.com', shortUrl: 'https://go.brand.com/mcp-brand' }
+		});
+		const again = await call(token, 'create_link', { ...input, domain: 'go.brand.com' });
+		expect(again.body.result?.structuredContent).toMatchObject({ replayed: true });
+		// The same input without a domain is another request, on the default domain.
+		const plain = await call(token, 'create_link', input);
+		expect(plain.body.result?.structuredContent).toMatchObject({
+			replayed: false,
+			link: { hostname: 'short.example' }
+		});
+		const shared = await call(token, 'create_link', {
+			destination: 'https://example.com/shared',
+			domain: 'short.example'
+		});
+		expect(shared.body.result?.structuredContent).toMatchObject({
+			link: { hostname: 'short.example' }
+		});
+
+		for (const [domain, code] of [
+			['links.shop.com', 'DOMAIN_UNAVAILABLE'],
+			['go.other.com', 'NOT_FOUND'],
+			['go.unknown.com', 'NOT_FOUND']
+		]) {
+			const refused = await call(token, 'create_link', {
+				destination: 'https://example.com/refused',
+				domain
+			});
+			expect(refused.body.result?.isError, domain).toBe(true);
+			expect(JSON.parse(refused.body.result?.content[0].text ?? '{}')).toMatchObject({
+				error: { code, field: 'domain' }
+			});
+		}
+	});
+
+	it('returns a PNG QR code of the short URL', async () => {
+		const { tokens } = await connect('user-8', 'links:read links:write offline_access');
+		const token = tokens.access_token;
+		await call(token, 'create_link', { destination: 'https://example.com/qr', slug: 'mcp-qr' });
+		const result = await call(token, 'get_link_qr', { link: 'mcp-qr' });
+		expect(result.status).toBe(200);
+		const shortUrl = 'https://short.example/mcp-qr';
+		expect(result.body.result?.structuredContent).toEqual({
+			shortUrl,
+			mimeType: 'image/png',
+			size: 512
+		});
+		const [image, text] = result.body.result?.content ?? [];
+		expect(image).toMatchObject({ type: 'image', mimeType: 'image/png' });
+		const bytes = Uint8Array.from(atob(image.data ?? ''), (character) => character.charCodeAt(0));
+		expect([...bytes.slice(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+		expect(bytes).toEqual(await qrPng(shortUrl, 512));
+		expect(text).toMatchObject({ type: 'text' });
+		expect(text.text).toContain(shortUrl);
+
+		const missing = await call(token, 'get_link_qr', { link: 'mcp-none' });
+		expect(missing.body.result?.isError).toBe(true);
+		expect(missing.body.result?.content[0].text).toContain('NOT_FOUND');
+	});
+
+	it('needs domains:read to list domains or to create a link on one', async () => {
+		const { tokens } = await connect('user-8', 'links:read links:write offline_access');
+		const listed = await call(tokens.access_token, 'list_domains');
+		expect(listed.status).toBe(403);
+		expect(listed.headers.get('www-authenticate')).toBe(
+			'Bearer error="insufficient_scope", scope="links:read links:write domains:read", resource_metadata="https://api.example/.well-known/oauth-protected-resource/mcp"'
+		);
+		const created = await call(tokens.access_token, 'create_link', {
+			destination: 'https://example.com/scoped',
+			domain: 'go.brand.com'
+		});
+		expect(created.body.result?.isError).toBe(true);
+		expect(created.body.result?.content[0].text).toContain('INSUFFICIENT_SCOPE');
 	});
 
 	it('answers a write without the scope with 403 insufficient_scope naming the scopes it needs', async () => {

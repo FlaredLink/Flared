@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Plain-text output for people. Scripts use --json.
 import type { LinkAnalytics, Usage } from '@flared/contracts/analytics';
+import type { Domain, DomainPage } from '@flared/contracts/domains';
 import type { Link, ListedLink } from '@flared/contracts/links';
 import type { ApiIdentity } from '@flared/contracts/tokens';
 
@@ -89,4 +90,55 @@ export function identityReport(identity: ApiIdentity, apiUrl: string): string {
 				]
 			: [['Session', 'browser session']];
 	return table([...rows, ['Scopes', identity.scopes.join(', ')], ['API', apiUrl]]);
+}
+
+function domainKind(domain: Domain): string {
+	if (domain.kind === 'workspace') return 'yours';
+	return domain.isDefault ? 'default' : 'shared';
+}
+
+export function domainTable(page: DomainPage): string {
+	const rows = [
+		['HOSTNAME', 'STATUS', 'KIND', 'DNS RECORD'],
+		...page.domains.map((domain) => [
+			domain.hostname,
+			domain.state,
+			domainKind(domain),
+			domain.records
+				.map((record) => `${record.type} ${record.name} -> ${record.value}`)
+				.join(', ') || '-'
+		])
+	];
+	const problems = page.domains.flatMap((domain) =>
+		domain.error ? [`${domain.hostname}: ${domain.error.message}`] : []
+	);
+	return [
+		table(rows),
+		'',
+		`${page.used} of ${page.limit} domains used.`,
+		...(problems.length ? ['', ...problems] : [])
+	].join('\n');
+}
+
+export function domainDetails(domain: Domain): string {
+	const lines = [
+		table([
+			['Hostname', domain.hostname],
+			['Status', domain.state],
+			...(domain.error ? [['Problem', domain.error.message]] : []),
+			...(domain.activeLinks === null ? [] : [['Active links', String(domain.activeLinks)]]),
+			['ID', domain.id]
+		])
+	];
+	if (domain.state !== 'active' && domain.records.length > 0)
+		lines.push(
+			'',
+			`Create ${domain.records.length === 1 ? 'this DNS record' : 'these DNS records'} where you manage the domain, then run flared domain check:`,
+			'',
+			table([
+				['TYPE', 'NAME', 'VALUE'],
+				...domain.records.map((record) => [record.type, record.name, record.value])
+			])
+		);
+	return lines.join('\n');
 }

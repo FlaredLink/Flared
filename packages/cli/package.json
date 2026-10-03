@@ -22,15 +22,11 @@
 		"node": ">=20"
 	},
 	"scripts": {
-		"build": "bun build src/main.ts --target=node --external qrcode --outfile dist/flared.js && cp ../../LICENSE.md LICENSE.md",
+		"build": "bun build src/main.ts --target=node --outfile dist/flared.js && cp ../../LICENSE.md LICENSE.md",
 		"smoke": "node dist/flared.js --version && node dist/flared.js --help"
-	},
-	"dependencies": {
-		"qrcode": "1.5.4"
 	},
 	"devDependencies": {
 		"@flared/client": "workspace:*",
-		"@flared/contracts": "workspace:*",
-		"@types/qrcode": "1.5.6"
+		"@flared/contracts": "workspace:*"
 	}
 }

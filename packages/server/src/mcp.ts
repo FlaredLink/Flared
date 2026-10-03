@@ -7,6 +7,8 @@ import type { D1Database } from '@cloudflare/workers-types/index.ts';
 import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod';
 import { createClient, FlaredApiError, type FlaredClient } from '@flared/client';
+import { defaultQrSize, qrPng } from '@flared/client/qr';
+import { domainStates, normalizeHostname, type Domain } from '@flared/contracts/domains';
 import type { Link } from '@flared/contracts/links';
 import { tokenScopes, type TokenScope } from '@flared/contracts/tokens';
 import { countMcpCall, findAccessToken } from '@flared/data/oauth';
@@ -68,8 +70,10 @@ export function protectedResourceMetadataUrl(resource: string): string {
 const toolScopes: Record<string, TokenScope> = {
 	list_links: 'links:read',
 	get_link: 'links:read',
+	get_link_qr: 'links:read',
 	get_link_analytics: 'analytics:read',
 	get_usage: 'usage:read',
+	list_domains: 'domains:read',
 	create_link: 'links:write',
 	update_link: 'links:write',
 	disable_link: 'links:write',
@@ -91,6 +95,27 @@ const linkOutput = z.object({
 type LinkOutput = z.infer<typeof linkOutput>;
 const clicks = z.object({ value: z.string(), clicks: z.number() });
 
+const domainOutput = z.object({
+	hostname: z.string(),
+	state: z.enum(domainStates),
+	kind: z.enum(['platform', 'workspace']),
+	isDefault: z.boolean(),
+	records: z.array(z.object({ type: z.literal('CNAME'), name: z.string(), value: z.string() })),
+	error: z.object({ code: z.string(), message: z.string() }).nullable()
+});
+type DomainOutput = z.infer<typeof domainOutput>;
+
+function domainResult(domain: Domain): DomainOutput {
+	return {
+		hostname: domain.hostname,
+		state: domain.state,
+		kind: domain.kind,
+		isDefault: domain.isDefault,
+		records: domain.records,
+		error: domain.error
+	};
+}
+
 function linkResult(link: Link): LinkOutput {
 	return {
 		id: link.id,
@@ -105,9 +130,12 @@ function linkResult(link: Link): LinkOutput {
 	};
 }
 
-function success<T extends Record<string, unknown>>(value: T) {
+type ImageContent = { type: 'image'; data: string; mimeType: string };
+
+// extra comes before the JSON text, such as an image the result describes.
+function success<T extends Record<string, unknown>>(value: T, extra: ImageContent[] = []) {
 	return {
-		content: [{ type: 'text' as const, text: JSON.stringify(value) }],
+		content: [...extra, { type: 'text' as const, text: JSON.stringify(value) }],
 		structuredContent: value
 	};
 }
@@ -124,13 +152,27 @@ function failure(error: unknown) {
 	return { content: [{ type: 'text' as const, text: JSON.stringify(body) }], isError: true };
 }
 
-async function attempt<T extends Record<string, unknown>>(operation: () => Promise<T>) {
+async function attempt<T extends Record<string, unknown>>(
+	operation: () => Promise<T>,
+	extra: (value: T) => Promise<ImageContent[]> = async () => []
+) {
 	try {
-		return success(await operation());
+		const value = await operation();
+		return success(value, await extra(value));
 	} catch (error) {
 		if (!(error instanceof FlaredApiError))
 			console.error(JSON.stringify({ event: 'mcp_tool_failed' }));
 		return failure(error);
+	}
+}
+
+// The rules for adding a domain need three labels, so a platform hostname such as flared.link
+// falls back to a plain lowercase comparison.
+function hostnameOf(value: string): string {
+	try {
+		return normalizeHostname(value);
+	} catch {
+		return value.trim().toLowerCase().replace(/\.$/, '');
 	}
 }
 
@@ -139,6 +181,13 @@ async function sha256(value: string): Promise<string> {
 		await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
 	);
 	return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function base64(bytes: Uint8Array): string {
+	let binary = '';
+	for (let at = 0; at < bytes.length; at += 0x8000)
+		binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+	return btoa(binary);
 }
 
 const slug = z.string().regex(/^[a-z0-9-]{3,64}$/);
@@ -160,6 +209,31 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 			if (!match) throw error;
 			return match;
 		}
+	}
+
+	// A hostname from list_domains; platform hostnames such as flared.link count too.
+	async function findActiveDomain(hostname: string): Promise<Domain> {
+		const { domains } = await client.listDomains();
+		const match = domains.find((domain) => domain.hostname === hostname);
+		if (!match)
+			throw new FlaredApiError(
+				'NOT_FOUND',
+				`No domain ${hostname} in this workspace.`,
+				404,
+				null,
+				null,
+				'domain'
+			);
+		if (match.state !== 'active')
+			throw new FlaredApiError(
+				'DOMAIN_UNAVAILABLE',
+				`${hostname} is ${match.state}. Links can use it once it is active.`,
+				422,
+				null,
+				null,
+				'domain'
+			);
+		return match;
 	}
 
 	server.registerTool(
@@ -206,6 +280,32 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 			annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
 		},
 		({ link }) => attempt(async () => ({ link: linkResult(await findLink(link)) }))
+	);
+
+	server.registerTool(
+		'get_link_qr',
+		{
+			title: 'Get a link QR code',
+			description: 'Gets a PNG QR code of a short URL, by link ID or slug.',
+			inputSchema: z.object({ link: z.string().min(1).max(100).describe('The link ID or slug.') }),
+			outputSchema: z.object({
+				shortUrl: z.string(),
+				mimeType: z.literal('image/png'),
+				size: z.number()
+			}),
+			annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+		},
+		({ link }) =>
+			attempt(
+				async () => ({
+					shortUrl: (await findLink(link)).shortUrl,
+					mimeType: 'image/png' as const,
+					size: defaultQrSize
+				}),
+				async ({ shortUrl, mimeType, size }) => [
+					{ type: 'image', data: base64(await qrPng(shortUrl, size)), mimeType }
+				]
+			)
 	);
 
 	server.registerTool(
@@ -269,6 +369,27 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 	);
 
 	server.registerTool(
+		'list_domains',
+		{
+			title: 'List domains',
+			description:
+				'Lists the domains links can use, with their status and the DNS records to create. Only active domains serve links.',
+			inputSchema: z.object({}),
+			outputSchema: z.object({
+				domains: z.array(domainOutput),
+				used: z.number(),
+				limit: z.number()
+			}),
+			annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+		},
+		() =>
+			attempt(async () => {
+				const page = await client.listDomains();
+				return { domains: page.domains.map(domainResult), used: page.used, limit: page.limit };
+			})
+	);
+
+	server.registerTool(
 		'create_link',
 		{
 			title: 'Create a link',
@@ -277,7 +398,13 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 			inputSchema: z.object({
 				destination: z.string().min(1).max(4096).describe('The full URL, starting with https://.'),
 				slug: slug.optional().describe('The path after the domain. Generated when absent.'),
-				title: z.string().max(200).optional()
+				title: z.string().max(200).optional(),
+				domain: z
+					.string()
+					.min(1)
+					.max(253)
+					.optional()
+					.describe('An active hostname from list_domains. The default domain when absent.')
 			}),
 			outputSchema: z.object({ link: linkOutput, replayed: z.boolean() }),
 			annotations: {
@@ -289,9 +416,18 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 		},
 		(input) =>
 			attempt(async () => {
+				const { domain, ...fields } = input;
+				const hostname = domain === undefined ? undefined : hostnameOf(domain);
+				const domainId = hostname === undefined ? undefined : (await findActiveDomain(hostname)).id;
 				const window = Math.floor(now() / 300_000);
-				const key = `mcp-${await sha256(JSON.stringify([grantKey, window, input]))}`;
-				const created = await client.createLink({ ...input, idempotencyKey: key });
+				// The key input for a call without a domain is unchanged from before domains existed.
+				const keyed = hostname === undefined ? fields : { ...fields, domain: hostname };
+				const key = `mcp-${await sha256(JSON.stringify([grantKey, window, keyed]))}`;
+				const created = await client.createLink({
+					...fields,
+					...(domainId ? { domainId } : {}),
+					idempotencyKey: key
+				});
 				return { link: linkResult(created.link), replayed: created.replayed };
 			})
 	);

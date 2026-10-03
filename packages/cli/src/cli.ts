@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The flared command. run() takes its input and output as arguments so that tests can drive it.
 import { parseArgs } from 'node:util';
-import QRCode from 'qrcode';
 import { createClient, FlaredApiError, type FlaredClient } from '@flared/client';
+import { defaultQrSize, qrPng, qrSvg } from '@flared/client/qr';
+import { normalizeHostname, type Domain } from '@flared/contracts/domains';
 import type { ListedLink } from '@flared/contracts/links';
 import {
 	checkToken,
@@ -15,7 +16,15 @@ import {
 	type Env
 } from './config';
 import { CliError, exitCodeFor, exitCodes, UsageError } from './exit';
-import { analyticsReport, identityReport, linkDetails, linkTable, usageReport } from './output';
+import {
+	analyticsReport,
+	domainDetails,
+	domainTable,
+	identityReport,
+	linkDetails,
+	linkTable,
+	usageReport
+} from './output';
 import { cliVersion } from './version';
 
 export interface CliIo {
@@ -47,7 +56,9 @@ const optionTypes = {
 	format: { type: 'string' },
 	out: { type: 'string' },
 	from: { type: 'string' },
-	to: { type: 'string' }
+	to: { type: 'string' },
+	domain: { type: 'string' },
+	yes: { type: 'boolean' }
 } as const;
 
 type Options = {
@@ -85,6 +96,35 @@ async function resolveLink(client: FlaredClient, reference: string): Promise<str
 	if (matches.length === 0)
 		throw new CliError(`No link with the slug "${reference}".`, exitCodes.notFound, 'NOT_FOUND');
 	throw new UsageError(`Several links use the slug "${reference}". Use the link ID.`);
+}
+
+// A domain argument is its ID or its hostname. check and remove apply only to the workspace's
+// own domains; link create also accepts the platform domains.
+async function resolveDomain(
+	client: FlaredClient,
+	reference: string,
+	workspaceOnly: boolean
+): Promise<Domain> {
+	let hostname: string;
+	try {
+		hostname = normalizeHostname(reference);
+	} catch {
+		// Platform hostnames such as flared.link have two labels, which the rule for adding refuses.
+		hostname = reference.trim().toLowerCase().replace(/\.$/, '');
+	}
+	const { domains } = await client.listDomains();
+	const match = domains.find(
+		(domain) =>
+			(domain.id === reference || domain.hostname === hostname) &&
+			(!workspaceOnly || domain.kind === 'workspace')
+	);
+	if (!match)
+		throw new CliError(
+			`No domain "${reference}" in this workspace. Run flared domain list.`,
+			exitCodes.notFound,
+			'NOT_FOUND'
+		);
+	return match;
 }
 
 function limitOf(value: string | undefined): number | undefined {
@@ -149,15 +189,27 @@ const commands: Record<string, Command> = {
 		}
 	},
 	'link create': {
-		usage: 'flared link create URL [--slug SLUG] [--title TITLE] [--idempotency-key KEY]',
-		summary: 'Create a short link and print its URL.',
-		options: ['slug', 'title', 'idempotency-key'],
+		usage:
+			'flared link create URL [--slug SLUG] [--title TITLE] [--domain HOSTNAME] [--idempotency-key KEY]',
+		summary: 'Create a short link and print its URL. Without --domain, it uses the default domain.',
+		options: ['slug', 'title', 'domain', 'idempotency-key'],
 		args: 1,
 		async run({ args, options, client, print }) {
-			const result = await (
-				await client()
-			).createLink({
+			const api = await client();
+			let domainId: string | undefined;
+			if (options.domain !== undefined) {
+				const domain = await resolveDomain(api, options.domain, false);
+				if (domain.state !== 'active')
+					throw new CliError(
+						`${domain.hostname} is ${domain.state}. Links can use it once it is active.`,
+						exitCodes.rejected,
+						'DOMAIN_UNAVAILABLE'
+					);
+				domainId = domain.id;
+			}
+			const result = await api.createLink({
 				destination: args[0],
+				...(domainId ? { domainId } : {}),
 				...(options.slug ? { slug: options.slug } : {}),
 				...(options.title ? { title: options.title } : {}),
 				...(options['idempotency-key'] ? { idempotencyKey: options['idempotency-key'] } : {})
@@ -256,16 +308,76 @@ const commands: Record<string, Command> = {
 			if (json && !options.out) throw new UsageError('With --json, give --out FILE.');
 			const api = await client();
 			const link = await api.getLink(await resolveLink(api, args[0]));
+			// A PNG without --out was refused above.
+			if (!options.out) return io.stdout(qrSvg(link.shortUrl, defaultQrSize));
 			const data =
 				format === 'svg'
-					? await QRCode.toString(link.shortUrl, { type: 'svg', margin: 2 })
-					: new Uint8Array(await QRCode.toBuffer(link.shortUrl, { type: 'png', width: 512 }));
-			if (!options.out) return io.stdout(String(data).trimEnd());
+					? qrSvg(link.shortUrl, defaultQrSize)
+					: await qrPng(link.shortUrl, defaultQrSize);
 			await io.writeFile(options.out, data);
 			print(`Saved the QR code for ${link.shortUrl} to ${options.out}.`, {
 				shortUrl: link.shortUrl,
 				format,
 				file: options.out
+			});
+		}
+	},
+	'domain list': {
+		usage: 'flared domain list',
+		summary: 'List the domains for links, their status, and the DNS records to create.',
+		options: [],
+		args: 0,
+		async run({ client, print }) {
+			const page = await (await client()).listDomains();
+			print(domainTable(page), page);
+		}
+	},
+	'domain add': {
+		usage: 'flared domain add HOSTNAME',
+		summary: 'Add a subdomain you own, such as go.example.com, and print the DNS record to create.',
+		options: [],
+		args: 1,
+		async run({ args, client, print }) {
+			const { domain, created } = await (await client()).addDomain(args[0]);
+			const intro = created
+				? `Added ${domain.hostname}.`
+				: `${domain.hostname} is already in this workspace.`;
+			print(`${intro}\n\n${domainDetails(domain)}`, { domain, created });
+		}
+	},
+	'domain check': {
+		usage: 'flared domain check HOSTNAME_OR_ID',
+		summary: 'Check the DNS record and the HTTPS certificate now.',
+		options: [],
+		args: 1,
+		async run({ args, client, print }) {
+			const api = await client();
+			const domain = await api.checkDomain((await resolveDomain(api, args[0], true)).id);
+			print(domainDetails(domain), { domain });
+		}
+	},
+	'domain remove': {
+		usage: 'flared domain remove HOSTNAME_OR_ID --yes',
+		summary: 'Remove a domain. Its links stop redirecting; adding it again restores them.',
+		options: ['yes'],
+		args: 1,
+		async run({ args, options, client, print }) {
+			const api = await client();
+			const domain = await resolveDomain(api, args[0], true);
+			const count = domain.activeLinks ?? 0;
+			const stops = `${count} active ${count === 1 ? 'link' : 'links'}`;
+			if (!options.yes)
+				throw new UsageError(
+					`Removing ${domain.hostname} stops ${stops}. Run again with --yes to remove it.`
+				);
+			await api.removeDomain(domain.id);
+			const restore = count
+				? ` ${stops} stopped redirecting. Add the domain again to restore them.`
+				: '';
+			print(`Removed ${domain.hostname}.${restore}`, {
+				removed: true,
+				domain: { id: domain.id, hostname: domain.hostname },
+				activeLinks: count
 			});
 		}
 	},
@@ -311,10 +423,10 @@ function help(): string {
 
 function findCommand(positionals: string[]): { name: string; command: Command; args: string[] } {
 	const [first, second, ...rest] = positionals;
-	if (first === 'link') {
-		const name = `link ${second ?? ''}`;
+	if (first === 'link' || first === 'domain') {
+		const name = `${first} ${second ?? ''}`;
 		const command = commands[name];
-		if (!command) throw new UsageError(`Unknown link command "${second ?? ''}".`);
+		if (!command) throw new UsageError(`Unknown ${first} command "${second ?? ''}".`);
 		return { name, command, args: rest };
 	}
 	const command = first === undefined ? undefined : commands[first];
