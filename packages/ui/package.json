@@ -48,6 +48,10 @@
 		"./usage/UsageBanner.svelte": {
 			"types": "./src/usage/UsageBanner.svelte",
 			"svelte": "./src/usage/UsageBanner.svelte"
+		},
+		"./usage/UsageMeters.svelte": {
+			"types": "./src/usage/UsageMeters.svelte",
+			"svelte": "./src/usage/UsageMeters.svelte"
 		}
 	},
 	"dependencies": {
