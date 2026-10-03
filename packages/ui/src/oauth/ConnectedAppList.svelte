@@ -2,16 +2,21 @@
 <script lang="ts">
 	import { scopeDescriptions, type ConnectedAppPage } from '@flared/contracts/oauth';
 	import { revokeConnectedApp } from './client';
+	import ConnectGuide from './ConnectGuide.svelte';
 
 	interface Props {
 		page: ConnectedAppPage;
 		// The path of the /v1 API for this browser, such as "/api/v1".
 		apiBase: string;
+		// The MCP endpoint that the setup steps show.
+		mcpUrl: string;
 		// Called after a removal succeeds, so the app reloads the list.
 		onChanged: () => void | Promise<void>;
 	}
 
-	let { page, apiBase, onChanged }: Props = $props();
+	let { page, apiBase, mcpUrl, onChanged }: Props = $props();
+	// With no app yet, the setup steps are the main content of the section.
+	let guideOpen = $state(false);
 	let pending = $state<string | null>(null);
 	let confirming = $state<string | null>(null);
 	let status = $state('');
@@ -40,13 +45,12 @@
 <section class="apps" aria-labelledby="apps-heading">
 	<h2 id="apps-heading">Connected apps</h2>
 	<p class="lead">
-		AI assistants and other apps you approved. Removing an app ends its access at once.
+		Connect Claude, ChatGPT, or another AI assistant to create links and read analytics from a chat.
+		Removing an app ends its access at once.
 	</p>
 	<p class="status" role="status" aria-live="polite">{status}</p>
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
-	{#if page.apps.length === 0}
-		<p class="empty">No connected apps.</p>
-	{:else}
+	{#if page.apps.length > 0}
 		<ul>
 			{#each page.apps as app (app.clientId)}
 				<li>
@@ -89,6 +93,13 @@
 			{/each}
 		</ul>
 	{/if}
+	{#if page.apps.length === 0 || guideOpen}
+		<ConnectGuide {mcpUrl} />
+	{:else}
+		<button type="button" class="add" onclick={() => (guideOpen = true)}
+			>Connect another assistant</button
+		>
+	{/if}
 </section>
 
 <style>
@@ -102,7 +113,6 @@
 	}
 	.lead,
 	.status,
-	.empty,
 	.meta {
 		color: var(--color-muted, #667085);
 		font-size: 0.85rem;
@@ -175,6 +185,9 @@
 		border-color: var(--color-accent-ink, #b42318);
 		background: var(--color-accent-ink, #b42318);
 		color: var(--color-on-primary, #fff);
+	}
+	button.add {
+		justify-self: start;
 	}
 	button:disabled {
 		color: var(--color-muted, #667085);
