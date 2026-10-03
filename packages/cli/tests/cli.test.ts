@@ -137,7 +137,18 @@ function fakeApi(state: { failWith?: ErrorCode; links?: object[]; domains?: obje
 			});
 		if (path === '/usage')
 			return Response.json({
-				usage: { month: '2026-10', clicks: 3, clickLimit: 5000, asOf: '2026-10-02T10:00:00.000Z' }
+				usage: {
+					month: '2026-10',
+					clicks: 3,
+					clickLimit: 5000,
+					unrecordedClicks: 0,
+					unrecordedSince: null,
+					links: { used: 4, limit: 5 },
+					domains: { used: 0, limit: 1 },
+					retentionDays: 30,
+					warnings: [{ resource: 'links', level: 80 }],
+					asOf: '2026-10-02T10:00:00.000Z'
+				}
 			});
 		return Response.json(
 			{ error: { code: 'NOT_FOUND', message: 'Route not found.', requestId: 'req-2' } },
@@ -394,7 +405,11 @@ describe('flared CLI', () => {
 		const report = await cli(['analytics', 'launch'], { env: signedIn });
 		expect(report.stdout).toContain('3 clicks from 2026-09-03 to 2026-10-02');
 		expect(report.stdout).toContain('US 3');
-		expect((await cli(['usage'], { env: signedIn })).stdout).toContain('3 of 5000 clicks');
+		const usage = (await cli(['usage'], { env: signedIn })).stdout;
+		expect(usage).toContain('Clicks in 2026-10  3 of 5000');
+		expect(usage).toContain('Active links       4 of 5 (80%)');
+		expect(usage).toContain('History            30 days');
+		expect(usage).not.toContain('Not recorded');
 	});
 
 	it('draws QR codes of the short URL as SVG or PNG', async () => {

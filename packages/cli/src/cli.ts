@@ -395,7 +395,7 @@ const commands: Record<string, Command> = {
 	},
 	usage: {
 		usage: 'flared usage',
-		summary: 'Show recorded clicks this month and the allowance.',
+		summary: 'Show usage against the workspace limits.',
 		options: [],
 		args: 0,
 		async run({ client, print }) {

@@ -42,6 +42,7 @@ import {
 	type ApiTokenAuth
 } from './auth/api-tokens';
 import { freshUntil } from './auth/session';
+import { noteLimitUsage } from './notices';
 import { resolveTenant } from './tenancy';
 import {
 	addDomain,
@@ -275,7 +276,10 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 				allowance.retryAfterSeconds
 			);
 		const input = parseCreateLink(await readJson(context.req.raw));
-		return respond(await createLink(routing, { tenantId, key, input, requestId, now: time }));
+		const result = await createLink(routing, { tenantId, key, input, requestId, now: time });
+		if (result.status === 201 && !result.replayed)
+			await noteLimitUsage(identity, routing, tenantId, time);
+		return respond(result);
 	});
 
 	app.get('/links', requireScope('links:read'), async (context) => {
@@ -370,8 +374,10 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			hostname: input.hostname,
 			now: time
 		});
-		if (result.created)
+		if (result.created) {
 			console.log(JSON.stringify({ event: 'domain_added', requestId, domainId: result.domain.id }));
+			await noteLimitUsage(identity, routing, tenantId, time);
+		}
 		return respond({
 			status: result.created ? 201 : 200,
 			body: JSON.stringify({ domain: result.domain })
@@ -412,7 +418,13 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 
 	app.get('/usage', requireScope('usage:read'), async (context) => {
 		if (!dependencies.analytics) throw new AnalyticsUnavailableError();
-		const usage = await getUsage(identity, dependencies.analytics, context.var.tenantId, now());
+		const usage = await getUsage(
+			identity,
+			routing,
+			dependencies.analytics,
+			context.var.tenantId,
+			now()
+		);
 		return respond({ status: 200, body: JSON.stringify({ usage }) });
 	});
 

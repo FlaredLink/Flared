@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Plain-text output for people. Scripts use --json.
-import type { LinkAnalytics, Usage } from '@flared/contracts/analytics';
+import type { LinkAnalytics, Usage, UsageWarning } from '@flared/contracts/analytics';
 import type { Domain, DomainPage } from '@flared/contracts/domains';
 import type { Link, ListedLink } from '@flared/contracts/links';
 import type { ApiIdentity } from '@flared/contracts/tokens';
@@ -77,8 +77,26 @@ export function analyticsReport(link: Link, analytics: LinkAnalytics): string {
 	].join('\n');
 }
 
+function used(used: number, limit: number, warning: UsageWarning | undefined): string {
+	return `${used} of ${limit}${warning ? ` (${warning.level}%)` : ''}`;
+}
+
 export function usageReport(usage: Usage): string {
-	return `${usage.clicks} of ${usage.clickLimit} clicks recorded in ${usage.month} (as of ${utc(usage.asOf)}).`;
+	const warning = (resource: UsageWarning['resource']) =>
+		usage.warnings.find((item) => item.resource === resource);
+	const rows = [
+		[`Clicks in ${usage.month}`, used(usage.clicks, usage.clickLimit, warning('clicks'))],
+		['Active links', used(usage.links.used, usage.links.limit, warning('links'))],
+		['Custom domains', used(usage.domains.used, usage.domains.limit, warning('domains'))],
+		['History', `${usage.retentionDays} days`],
+		['As of', utc(usage.asOf)]
+	];
+	if (usage.unrecordedSince)
+		rows.splice(1, 0, [
+			'Not recorded',
+			`${usage.unrecordedClicks} clicks since ${utc(usage.unrecordedSince)}`
+		]);
+	return table(rows);
 }
 
 export function identityReport(identity: ApiIdentity, apiUrl: string): string {

@@ -73,6 +73,13 @@ const total = (tenantId: string, linkDay = '2026-10-02') =>
 		tenantId,
 		linkDay
 	);
+const skipped = (tenantId: string, month = '2026-10') =>
+	shard()
+		.prepare(
+			'SELECT skipped_clicks, first_skipped_at FROM monthly_usage WHERE tenant_id = ? AND month = ?'
+		)
+		.bind(tenantId, month)
+		.first();
 const dimensionRows = (tenantId: string) =>
 	scalar('SELECT COUNT(*) FROM daily_dimensions WHERE tenant_id = ?', tenantId);
 
@@ -177,7 +184,32 @@ describe('ingestion', () => {
 			now: 1
 		});
 		expect(await ingestClick(shard(), record, 'token-b', start)).toBe('duplicate');
-		expect(await usage('t-grow')).toBeNull();
+		expect(await usage('t-grow')).toBe(0);
+		expect(await skipped('t-grow')).toEqual({ skipped_clicks: 1, first_skipped_at: start });
+	});
+
+	it('counts each skipped click once and keeps the time of the first', async () => {
+		await addPolicy('t-gap', 1);
+		expect(await ingestClick(shard(), click('t-gap'), 'a', start)).toBe('admitted');
+		const late = click('t-gap');
+		expect(await ingestClick(shard(), late, 'b', start + 1000)).toBe('skipped');
+		expect(await ingestClick(shard(), late, 'c', start + 2000)).toBe('duplicate');
+		expect(await ingestClick(shard(), click('t-gap'), 'd', start + 3000)).toBe('skipped');
+		expect(await usage('t-gap')).toBe(1);
+		expect(await skipped('t-gap')).toEqual({ skipped_clicks: 2, first_skipped_at: start + 1000 });
+		// The next month starts without a gap.
+		expect(
+			await ingestClick(
+				shard(),
+				click('t-gap', { day: '2026-11-01', month: '2026-11' }),
+				'e',
+				start + 4000
+			)
+		).toBe('admitted');
+		expect(await skipped('t-gap', '2026-11')).toEqual({
+			skipped_clicks: 0,
+			first_skipped_at: null
+		});
 	});
 
 	it('resets the allowance at the UTC month boundary', async () => {
@@ -542,6 +574,12 @@ describe('analytics API', () => {
 				month: '2026-10',
 				clicks: 1,
 				clickLimit: 5000,
+				unrecordedClicks: 0,
+				unrecordedSince: null,
+				links: { used: 1, limit: 10 },
+				domains: { used: 0, limit: 1 },
+				retentionDays: 30,
+				warnings: [],
 				asOf: new Date(start).toISOString()
 			}
 		});

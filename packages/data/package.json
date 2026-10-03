@@ -13,7 +13,8 @@
 		"./tenancy": "./src/tenancy.ts",
 		"./tokens": "./src/tokens.ts",
 		"./oauth": "./src/oauth.ts",
-		"./domains": "./src/domains.ts"
+		"./domains": "./src/domains.ts",
+		"./notices": "./src/notices.ts"
 	},
 	"dependencies": {
 		"@flared/contracts": "workspace:*",

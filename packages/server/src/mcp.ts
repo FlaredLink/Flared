@@ -353,13 +353,25 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 		'get_usage',
 		{
 			title: 'Get usage',
-			description: 'Gets the clicks counted this calendar month (UTC) and the monthly click limit.',
+			description:
+				'Gets usage against the workspace limits: clicks recorded this calendar month (UTC), clicks not recorded after the allowance was full, active links, custom domains, days of history, and a warning for each limit at 80% or 100%.',
 			inputSchema: z.object({}),
 			outputSchema: z.object({
 				usage: z.object({
 					month: z.string(),
 					clicks: z.number(),
 					clickLimit: z.number(),
+					unrecordedClicks: z.number(),
+					unrecordedSince: z.string().nullable(),
+					links: z.object({ used: z.number(), limit: z.number() }),
+					domains: z.object({ used: z.number(), limit: z.number() }),
+					retentionDays: z.number(),
+					warnings: z.array(
+						z.object({
+							resource: z.enum(['clicks', 'links', 'domains']),
+							level: z.union([z.literal(80), z.literal(100)])
+						})
+					),
 					asOf: z.string()
 				})
 			}),

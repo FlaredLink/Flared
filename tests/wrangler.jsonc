@@ -137,6 +137,21 @@
 			"binding": "DOMAINS_ANALYTICS",
 			"database_name": "domains-analytics",
 			"database_id": "00000000-0000-0000-0000-000000000036"
+		},
+		{
+			"binding": "USAGE_IDENTITY",
+			"database_name": "usage-identity",
+			"database_id": "00000000-0000-0000-0000-000000000037"
+		},
+		{
+			"binding": "USAGE_ROUTING",
+			"database_name": "usage-routing",
+			"database_id": "00000000-0000-0000-0000-000000000038"
+		},
+		{
+			"binding": "USAGE_ANALYTICS",
+			"database_name": "usage-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000039"
 		}
 	]
 }

@@ -122,6 +122,12 @@ export async function ingestClick(
 				`INSERT INTO monthly_usage (tenant_id, month, clicks) SELECT ?, ?, 1 WHERE ${admitted} ON CONFLICT(tenant_id, month) DO UPDATE SET clicks = clicks + 1`
 			)
 			.bind(tenantId, month, ...guard),
+		// A skipped click is counted as missing, so the dashboard can label the gap.
+		db
+			.prepare(
+				"INSERT INTO monthly_usage (tenant_id, month, clicks, skipped_clicks, first_skipped_at) SELECT ?, ?, 0, 1, ? WHERE EXISTS (SELECT 1 FROM event_receipts WHERE tenant_id = ? AND event_id = ? AND attempt_token = ? AND outcome = 'skipped') ON CONFLICT(tenant_id, month) DO UPDATE SET skipped_clicks = skipped_clicks + 1, first_skipped_at = COALESCE(first_skipped_at, excluded.first_skipped_at)"
+			)
+			.bind(tenantId, month, now, ...guard),
 		db
 			.prepare(
 				`INSERT INTO daily_totals (tenant_id, link_id, day, clicks) SELECT ?, ?, ?, 1 WHERE ${admitted} ON CONFLICT(tenant_id, link_id, day) DO UPDATE SET clicks = clicks + 1`
@@ -225,16 +231,59 @@ export async function readLinkClickTotals(
 	return new Map(results.map((row) => [text(row.link_id, 'link'), count(row.clicks, 'clicks')]));
 }
 
-export async function readMonthlyClicks(
+export interface MonthlyUsage {
+	clicks: number;
+	skippedClicks: number;
+	// When the first click of the month was not recorded, in milliseconds.
+	firstSkippedAt: number | null;
+}
+
+export async function readMonthlyUsage(
 	db: D1Database,
 	tenantId: string,
 	month: string
-): Promise<number> {
+): Promise<MonthlyUsage> {
 	const row = await db
-		.prepare('SELECT clicks FROM monthly_usage WHERE tenant_id = ? AND month = ?')
+		.prepare(
+			'SELECT clicks, skipped_clicks, first_skipped_at FROM monthly_usage WHERE tenant_id = ? AND month = ?'
+		)
 		.bind(tenantId, month)
 		.first<Record<string, unknown>>();
-	return row ? count(row.clicks, 'clicks') : 0;
+	if (!row) return { clicks: 0, skippedClicks: 0, firstSkippedAt: null };
+	return {
+		clicks: count(row.clicks, 'clicks'),
+		skippedClicks: count(row.skipped_clicks, 'skipped clicks'),
+		firstSkippedAt: row.first_skipped_at === null ? null : count(row.first_skipped_at, 'skip time')
+	};
+}
+
+export interface ClickUsageRow {
+	tenantId: string;
+	clicks: number;
+	monthlyClickLimit: number;
+}
+
+// Tenants of this shard at or above 80% of their allowance in a month, in tenant order after
+// the cursor. Tenants with no allowance are left out: they have nothing to warn about.
+export async function listHighClickUsage(
+	db: D1Database,
+	month: string,
+	after: string,
+	limit: number
+): Promise<ClickUsageRow[]> {
+	if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500)
+		throw new Error('Invalid usage batch size');
+	const { results } = await db
+		.prepare(
+			'SELECT u.tenant_id, u.clicks, p.monthly_click_limit FROM monthly_usage u JOIN tenant_policy p ON p.tenant_id = u.tenant_id WHERE u.month = ? AND u.tenant_id > ? AND p.monthly_click_limit > 0 AND u.clicks * 5 >= p.monthly_click_limit * 4 ORDER BY u.tenant_id LIMIT ?'
+		)
+		.bind(month, after, limit)
+		.all<Record<string, unknown>>();
+	return results.map((row) => ({
+		tenantId: text(row.tenant_id, 'tenant'),
+		clicks: count(row.clicks, 'clicks'),
+		monthlyClickLimit: count(row.monthly_click_limit, 'click limit')
+	}));
 }
 
 // Removes aggregates older than each tenant's retention and receipts past the replay window.

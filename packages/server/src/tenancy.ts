@@ -7,6 +7,8 @@ import {
 	listMemberships,
 	listPendingProjections,
 	readPolicyProjection,
+	updateTenantPolicy,
+	type PolicyLimits,
 	type PolicyStore
 } from '@flared/data/tenancy';
 import { resolveShard, type AnalyticsShards } from './shards';
@@ -95,6 +97,26 @@ export async function projectPolicy(
 ): Promise<void> {
 	await projectRoutingPolicy(identity, stores.routing, tenantId, now);
 	await projectAnalyticsPolicy(identity, stores.analytics, tenantId, now);
+}
+
+// Stores new limits as the next revision, then projects them. The identity store is the source
+// of truth: a failed projection returns false and retryProjections completes it later.
+export async function updatePolicy(
+	identity: D1Database,
+	stores: PolicyStores,
+	tenantId: string,
+	limits: PolicyLimits,
+	now: number
+): Promise<{ revision: number; projected: boolean }> {
+	const revision = await updateTenantPolicy(identity, tenantId, limits, now);
+	if (revision === null) throw new TenancyError('POLICY_MISSING');
+	try {
+		await projectPolicy(identity, stores, tenantId, now);
+		return { revision, projected: true };
+	} catch {
+		console.error(JSON.stringify({ event: 'policy_projection_deferred', tenantId }));
+		return { revision, projected: false };
+	}
 }
 
 export async function retryProjections(

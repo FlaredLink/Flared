@@ -8,6 +8,7 @@ import {
 	oldestRetainedDay,
 	parseClickEvent,
 	utcDay,
+	usageWarnings,
 	utcMonth,
 	type DimensionClicks,
 	type LinkAnalytics,
@@ -18,10 +19,11 @@ import {
 	readDailyTotals,
 	readDimensions,
 	readLinkClickTotals,
-	readMonthlyClicks,
+	readMonthlyUsage,
 	readShardPolicy,
 	type ShardPolicy
 } from '@flared/data/analytics';
+import { readLimitUsage } from '@flared/data/routing-policy';
 import { readTenantShard } from '@flared/data/tenancy';
 import { resolveShard, UnknownShardError, type AnalyticsShards } from './shards';
 
@@ -202,16 +204,32 @@ export async function getLinkAnalytics(
 
 export async function getUsage(
 	identity: D1Database,
+	routing: D1Database,
 	shards: AnalyticsShards,
 	tenantId: string,
 	now: number
 ): Promise<Usage> {
 	const { db, policy } = await tenantShard(identity, shards, tenantId);
 	const month = utcMonth(now);
+	const [monthly, limits] = await Promise.all([
+		readMonthlyUsage(db, tenantId, month),
+		readLimitUsage(routing, tenantId)
+	]);
+	if (!limits) throw new AnalyticsUnavailableError();
+	const counts = {
+		clicks: monthly.clicks,
+		clickLimit: policy.monthlyClickLimit,
+		links: limits.links,
+		domains: limits.domains
+	};
 	return {
 		month,
-		clicks: await readMonthlyClicks(db, tenantId, month),
-		clickLimit: policy.monthlyClickLimit,
+		...counts,
+		unrecordedClicks: monthly.skippedClicks,
+		unrecordedSince:
+			monthly.firstSkippedAt === null ? null : new Date(monthly.firstSkippedAt).toISOString(),
+		retentionDays: policy.retentionDays,
+		warnings: usageWarnings(counts),
 		asOf: new Date(now).toISOString()
 	};
 }

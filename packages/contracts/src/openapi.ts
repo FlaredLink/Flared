@@ -113,10 +113,38 @@ const schemas = {
 		},
 		asOf: dateTime
 	}),
+	LimitUsage: object({ used: count, limit: count }),
+	UsageWarning: object({
+		resource: { type: 'string', enum: ['clicks', 'links', 'domains'] },
+		level: {
+			type: 'integer',
+			enum: [80, 100],
+			description: 'The percentage of the limit reached.'
+		}
+	}),
 	Usage: object({
 		month: { type: 'string', pattern: '^\\d{4}-\\d{2}$' },
-		clicks: count,
-		clickLimit: count,
+		clicks: { ...count, description: 'Clicks recorded this UTC month.' },
+		clickLimit: { ...count, description: 'Clicks that can be recorded each UTC month.' },
+		unrecordedClicks: {
+			...count,
+			description: 'Clicks this month after the allowance was full. Links kept redirecting.'
+		},
+		unrecordedSince: nullable({
+			...dateTime,
+			description: 'When the first click this month was not recorded.'
+		}),
+		links: { ...ref('LimitUsage'), description: 'Active links and the active link limit.' },
+		domains: {
+			...ref('LimitUsage'),
+			description: 'Custom domains in use and the custom domain limit.'
+		},
+		retentionDays: { ...count, description: 'Days of click history kept.' },
+		warnings: {
+			type: 'array',
+			items: ref('UsageWarning'),
+			description: 'Each limit at 80% or more.'
+		},
 		asOf: dateTime
 	}),
 	Domain: object({
@@ -396,9 +424,9 @@ export function openApiDocument(serverUrl: string) {
 				)
 			},
 			'/usage': {
-				get: operation('Read this month’s recorded clicks', 'usage:read', {
+				get: operation('Read usage against the workspace limits', 'usage:read', {
 					'200': {
-						description: 'Usage in the current UTC month.',
+						description: 'Clicks in the current UTC month, links, domains, and limit warnings.',
 						content: json(object({ usage: ref('Usage') }))
 					}
 				})

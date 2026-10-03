@@ -173,11 +173,59 @@ export interface LinkAnalytics {
 	asOf: string;
 }
 
+export interface LimitUsage {
+	used: number;
+	limit: number;
+}
+
+export type UsageResource = 'clicks' | 'links' | 'domains';
+
+export type UsageLevel = 80 | 100;
+
+export interface UsageWarning {
+	resource: UsageResource;
+	level: UsageLevel;
+}
+
 export interface Usage {
 	month: string;
+	// Clicks recorded this UTC month and the monthly allowance.
 	clicks: number;
 	clickLimit: number;
+	// Clicks after the allowance was full: counted, never recorded.
+	unrecordedClicks: number;
+	unrecordedSince: string | null;
+	links: LimitUsage;
+	domains: LimitUsage;
+	retentionDays: number;
+	// One entry for each resource at 80% or more of its limit.
+	warnings: UsageWarning[];
 	asOf: string;
+}
+
+// The highest threshold reached, or null below 80%. A limit of 0 never warns: the resource
+// is turned off, not running out.
+export function usageLevel(used: number, limit: number): UsageLevel | null {
+	if (limit <= 0) return null;
+	if (used >= limit) return 100;
+	if (used * 5 >= limit * 4) return 80;
+	return null;
+}
+
+export function usageWarnings(usage: {
+	clicks: number;
+	clickLimit: number;
+	links: LimitUsage;
+	domains: LimitUsage;
+}): UsageWarning[] {
+	const warnings: UsageWarning[] = [];
+	const levels: [UsageResource, UsageLevel | null][] = [
+		['clicks', usageLevel(usage.clicks, usage.clickLimit)],
+		['links', usageLevel(usage.links.used, usage.links.limit)],
+		['domains', usageLevel(usage.domains.used, usage.domains.limit)]
+	];
+	for (const [resource, level] of levels) if (level) warnings.push({ resource, level });
+	return warnings;
 }
 
 // Shape checks for API responses read by clients.
@@ -220,6 +268,30 @@ export function isUsage(value: unknown): value is Usage {
 		typeof usage.month === 'string' &&
 		isCount(usage.clicks) &&
 		isCount(usage.clickLimit) &&
+		isCount(usage.unrecordedClicks) &&
+		(usage.unrecordedSince === null || typeof usage.unrecordedSince === 'string') &&
+		isLimitUsage(usage.links) &&
+		isLimitUsage(usage.domains) &&
+		isCount(usage.retentionDays) &&
+		Array.isArray(usage.warnings) &&
+		usage.warnings.every(isUsageWarning) &&
 		typeof usage.asOf === 'string'
+	);
+}
+
+function isLimitUsage(value: unknown): value is LimitUsage {
+	if (typeof value !== 'object' || value === null) return false;
+	const usage = value as Record<string, unknown>;
+	return isCount(usage.used) && isCount(usage.limit);
+}
+
+function isUsageWarning(value: unknown): value is UsageWarning {
+	if (typeof value !== 'object' || value === null) return false;
+	const warning = value as Record<string, unknown>;
+	return (
+		(warning.resource === 'clicks' ||
+			warning.resource === 'links' ||
+			warning.resource === 'domains') &&
+		(warning.level === 80 || warning.level === 100)
 	);
 }

@@ -24,7 +24,7 @@ Tests run locally in Cloudflare's workerd runtime with real D1 storage. They req
 - `@flared/server`: absolute session defaults, safe principal extraction, structured Cloudflare email delivery, trusted service forwarding, the `/v1` links and analytics API, the short-link redirect handler, the click Queue consumer (`@flared/server/analytics`) and the analytics shard map (`@flared/server/shards`).
 - `@flared/client`: the typed `/v1` client for the CLI and the MCP endpoint. It takes an API URL and a token, checks each response's shape, and throws `FlaredApiError` with the API error code. It retries only reads and keyed link creation, after 429, 503, or a network error.
 - `@flaredlink/cli` (`packages/cli`): the published `flared` command for Node.js 20 or later. `bun run build:cli` bundles it into `packages/cli/dist/flared.js`; `bun run test:cli` runs its tests. See its [README](packages/cli/README.md).
-- `@flared/ui`: the link create form and link list, the link analytics view, the API token list (`@flared/ui/tokens/TokenList.svelte`), the passkey list, and the browser passkey ceremonies (`@flared/ui/passkeys/client`) against the shared `/api/auth/passkey/*` routes.
+- `@flared/ui`: the link create form and link list, the link analytics view, the usage warning banner, the API token list (`@flared/ui/tokens/TokenList.svelte`), the passkey list, and the browser passkey ceremonies (`@flared/ui/passkeys/client`) against the shared `/api/auth/passkey/*` routes.
 
 Import declared subpath exports. Apply `packages/data/migrations/identity` to the identity database, `packages/data/migrations/routing` to the routing database, and `packages/data/migrations/analytics` to every analytics shard through a migration runner; never modify a released migration.
 
@@ -37,6 +37,14 @@ Given a `clicks` sink (a Queue producer), the redirect handler sends one event a
 `createClickConsumer({ shards })` is the Queue consumer. Each event is one D1 batch on the tenant's shard: a receipt per event ID with a fresh attempt token, admission against the calendar-month allowance in UTC, and the daily totals, country, device, and referrer counts, each guarded in SQL by the admitted receipt of this attempt. A replay after a committed attempt changes nothing, and a failed batch rolls back completely. Invalid, test, and expired events (older than 48 hours) are acknowledged without counting. An event for an unbound shard or a tenant without a policy on its shard is retried; it never goes to another database. A link and day keep at most 50 referrer names; later ones count as `other`.
 
 A tenant becomes active when routing and its analytics shard both hold its policy (`projectPolicy`, `retryProjections`). `purgeExpired` removes aggregates past the tenant's retention and receipts after 72 hours. The API adds `GET /v1/links/:id/analytics` (UTC days, clamped to retention), `GET /v1/usage`, and `clicksLast30Days` on listed links.
+
+## Limits, usage, and notices
+
+`updatePolicy` (`@flared/server/tenancy`) stores new limits as the next policy revision and projects them to routing and the tenant's analytics shard. A failed projection returns `projected: false`, and `retryProjections` finishes it later. Lower limits never disable existing links or domains; they block new ones. A self-hosted operator changes limits this way.
+
+A click that arrives after the monthly allowance is full still redirects and is not recorded. The shard counts it as missing, with the time of the first one. `GET /v1/usage` returns recorded clicks, missing clicks and since when, active links, custom domains, days of history, and a warning for each limit at 80% or 100%. `flared usage`, the MCP `get_usage` tool, and `@flared/ui/usage/UsageBanner.svelte` show the same data.
+
+Notices to the workspace owner use the identity `notices` outbox (`@flared/server/notices`). `reconcileClickNotices` records click warnings from each shard; run it every few minutes. The API records link and domain warnings after a creation, and `reconcileLimitNotices` catches the rest once a day, including after a lowered limit. Each notice has a dedupe key, so it happens once per threshold and month, or per threshold and policy revision. `dispatchNotices` emails pending notices to the owner's verified address through an `EmailTransport` and a template such as `usageNoticeEmail`. A failed send becomes `delivery_unknown` and is never resent. Without email, notices stay pending and the dashboard warning still shows. `cleanupNotices` deletes notices after 62 days.
 
 ## API tokens
 

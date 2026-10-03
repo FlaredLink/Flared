@@ -106,6 +106,31 @@ export async function createTenant(db: D1Database, tenant: NewTenant): Promise<v
 	]);
 }
 
+// Replaces the limits and takes the next revision in one statement, so concurrent updates each
+// get their own revision and the newest one wins in every store. Returns null for no tenant.
+export async function updateTenantPolicy(
+	db: D1Database,
+	tenantId: string,
+	limits: PolicyLimits,
+	now: number
+): Promise<number | null> {
+	checkLimits(limits);
+	const row = await db
+		.prepare(
+			'UPDATE tenant_policy SET revision = revision + 1, active_link_limit = ?, monthly_click_limit = ?, retention_days = ?, domain_limit = ?, updated_at = ? WHERE tenant_id = ? RETURNING revision'
+		)
+		.bind(
+			limits.activeLinkLimit,
+			limits.monthlyClickLimit,
+			limits.retentionDays,
+			limits.domainLimit,
+			now,
+			tenantId
+		)
+		.first<{ revision: unknown }>();
+	return row ? count(row.revision, 'revision') : null;
+}
+
 export async function readTenantShard(db: D1Database, tenantId: string): Promise<string | null> {
 	const row = await db
 		.prepare('SELECT analytics_shard_id FROM tenants WHERE id = ?')

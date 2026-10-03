@@ -44,7 +44,11 @@
 			"types": "./src/domains/DomainList.svelte",
 			"svelte": "./src/domains/DomainList.svelte"
 		},
-		"./domains/client": "./src/domains/client.ts"
+		"./domains/client": "./src/domains/client.ts",
+		"./usage/UsageBanner.svelte": {
+			"types": "./src/usage/UsageBanner.svelte",
+			"svelte": "./src/usage/UsageBanner.svelte"
+		}
 	},
 	"dependencies": {
 		"@flared/contracts": "workspace:*",
