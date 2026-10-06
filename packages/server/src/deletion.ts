@@ -33,8 +33,6 @@ const stepsPerRun = 12;
 
 export interface DeletionEmail {
 	transport: EmailTransport;
-	// Where a person who did not ask for the deletion writes, such as a support address.
-	support?: string;
 }
 
 export interface DeletionDependencies {
@@ -93,22 +91,16 @@ function escape(value: string): string {
 		.replace(/"/g, '&quot;');
 }
 
-export function deletionEmail(
-	kind: 'accepted' | 'completed',
-	to: string,
-	support?: string
-): EmailContent {
-	const help = support
-		? `If you did not ask for this, write to ${support} at once.`
-		: 'If you did not ask for this, contact the operator of this Flared installation at once.';
+// The request already needed a recent sign-in and the typed confirmation, and a deletion cannot
+// be undone, so the emails only report progress.
+export function deletionEmail(kind: 'accepted' | 'completed', to: string): EmailContent {
 	const content =
 		kind === 'accepted'
 			? {
 					subject: 'We are deleting your Flared account',
 					lines: [
 						'We received the request to delete your Flared account. Your short links no longer redirect, and every sign-in, API token, and connected app has stopped working.',
-						'We are now removing your links, domains, and analytics. We will email you again when the deletion is complete.',
-						help
+						'We are now removing your links, domains, and analytics. We will email you again when the deletion is complete.'
 					]
 				}
 			: {
@@ -135,7 +127,7 @@ async function notify(
 ): Promise<void> {
 	if (!deps.email || !job.contactEmail) return;
 	try {
-		await deps.email.transport.send(deletionEmail(kind, job.contactEmail, deps.email.support));
+		await deps.email.transport.send(deletionEmail(kind, job.contactEmail));
 	} catch {
 		console.error(
 			JSON.stringify({ event: 'deletion_email_unknown', kind, tenantId: job.tenantId })

@@ -56,8 +56,7 @@ function deps(now: number, change: Partial<DeletionDependencies> = {}): Deletion
 					if (failEmail) throw new Error('Send failed');
 					sent.push(message);
 				}
-			},
-			support: 'support@example.com'
+			}
 		},
 		extension: async ({ tenantId }) => {
 			if (failExtension) throw new Error('Extension failed');
@@ -276,7 +275,7 @@ describe('workspace deletion', () => {
 		expect(sent.map((email) => [email.to, email.subject])).toEqual([
 			['gone@example.com', 'We are deleting your Flared account']
 		]);
-		expect(sent[0].text).toContain('support@example.com');
+		expect(sent[0].text).not.toContain('did not ask');
 		expect(await findRedirectTarget(routing(), 'short.example', 'gone-0')).toBeNull();
 		expect(await findRedirectTarget(routing(), 'go.gone.example', 'gone-1')).toBeNull();
 		expect(await findRedirectTarget(routing(), 'short.example', 'kept-0')).not.toBeNull();
