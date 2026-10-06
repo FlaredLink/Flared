@@ -6,6 +6,14 @@ export const maxDestinationLength = 4096;
 export const maxTitleLength = 200;
 export const maxIdempotencyKeyLength = 255;
 
+// Abuse categories for an operator block or suspension. The owner sees the category only.
+export const blockReasons = ['phishing', 'malware', 'spam', 'illegal', 'other'] as const;
+export type BlockReason = (typeof blockReasons)[number];
+
+export function isBlockReason(value: unknown): value is BlockReason {
+	return typeof value === 'string' && (blockReasons as readonly string[]).includes(value);
+}
+
 export interface Link {
 	id: string;
 	domainId: string;
@@ -15,6 +23,9 @@ export interface Link {
 	destination: string;
 	title: string | null;
 	enabled: boolean;
+	// Set while the operator blocks the link for abuse. A blocked link does not redirect, and
+	// its owner cannot edit it or turn it on.
+	blocked: { reason: BlockReason } | null;
 	createdAt: string;
 	updatedAt: string;
 }

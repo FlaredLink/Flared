@@ -223,6 +223,7 @@ describe('workspace export', () => {
 			destination: 'https://example.com/?a=1,b="2"',
 			title: '=HYPERLINK("https://evil.example")',
 			enabled: false,
+			blocked: null,
 			createdAt: '2026-10-20T00:00:00.000Z',
 			updatedAt: '2026-10-20T00:00:00.000Z'
 		};

@@ -22,6 +22,8 @@ export function exitCodeFor(code: ClientErrorCode): number {
 		case 'INSUFFICIENT_SCOPE':
 		case 'NO_WORKSPACE':
 		case 'ACCOUNT_DELETING':
+		case 'WORKSPACE_SUSPENDED':
+		case 'LINK_BLOCKED':
 		case 'ORIGIN_REJECTED':
 		case 'REAUTH_REQUIRED':
 			return exitCodes.forbidden;

@@ -24,6 +24,11 @@ function utc(iso: string): string {
 	return `${iso.slice(0, 16).replace('T', ' ')} UTC`;
 }
 
+function linkStatus(link: Link): string {
+	if (link.blocked) return `blocked (${link.blocked.reason})`;
+	return link.enabled ? 'enabled' : 'disabled';
+}
+
 export function linkTable(links: ListedLink[]): string {
 	if (links.length === 0) return 'No links.';
 	return table([
@@ -31,7 +36,7 @@ export function linkTable(links: ListedLink[]): string {
 		...links.map((link) => [
 			link.shortUrl,
 			link.clicksLast30Days === null ? '-' : String(link.clicksLast30Days),
-			link.enabled ? 'enabled' : 'disabled',
+			linkStatus(link),
 			shorten(link.destination, 60)
 		])
 	]);
@@ -42,7 +47,7 @@ export function linkDetails(link: Link): string {
 		['Short URL', link.shortUrl],
 		['Destination', link.destination],
 		['Title', link.title ?? '-'],
-		['Status', link.enabled ? 'enabled' : 'disabled'],
+		['Status', linkStatus(link)],
 		['Created', utc(link.createdAt)],
 		['Updated', utc(link.updatedAt)],
 		['ID', link.id]

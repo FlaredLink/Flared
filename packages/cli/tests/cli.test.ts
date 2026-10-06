@@ -23,6 +23,7 @@ const link = (id: string, slug: string) => ({
 	destination: 'https://example.com/launch',
 	title: null,
 	enabled: true,
+	blocked: null,
 	createdAt: '2026-10-02T09:00:00.000Z',
 	updatedAt: '2026-10-02T09:00:00.000Z'
 });
@@ -359,6 +360,8 @@ describe('flared CLI', () => {
 			DOMAIN_TAKEN: 6,
 			DOMAIN_LIMIT_REACHED: 7,
 			ACCOUNT_DELETING: 4,
+			WORKSPACE_SUSPENDED: 4,
+			LINK_BLOCKED: 4,
 			DOMAINS_UNAVAILABLE: 9,
 			DOMAIN_CHECK_TOO_SOON: 8,
 			RATE_LIMITED: 8,

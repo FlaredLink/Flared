@@ -187,6 +187,21 @@
 			"binding": "DELETION_SINGLE_IDENTITY",
 			"database_name": "deletion-single-identity",
 			"database_id": "00000000-0000-0000-0000-000000000046"
+		},
+		{
+			"binding": "OPERATOR_IDENTITY",
+			"database_name": "operator-identity",
+			"database_id": "00000000-0000-0000-0000-000000000047"
+		},
+		{
+			"binding": "OPERATOR_ROUTING",
+			"database_name": "operator-routing",
+			"database_id": "00000000-0000-0000-0000-000000000048"
+		},
+		{
+			"binding": "OPERATOR_ANALYTICS",
+			"database_name": "operator-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000049"
 		}
 	]
 }

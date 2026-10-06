@@ -60,7 +60,7 @@ Point the CLI at your instance's API with `--api-url` or `FLARED_API_URL`, for e
 | 1    | Unexpected failure                                          |
 | 2    | Wrong command usage                                         |
 | 3    | Not signed in, or the token is invalid, expired, or revoked |
-| 4    | Not allowed, for example a missing scope                    |
+| 4    | Not allowed, for example a missing scope or a blocked link  |
 | 5    | Not found                                                   |
 | 6    | Rejected input or a conflict, such as a slug in use         |
 | 7    | Plan limit reached                                          |

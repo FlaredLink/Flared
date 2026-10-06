@@ -6,7 +6,12 @@ import { deviceCategories } from './analytics';
 import { domainFailures, domainStates } from './domains';
 import { exportAnalyticsPageSize, exportDimensions, exportLinkPageSize } from './export';
 import { errorStatus } from './errors';
-import { maxDestinationLength, maxIdempotencyKeyLength, maxTitleLength } from './links';
+import {
+	blockReasons,
+	maxDestinationLength,
+	maxIdempotencyKeyLength,
+	maxTitleLength
+} from './links';
 import { tokenScopes, type TokenScope } from './tokens';
 
 // Duplicated from the client's QR module, which this package cannot import.
@@ -47,6 +52,11 @@ const schemas = {
 		destination: { type: 'string', format: 'uri' },
 		title: nullable({ type: 'string' }),
 		enabled: { type: 'boolean' },
+		blocked: {
+			...nullable(object({ reason: { type: 'string', enum: [...blockReasons] } })),
+			description:
+				'Set while Flared blocks the link for abuse. A blocked link does not redirect and cannot be edited or turned on.'
+		},
 		createdAt: dateTime,
 		updatedAt: dateTime
 	}),

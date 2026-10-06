@@ -198,6 +198,8 @@ export function createOAuthRoutes(dependencies: OAuthRouteDependencies) {
 		const tenant = await resolveTenant(db, principal.user.id);
 		if (tenant.status !== 'active')
 			return oauthError(409, 'workspace_unavailable', 'Your workspace is not ready.');
+		if (tenant.suspension)
+			return oauthError(403, 'workspace_suspended', 'Flared suspended this workspace.');
 		return principal;
 	}
 

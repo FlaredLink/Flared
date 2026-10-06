@@ -9,7 +9,7 @@ import * as z from 'zod';
 import { createClient, FlaredApiError, type FlaredClient } from '@flared/client';
 import { defaultQrSize, qrPng } from '@flared/client/qr';
 import { domainStates, normalizeHostname, type Domain } from '@flared/contracts/domains';
-import type { Link } from '@flared/contracts/links';
+import { blockReasons, type Link } from '@flared/contracts/links';
 import { tokenScopes, type TokenScope } from '@flared/contracts/tokens';
 import { countMcpCall, findAccessToken } from '@flared/data/oauth';
 import type { ApiPrincipal } from './api';
@@ -89,6 +89,7 @@ const linkOutput = z.object({
 	destination: z.string(),
 	title: z.string().nullable(),
 	enabled: z.boolean(),
+	blocked: z.object({ reason: z.enum(blockReasons) }).nullable(),
 	createdAt: z.string(),
 	updatedAt: z.string()
 });
@@ -125,6 +126,7 @@ function linkResult(link: Link): LinkOutput {
 		destination: link.destination,
 		title: link.title,
 		enabled: link.enabled,
+		blocked: link.blocked,
 		createdAt: link.createdAt,
 		updatedAt: link.updatedAt
 	};
@@ -557,6 +559,8 @@ export function createMcpEndpoint(options: McpEndpointOptions) {
 			return jsonRpcError(401, 'The access token is not valid.', {
 				'www-authenticate': challenge(', error="invalid_token"')
 			});
+		// The token stays valid, so the app can work again after a reinstatement.
+		if (tenant.suspension) return jsonRpcError(403, 'Flared suspended this workspace.');
 		const scopes = stored.scopes.filter((scope): scope is TokenScope =>
 			(tokenScopes as readonly string[]).includes(scope)
 		);

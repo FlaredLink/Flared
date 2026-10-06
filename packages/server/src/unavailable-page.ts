@@ -2,13 +2,18 @@
 // The page a browser sees when a short link cannot open. It is static: it never repeats the
 // requested address, and an unknown link looks the same as a disabled one.
 
-export type UnavailableReason = 'not-found' | 'unavailable';
+export type UnavailableReason = 'not-found' | 'blocked' | 'unavailable';
 
 const copy: Record<UnavailableReason, { title: string; heading: string; text: string }> = {
 	'not-found': {
 		title: 'Link not available',
 		heading: 'This link isn’t available',
 		text: 'Its owner may have turned it off, or the address may be wrong. Check the link with the person who shared it.'
+	},
+	blocked: {
+		title: 'Link blocked',
+		heading: 'This link was blocked',
+		text: 'Flared blocked this link because it broke the rules for short links, for example with phishing or malware. Do not enter passwords or payment details on a page that this link sent you to before.'
 	},
 	unavailable: {
 		title: 'Link can’t open right now',
@@ -42,13 +47,21 @@ const escapes: Record<string, string> = {
 };
 const escape = (value: string) => value.replace(/[&<>"']/g, (character) => escapes[character]);
 
-// homeUrl comes from deployment configuration, never from the request.
-export function unavailablePage(reason: UnavailableReason, homeUrl?: string): string {
+// The URLs come from deployment configuration, never from the request. Only the blocked page
+// links to the report form.
+export function unavailablePage(
+	reason: UnavailableReason,
+	links: { homeUrl?: string; reportUrl?: string } = {}
+): string {
 	const { title, heading, text } = copy[reason];
-	const footer = homeUrl
-		? `<footer>Short links by <a href="${escape(homeUrl)}">Flared</a></footer>`
+	const report =
+		reason === 'blocked' && links.reportUrl
+			? `<p><a href="${escape(links.reportUrl)}">Report another link</a></p>`
+			: '';
+	const footer = links.homeUrl
+		? `<footer>Short links by <a href="${escape(links.homeUrl)}">Flared</a></footer>`
 		: '';
-	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${title}</title><style>${styles}</style></head><body><main>${mark}<h1>${heading}</h1><p>${text}</p>${footer}</main></body></html>`;
+	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${title}</title><style>${styles}</style></head><body><main>${mark}<h1>${heading}</h1><p>${text}</p>${report}${footer}</main></body></html>`;
 }
 
 export const unavailablePageHeaders: Record<string, string> = {

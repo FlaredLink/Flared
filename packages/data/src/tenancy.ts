@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Identity-store records for the installation, tenants, owner memberships, and source policy.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
+import { isBlockReason, type BlockReason } from '@flared/contracts/links';
 
 export type InstallationMode = 'single' | 'multi';
 
@@ -25,6 +26,8 @@ export interface Membership {
 	activated: boolean;
 	// A deletion of the tenant has started.
 	deleting: boolean;
+	// The operator suspended the tenant, with the abuse category the owner sees.
+	suspension: { reason: BlockReason } | null;
 }
 
 export interface PolicyProjection {
@@ -37,6 +40,7 @@ export interface PolicyProjection {
 	domainLimit: number;
 	monthlyClickLimit: number;
 	retentionDays: number;
+	suspendedAt: number | null;
 }
 
 function text(value: unknown, field: string): string {
@@ -47,6 +51,11 @@ function text(value: unknown, field: string): string {
 function count(value: unknown, field: string): number {
 	if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0)
 		throw new Error(`Invalid stored ${field}`);
+	return value;
+}
+
+function reason(value: unknown): BlockReason {
+	if (!isBlockReason(value)) throw new Error('Invalid stored suspension reason');
 	return value;
 }
 
@@ -69,14 +78,15 @@ export async function readInstallationMode(db: D1Database): Promise<Installation
 export async function listMemberships(db: D1Database, userId: string): Promise<Membership[]> {
 	const { results } = await db
 		.prepare(
-			'SELECT m.tenant_id, t.activated_at, EXISTS (SELECT 1 FROM tenant_deletions d WHERE d.tenant_id = m.tenant_id) AS deleting FROM tenant_memberships m JOIN tenants t ON t.id = m.tenant_id WHERE m.user_id = ? ORDER BY m.created_at, m.tenant_id LIMIT 2'
+			'SELECT m.tenant_id, t.activated_at, EXISTS (SELECT 1 FROM tenant_deletions d WHERE d.tenant_id = m.tenant_id) AS deleting, p.suspended_at, p.suspended_reason FROM tenant_memberships m JOIN tenants t ON t.id = m.tenant_id LEFT JOIN tenant_policy p ON p.tenant_id = m.tenant_id WHERE m.user_id = ? ORDER BY m.created_at, m.tenant_id LIMIT 2'
 		)
 		.bind(userId)
-		.all<{ tenant_id: unknown; activated_at: unknown; deleting: unknown }>();
+		.all<Record<string, unknown>>();
 	return results.map((row) => ({
 		tenantId: text(row.tenant_id, 'tenant'),
 		activated: row.activated_at !== null,
-		deleting: row.deleting === 1
+		deleting: row.deleting === 1,
+		suspension: row.suspended_at === null ? null : { reason: reason(row.suspended_reason) }
 	}));
 }
 
@@ -150,7 +160,7 @@ export async function readPolicyProjection(
 ): Promise<PolicyProjection | null> {
 	const row = await db
 		.prepare(
-			'SELECT p.revision, p.routing_revision, p.analytics_revision, t.analytics_shard_id, p.active_link_limit, p.domain_limit, p.monthly_click_limit, p.retention_days FROM tenant_policy p JOIN tenants t ON t.id = p.tenant_id WHERE p.tenant_id = ? AND NOT EXISTS (SELECT 1 FROM tenant_deletions d WHERE d.tenant_id = p.tenant_id)'
+			'SELECT p.revision, p.routing_revision, p.analytics_revision, t.analytics_shard_id, p.active_link_limit, p.domain_limit, p.monthly_click_limit, p.retention_days, p.suspended_at FROM tenant_policy p JOIN tenants t ON t.id = p.tenant_id WHERE p.tenant_id = ? AND NOT EXISTS (SELECT 1 FROM tenant_deletions d WHERE d.tenant_id = p.tenant_id)'
 		)
 		.bind(tenantId)
 		.first<Record<string, unknown>>();
@@ -164,8 +174,31 @@ export async function readPolicyProjection(
 		activeLinkLimit: count(row.active_link_limit, 'link limit'),
 		domainLimit: count(row.domain_limit, 'domain limit'),
 		monthlyClickLimit: count(row.monthly_click_limit, 'click limit'),
-		retentionDays: count(row.retention_days, 'retention')
+		retentionDays: count(row.retention_days, 'retention'),
+		suspendedAt: row.suspended_at === null ? null : count(row.suspended_at, 'suspension time')
 	};
+}
+
+// Sets or clears the operator's suspension as the next revision. Returns null for no tenant or
+// a tenant whose deletion has started, and changed false when the tenant is already in that
+// state, so a repeated request takes no revision.
+export async function setTenantSuspension(
+	db: D1Database,
+	tenantId: string,
+	suspension: { reason: BlockReason } | null,
+	now: number
+): Promise<{ revision: number; changed: boolean } | null> {
+	const row = await db
+		.prepare(
+			`UPDATE tenant_policy SET revision = revision + 1, suspended_at = ?1, suspended_reason = ?2, updated_at = ?3
+			WHERE tenant_id = ?4 AND (suspended_at IS NULL) = (?1 IS NOT NULL)
+			AND NOT EXISTS (SELECT 1 FROM tenant_deletions WHERE tenant_id = ?4) RETURNING revision`
+		)
+		.bind(suspension ? now : null, suspension?.reason ?? null, now, tenantId)
+		.first<{ revision: unknown }>();
+	if (row) return { revision: count(row.revision, 'revision'), changed: true };
+	const current = await readPolicyProjection(db, tenantId);
+	return current ? { revision: current.revision, changed: false } : null;
 }
 
 export type PolicyStore = 'routing' | 'analytics';
@@ -212,4 +245,18 @@ export async function acknowledgeProjection(
 			)
 			.bind(now, tenantId, tenantId)
 	]);
+}
+
+// Ends every sign-in session, API token, and connected app of the tenant's members in one batch.
+export async function deleteTenantCredentials(db: D1Database, tenantId: string): Promise<void> {
+	const members = 'SELECT user_id FROM tenant_memberships WHERE tenant_id = ?';
+	await db.batch(
+		[
+			'DELETE FROM "session" WHERE "userId" IN',
+			'DELETE FROM "apikey" WHERE "referenceId" IN',
+			'DELETE FROM "oauthAccessToken" WHERE "userId" IN',
+			'DELETE FROM "oauthRefreshToken" WHERE "userId" IN',
+			'DELETE FROM "oauthConsent" WHERE "userId" IN'
+		].map((statement) => db.prepare(`${statement} (${members})`).bind(tenantId))
+	);
 }

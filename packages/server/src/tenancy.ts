@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
+import type { BlockReason } from '@flared/contracts/links';
 import { applyAnalyticsPolicy } from '@flared/data/analytics';
 import { applyRoutingPolicy } from '@flared/data/routing-policy';
 import {
@@ -14,7 +15,8 @@ import {
 import { resolveShard, type AnalyticsShards } from './shards';
 
 export type TenantResolution =
-	| { status: 'active'; tenantId: string }
+	// suspension is set while the operator suspends the workspace for abuse.
+	| { status: 'active'; tenantId: string; suspension: { reason: BlockReason } | null }
 	| { status: 'pending'; tenantId: string }
 	// The workspace is being deleted: nothing may act in it.
 	| { status: 'deleting'; tenantId: string }
@@ -37,11 +39,10 @@ export async function resolveTenant(
 		console.error(JSON.stringify({ event: 'tenant_multiple_memberships' }));
 		throw new TenancyError('MULTIPLE_MEMBERSHIPS');
 	}
-	const [membership] = memberships;
-	return {
-		status: membership.deleting ? 'deleting' : membership.activated ? 'active' : 'pending',
-		tenantId: membership.tenantId
-	};
+	const [{ tenantId, activated, deleting, suspension }] = memberships;
+	if (deleting) return { status: 'deleting', tenantId };
+	if (!activated) return { status: 'pending', tenantId };
+	return { status: 'active', tenantId, suspension };
 }
 
 // Safe to repeat: routing keeps the newest revision, and the acknowledgement only moves forward.
@@ -60,6 +61,7 @@ export async function projectRoutingPolicy(
 			analyticsShardId: policy.analyticsShardId,
 			activeLinkLimit: policy.activeLinkLimit,
 			domainLimit: policy.domainLimit,
+			suspendedAt: policy.suspendedAt,
 			now
 		});
 	await acknowledgeProjection(identity, 'routing', tenantId, policy.revision, now);

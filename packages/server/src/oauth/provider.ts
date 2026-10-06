@@ -105,7 +105,8 @@ export function createOAuthServer(db: D1Database, config: OAuthServerConfig) {
 					shouldRedirect: () => false,
 					async consentReferenceId(context) {
 						const tenant = await resolveTenant(db, sessionUserId(context));
-						if (tenant.status !== 'active') throw new Error('No active workspace');
+						if (tenant.status !== 'active' || tenant.suspension)
+							throw new Error('No active workspace');
 						return tenant.tenantId;
 					}
 				}

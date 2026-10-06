@@ -7,6 +7,7 @@ import { makeSignature } from 'better-auth/crypto';
 import { createTenant } from '../packages/data/src/tenancy';
 import { deleteGrant, deleteExpiredOAuthRecords } from '../packages/data/src/oauth';
 import { projectPolicy } from '../packages/server/src/tenancy';
+import { reinstateTenant, suspendTenant } from '../packages/server/src/operator';
 import { createApi, type ApiPrincipal } from '../packages/server/src/api';
 import type { DomainProvider } from '../packages/server/src/domains';
 import { qrPng } from '../packages/client/src/qr';
@@ -295,7 +296,7 @@ beforeAll(async () => {
 			"INSERT INTO domains (id, tenant_id, state, is_default, created_at, updated_at) VALUES ('dom-short', NULL, 'active', 1, 0, 0)"
 		)
 	]);
-	for (const n of [1, 2, 3, 4, 5, 6, 7, 8]) await addTenant(`user-${n}`, `tenant-${n}`);
+	for (const n of [1, 2, 3, 4, 5, 6, 7, 8, 9]) await addTenant(`user-${n}`, `tenant-${n}`);
 	// Workspace domains for tenant-8, and one of tenant-5's that tenant-8 must not see.
 	const later = Date.now() + 86_400_000;
 	for (const [id, hostname, tenant, state] of [
@@ -1064,6 +1065,34 @@ describe('MCP endpoint', () => {
 		expect((await call(tokens.access_token, 'get_usage')).status).toBe(200);
 		await identity().prepare("DELETE FROM tenant_memberships WHERE user_id = 'user-7'").run();
 		expect((await call(tokens.access_token, 'get_usage')).status).toBe(401);
+	});
+
+	it('refuses calls while the workspace is suspended and works again after reinstatement', async () => {
+		const { tokens } = await connect('user-9');
+		const operator = { kind: 'operator', id: 'test-operator' } as const;
+		const stores = { routing: routing(), analytics: { 'analytics-1': env.OAUTH_ANALYTICS } };
+		await suspendTenant(identity(), stores, operator, {
+			tenantId: 'tenant-9',
+			reason: 'spam',
+			now: Date.now()
+		});
+		expect((await call(tokens.access_token, 'get_usage')).status).toBe(403);
+		// No new app can connect to a suspended workspace.
+		const flow = await startFlow('user-9');
+		const location = (await authorize(flow)).headers.get('location') ?? '';
+		const consent = await oauth().fetch(
+			new Request(`${origin}/oauth2/consent`, {
+				method: 'POST',
+				headers: { cookie: flow.cookie, origin, 'content-type': 'application/json' },
+				body: JSON.stringify({
+					accept: true,
+					oauth_query: location.slice(location.indexOf('?') + 1)
+				})
+			})
+		);
+		expect(consent.status).toBe(403);
+		await reinstateTenant(identity(), stores, operator, { tenantId: 'tenant-9', now: Date.now() });
+		expect((await call(tokens.access_token, 'get_usage')).status).toBe(200);
 	});
 
 	it('limits calls per grant', async () => {

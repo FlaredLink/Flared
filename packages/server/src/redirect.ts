@@ -8,7 +8,7 @@ import type { ClickEvent } from '@flared/contracts/analytics';
 import { slugPattern } from '@flared/contracts/links';
 import { isReservedPath } from '@flared/contracts/reserved';
 import { activeDomainKind } from '@flared/data/domains';
-import { findRedirectTarget, type RedirectTarget } from '@flared/data/links';
+import { findRedirectTarget, type RedirectLookup, type RedirectTarget } from '@flared/data/links';
 import { buildClickEvent, isAutomated } from './clicks';
 import {
 	unavailablePage,
@@ -27,6 +27,8 @@ export interface RedirectDependencies {
 	appOrigin: string;
 	// The product home that the not-found page links to. Without it, the page has no link.
 	homeUrl?: string;
+	// Where a visitor reports abuse. The blocked page links to it; without it, it has no link.
+	reportUrl?: string;
 	// A new name discards every snapshot, for example after a routing restore.
 	cacheName?: string;
 	// Without a sink, redirects work and no click is recorded.
@@ -60,18 +62,22 @@ function plain(
 	});
 }
 
+const statuses: Record<UnavailableReason, { status: number; text: string }> = {
+	'not-found': { status: 404, text: 'Not found' },
+	blocked: { status: 410, text: 'Link blocked' },
+	unavailable: { status: 503, text: 'Service unavailable' }
+};
+
 // Browsers get a page; other clients keep the plain-text body.
 function unavailable(
 	request: Request,
 	reason: UnavailableReason,
-	homeUrl: string | undefined
+	links: { homeUrl?: string; reportUrl?: string }
 ): Response {
-	const status = reason === 'not-found' ? 404 : 503;
+	const { status, text } = statuses[reason];
 	if (!request.headers.get('accept')?.includes('text/html'))
-		return plain(request, status, reason === 'not-found' ? 'Not found' : 'Service unavailable', {
-			vary: 'Accept'
-		});
-	return new Response(request.method === 'HEAD' ? null : unavailablePage(reason, homeUrl), {
+		return plain(request, status, text, { vary: 'Accept' });
+	return new Response(request.method === 'HEAD' ? null : unavailablePage(reason, links), {
 		status,
 		headers: { ...unavailablePageHeaders, 'cache-control': 'no-store', vary: 'Accept' }
 	});
@@ -150,8 +156,9 @@ export function createRedirectHandler(dependencies: RedirectDependencies) {
 		return pending.then(() => response);
 	}
 
-	const notFound = (request: Request) => unavailable(request, 'not-found', dependencies.homeUrl);
-	const failed = (request: Request) => unavailable(request, 'unavailable', dependencies.homeUrl);
+	const notFound = (request: Request) => unavailable(request, 'not-found', dependencies);
+	const blocked = (request: Request) => unavailable(request, 'blocked', dependencies);
+	const failed = (request: Request) => unavailable(request, 'unavailable', dependencies);
 
 	async function fetch(request: Request, background?: BackgroundWork): Promise<Response> {
 		if (request.method !== 'GET' && request.method !== 'HEAD')
@@ -181,16 +188,19 @@ export function createRedirectHandler(dependencies: RedirectDependencies) {
 
 		// The deadline counts from the query start, so a slow read cannot extend it.
 		const validUntil = now() + snapshotLifetimeMs;
-		let target: RedirectTarget | null;
+		let lookup: RedirectLookup | null;
 		try {
-			target = await findRedirectTarget(dependencies.routing, hostname, slug);
+			lookup = await findRedirectTarget(dependencies.routing, hostname, slug);
 		} catch {
 			console.error(JSON.stringify({ event: 'redirect_lookup_failed' }));
 			return failed(request);
 		}
-		if (!target) return notFound(request);
+		// Neither result is cached, so an unblock or a new link opens on the next request.
+		if (!lookup) return notFound(request);
+		if (lookup.kind === 'blocked') return blocked(request);
 		if (now() >= validUntil) return failed(request);
 
+		const { target } = lookup;
 		return redirectTo(request, target, background, [storeSnapshot(key, { ...target, validUntil })]);
 	}
 

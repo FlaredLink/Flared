@@ -8,13 +8,15 @@ export interface RoutingPolicy {
 	analyticsShardId: string;
 	activeLinkLimit: number;
 	domainLimit: number;
+	// Set while the operator suspends the tenant; its links then do not redirect.
+	suspendedAt: number | null;
 	now: number;
 }
 
 export async function applyRoutingPolicy(db: D1Database, policy: RoutingPolicy): Promise<void> {
 	await db
 		.prepare(
-			'INSERT INTO tenant_policy (tenant_id, revision, analytics_shard_id, active_link_limit, domain_limit, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(tenant_id) DO UPDATE SET revision = excluded.revision, analytics_shard_id = excluded.analytics_shard_id, active_link_limit = excluded.active_link_limit, domain_limit = excluded.domain_limit, updated_at = excluded.updated_at WHERE excluded.revision > tenant_policy.revision'
+			'INSERT INTO tenant_policy (tenant_id, revision, analytics_shard_id, active_link_limit, domain_limit, suspended_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tenant_id) DO UPDATE SET revision = excluded.revision, analytics_shard_id = excluded.analytics_shard_id, active_link_limit = excluded.active_link_limit, domain_limit = excluded.domain_limit, suspended_at = excluded.suspended_at, updated_at = excluded.updated_at WHERE excluded.revision > tenant_policy.revision'
 		)
 		.bind(
 			policy.tenantId,
@@ -22,6 +24,7 @@ export async function applyRoutingPolicy(db: D1Database, policy: RoutingPolicy):
 			policy.analyticsShardId,
 			policy.activeLinkLimit,
 			policy.domainLimit,
+			policy.suspendedAt,
 			policy.now
 		)
 		.run();

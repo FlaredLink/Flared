@@ -259,6 +259,11 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			);
 		if (tenant.status === 'deleting')
 			throw new ApiError('ACCOUNT_DELETING', 'This account is being deleted.');
+		if (tenant.suspension && !allowedWhileSuspended(principal, method, context.req.path))
+			throw new ApiError(
+				'WORKSPACE_SUSPENDED',
+				'Flared suspended this workspace. You can still export your data.'
+			);
 		context.set('tenantId', tenant.tenantId);
 		context.set('principal', principal);
 		await next();
@@ -568,6 +573,15 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	app.all('/connected-apps', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/connected-apps/:clientId', (context) => methodNotAllowed(context, 'DELETE'));
 	return app;
+}
+
+// A suspended workspace keeps what takes nothing new: the dashboard reads its data, and the
+// owner may end a token or connected app. A token or connected app may only export.
+function allowedWhileSuspended(principal: ApiPrincipal, method: string, path: string): boolean {
+	const read = method === 'GET' || method === 'HEAD';
+	if (principal.kind === 'session')
+		return read || (method === 'DELETE' && /^\/v1\/(?:tokens|connected-apps)\/[^/]+$/.test(path));
+	return read && (path.startsWith('/v1/export/') || path === '/v1/me');
 }
 
 // A session holds every scope; a token or connected app must hold the route's scope.

@@ -178,7 +178,8 @@ describe('policy projection', () => {
 		});
 		expect(await resolveTenant(db, 'owner-project')).toEqual({
 			status: 'active',
-			tenantId: 'tenant-project'
+			tenantId: 'tenant-project',
+			suspension: null
 		});
 		expect(await routingRow('tenant-project')).toEqual({
 			revision: 1,
@@ -211,6 +212,7 @@ describe('policy projection', () => {
 			analyticsShardId: 'analytics-1',
 			activeLinkLimit: 100,
 			domainLimit: 1,
+			suspendedAt: null,
 			now: 22
 		});
 		expect(await routingRow('tenant-project')).toMatchObject({

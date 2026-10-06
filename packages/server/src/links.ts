@@ -57,6 +57,7 @@ export function toApiLink(row: LinkRow): Link {
 		destination: row.destination,
 		title: row.title,
 		enabled: row.active,
+		blocked: row.blockedReason ? { reason: row.blockedReason } : null,
 		createdAt: new Date(row.createdAt).toISOString(),
 		updatedAt: new Date(row.updatedAt).toISOString()
 	};
@@ -138,6 +139,7 @@ export async function createLink(
 			destination: input.destination,
 			title: input.title,
 			active: true,
+			blockedReason: null,
 			createdAt: now,
 			updatedAt: now
 		});
@@ -265,8 +267,13 @@ export async function changeLink(
 		now
 	});
 	if (!updated) {
-		if (!(await readLink(routing, tenantId, linkId)))
-			throw new ApiError('NOT_FOUND', 'Link not found.');
+		const link = await readLink(routing, tenantId, linkId);
+		if (!link) throw new ApiError('NOT_FOUND', 'Link not found.');
+		if (link.blockedReason)
+			throw new ApiError(
+				'LINK_BLOCKED',
+				'Flared blocked this link for abuse. You can only turn it off.'
+			);
 		throw new ApiError('PLAN_LIMIT_REACHED', 'Your workspace has reached its active link limit.');
 	}
 	return getLink(routing, tenantId, linkId);

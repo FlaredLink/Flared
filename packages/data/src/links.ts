@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Routing-store records for domains, permanent slug reservations, links, and create keys.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
+import { isBlockReason, type BlockReason } from '@flared/contracts/links';
 
 export interface DomainRow {
 	id: string;
@@ -15,6 +16,7 @@ export interface LinkRow {
 	destination: string;
 	title: string | null;
 	active: boolean;
+	blockedReason: BlockReason | null;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -55,7 +57,7 @@ export interface LinkChange {
 }
 
 const linkColumns =
-	'l.id, l.domain_id, n.hostname, l.slug, l.destination, l.title, l.status, l.created_at, l.updated_at';
+	'l.id, l.domain_id, n.hostname, l.slug, l.destination, l.title, l.status, l.blocked_reason, l.created_at, l.updated_at';
 
 function text(value: unknown, field: string): string {
 	if (typeof value !== 'string' || !value) throw new Error(`Invalid stored ${field}`);
@@ -71,6 +73,8 @@ function time(value: unknown, field: string): number {
 function toLink(row: Record<string, unknown>): LinkRow {
 	if (row.status !== 'active' && row.status !== 'disabled') throw new Error('Invalid link status');
 	if (row.title !== null && typeof row.title !== 'string') throw new Error('Invalid link title');
+	if (row.blocked_reason !== null && !isBlockReason(row.blocked_reason))
+		throw new Error('Invalid block reason');
 	return {
 		id: text(row.id, 'link'),
 		domainId: text(row.domain_id, 'domain'),
@@ -79,6 +83,7 @@ function toLink(row: Record<string, unknown>): LinkRow {
 		destination: text(row.destination, 'destination'),
 		title: row.title,
 		active: row.status === 'active',
+		blockedReason: row.blocked_reason,
 		createdAt: time(row.created_at, 'creation time'),
 		updatedAt: time(row.updated_at, 'update time')
 	};
@@ -286,7 +291,8 @@ export async function listLinks(
 }
 
 // One statement, so reactivation and the active-link count cannot race. Returns false when
-// the link is missing or reactivation would exceed the limit; the caller tells them apart.
+// the link is missing, blocked, or reactivation would exceed the limit; the caller tells them
+// apart. The owner may still turn a blocked link off, which frees its place in the limit.
 export async function updateLink(
 	db: D1Database,
 	tenantId: string,
@@ -301,7 +307,9 @@ export async function updateLink(
 				title = CASE WHEN ?4 = 1 THEN ?5 ELSE title END,
 				status = COALESCE(?6, status),
 				updated_at = ?7
-			WHERE tenant_id = ?1 AND id = ?2 AND NOT (
+			WHERE tenant_id = ?1 AND id = ?2
+			AND (blocked_at IS NULL OR (?3 IS NULL AND ?4 = 0 AND ?6 = 'disabled'))
+			AND NOT (
 				status = 'disabled' AND ?6 = 'active' AND
 				(SELECT COUNT(*) FROM links WHERE tenant_id = ?1 AND status = 'active') >=
 				COALESCE((SELECT active_link_limit FROM tenant_policy WHERE tenant_id = ?1), 0)
@@ -348,18 +356,23 @@ export interface RedirectTarget {
 	destination: string;
 }
 
-// Redirects read the primary so a committed edit or disable is never hidden by replica lag.
-// A link resolves only on an active domain its tenant may use and while the tenant's policy
-// exists in routing.
+// blocked: the link would open, but the operator blocked it or suspended its tenant.
+export type RedirectLookup = { kind: 'target'; target: RedirectTarget } | { kind: 'blocked' };
+
+// Redirects read the primary so a committed edit, disable, or block is never hidden by replica
+// lag. A link resolves only on an active domain its tenant may use and while the tenant's
+// policy exists in routing.
 export async function findRedirectTarget(
 	db: D1Database,
 	hostname: string,
 	slug: string
-): Promise<RedirectTarget | null> {
+): Promise<RedirectLookup | null> {
 	const row = await db
 		.withSession('first-primary')
 		.prepare(
-			`SELECT l.tenant_id, l.id, p.analytics_shard_id, l.destination FROM domain_namespaces n
+			`SELECT l.tenant_id, l.id, p.analytics_shard_id, l.destination,
+				l.blocked_at IS NOT NULL OR p.suspended_at IS NOT NULL AS blocked
+			FROM domain_namespaces n
 			JOIN domains d ON d.id = n.id AND d.state = 'active'
 			JOIN links l ON l.domain_id = n.id AND l.slug = ? AND l.status = 'active'
 			JOIN tenant_policy p ON p.tenant_id = l.tenant_id
@@ -368,10 +381,68 @@ export async function findRedirectTarget(
 		.bind(slug, hostname)
 		.first<Record<string, unknown>>();
 	if (!row) return null;
+	if (row.blocked === 1) return { kind: 'blocked' };
 	return {
-		tenantId: text(row.tenant_id, 'tenant'),
-		linkId: text(row.id, 'link'),
-		analyticsShardId: text(row.analytics_shard_id, 'shard'),
-		destination: text(row.destination, 'destination')
+		kind: 'target',
+		target: {
+			tenantId: text(row.tenant_id, 'tenant'),
+			linkId: text(row.id, 'link'),
+			analyticsShardId: text(row.analytics_shard_id, 'shard'),
+			destination: text(row.destination, 'destination')
+		}
 	};
+}
+
+export interface OperatorLink extends LinkRow {
+	tenantId: string;
+	blockedAt: number | null;
+}
+
+// For the operator only: a link by its short address, in any tenant.
+export async function findLinkByAddress(
+	db: D1Database,
+	hostname: string,
+	slug: string
+): Promise<OperatorLink | null> {
+	const row = await db
+		.prepare(
+			`SELECT ${linkColumns}, l.tenant_id, l.blocked_at FROM links l JOIN domain_namespaces n ON n.id = l.domain_id WHERE n.hostname = ? AND l.slug = ?`
+		)
+		.bind(hostname, slug)
+		.first<Record<string, unknown>>();
+	if (!row) return null;
+	return {
+		...toLink(row),
+		tenantId: text(row.tenant_id, 'tenant'),
+		blockedAt: row.blocked_at === null ? null : time(row.blocked_at, 'block time')
+	};
+}
+
+// For the operator only: sets or clears a block and returns the link's tenant, or null for no
+// link. Repeating it changes nothing: an existing block keeps its time and reason, and the
+// owner's status is never touched.
+export async function setLinkBlock(
+	db: D1Database,
+	linkId: string,
+	block: { reason: BlockReason; now: number } | null
+): Promise<{ tenantId: string; changed: boolean } | null> {
+	const changed = await (
+		block
+			? db
+					.prepare(
+						'UPDATE links SET blocked_at = ?, blocked_reason = ? WHERE id = ? AND blocked_at IS NULL RETURNING tenant_id'
+					)
+					.bind(block.now, block.reason, linkId)
+			: db
+					.prepare(
+						'UPDATE links SET blocked_at = NULL, blocked_reason = NULL WHERE id = ? AND blocked_at IS NOT NULL RETURNING tenant_id'
+					)
+					.bind(linkId)
+	).first<{ tenant_id: unknown }>();
+	if (changed) return { tenantId: text(changed.tenant_id, 'tenant'), changed: true };
+	const existing = await db
+		.prepare('SELECT tenant_id FROM links WHERE id = ?')
+		.bind(linkId)
+		.first<{ tenant_id: unknown }>();
+	return existing ? { tenantId: text(existing.tenant_id, 'tenant'), changed: false } : null;
 }

@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
 	import type { Link, ListedLink } from '@flared/contracts/links';
+	import { blockLabel } from './messages';
 
 	interface Props {
 		links: ListedLink[];
@@ -52,7 +53,8 @@
 						<a class="short" href={link.shortUrl} target="_blank" rel="noopener noreferrer"
 							>{display(link.shortUrl)}</a
 						>
-						{#if !link.enabled}<span class="badge">Disabled</span>{/if}
+						{#if link.blocked}<span class="badge blocked">{blockLabel(link.blocked.reason)}</span
+							>{:else if !link.enabled}<span class="badge">Disabled</span>{/if}
 						{#if link.title}<span class="title">{link.title}</span>{/if}
 						<span class="destination" title={link.destination}>{link.destination}</span>
 					</div>
@@ -152,6 +154,10 @@
 		background: var(--color-disabled, #eaecf0);
 		color: var(--color-muted, #667085);
 		font-size: 0.75rem;
+	}
+	.badge.blocked {
+		background: var(--color-accent-soft, #fee4e2);
+		color: var(--color-accent-ink, #b42318);
 	}
 	.meta {
 		display: flex;

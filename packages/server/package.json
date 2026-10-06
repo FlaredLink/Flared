@@ -21,7 +21,8 @@
 		"./mcp": "./src/mcp.ts",
 		"./domains": "./src/domains.ts",
 		"./notices": "./src/notices.ts",
-		"./deletion": "./src/deletion.ts"
+		"./deletion": "./src/deletion.ts",
+		"./operator": "./src/operator.ts"
 	},
 	"dependencies": {
 		"@better-auth/api-key": "1.7.7",
