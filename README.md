@@ -42,6 +42,12 @@ A tenant becomes active when routing and its analytics shard both hold its polic
 
 `GET /v1/export/links` (`links:read`), `GET /v1/export/daily-totals`, and `GET /v1/export/daily-dimensions` (`analytics:read`) return a workspace in pages: every link, active and disabled, and the daily totals and breakdowns within the retention window, in key order. Follow `nextCursor` until it is null. `writeExport` (`@flared/client/export`) writes the pages as one JSON document with the format `flared.export/1`, and `linksCsv` writes the links as CSV. `flared export --out FILE` uses them. No export file is stored on the server.
 
+## Workspace deletion
+
+`requestDeletion` (`@flared/server/deletion`) starts deleting the user's workspace. In one batch it records a `tenant_deletions` job and deletes the user's sessions, API tokens, and connected-app grants. The application checks the session, a recent sign-in, and the typed confirmation first. From then on the API answers 409 `ACCOUNT_DELETING`, no store receives the tenant's policy again, and `@flared/ui/account/DeleteAccount.svelte` provides the confirmation form.
+
+`runDeletions` runs the job in resumable steps: the acceptance email, the end of the routing policy and every workspace domain (redirects stop), a 70-second wait past the redirect snapshots, an analytics tombstone and the shard rows, the links and request records, an optional `extension` for an edition's own records, and the identity records with the user. A completion email ends the job, and the contact address goes with it. Each email is sent at most once. Run `runDeletions` every few minutes and right after a request; a failed step waits 1, 2, 4, ... minutes. Late clicks for a tombstoned tenant are dropped. Slug reservations, hostname namespaces, and disabled domain rows stay, so no address is reused. `cleanupDeletions` removes the completed ledger after 90 days, and `purgeExpired` removes tombstones after 90 days. Deleting the workspace of a single-workspace installation closes it for good.
+
 ## Limits, usage, and notices
 
 `updatePolicy` (`@flared/server/tenancy`) stores new limits as the next policy revision and projects them to routing and the tenant's analytics shard. A failed projection returns `projected: false`, and `retryProjections` finishes it later. Lower limits never disable existing links or domains; they block new ones. A self-hosted operator changes limits this way.

@@ -21,6 +21,7 @@ export function exitCodeFor(code: ClientErrorCode): number {
 			return exitCodes.unauthenticated;
 		case 'INSUFFICIENT_SCOPE':
 		case 'NO_WORKSPACE':
+		case 'ACCOUNT_DELETING':
 		case 'ORIGIN_REJECTED':
 		case 'REAUTH_REQUIRED':
 			return exitCodes.forbidden;

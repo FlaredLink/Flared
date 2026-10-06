@@ -31,6 +31,10 @@
 			"svelte": "./src/tokens/TokenList.svelte"
 		},
 		"./tokens/client": "./src/tokens/client.ts",
+		"./account/DeleteAccount.svelte": {
+			"types": "./src/account/DeleteAccount.svelte",
+			"svelte": "./src/account/DeleteAccount.svelte"
+		},
 		"./export/ExportPanel.svelte": {
 			"types": "./src/export/ExportPanel.svelte",
 			"svelte": "./src/export/ExportPanel.svelte"

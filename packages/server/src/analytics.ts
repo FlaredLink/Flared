@@ -31,6 +31,7 @@ import {
 	readShardPolicy,
 	type ShardPolicy
 } from '@flared/data/analytics';
+import { isTombstoned } from '@flared/data/deletions';
 import { readLimitUsage } from '@flared/data/routing-policy';
 import { readTenantShard } from '@flared/data/tenancy';
 import { ApiError } from './links';
@@ -95,6 +96,8 @@ export function createClickConsumer(dependencies: ClickConsumerDependencies) {
 				time
 			);
 			if (outcome === 'no_policy') {
+				// A deleted workspace never gets its policy back, so its late clicks are dropped.
+				if (await isTombstoned(db, event.tenantId)) return drop(message, 'deleted_tenant');
 				console.error(JSON.stringify({ event: 'click_policy_missing', tenantId: event.tenantId }));
 				message.retry({ delaySeconds: policyRetryDelaySeconds });
 				return 'retry';

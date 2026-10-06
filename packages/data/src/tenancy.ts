@@ -23,6 +23,8 @@ export interface NewTenant {
 export interface Membership {
 	tenantId: string;
 	activated: boolean;
+	// A deletion of the tenant has started.
+	deleting: boolean;
 }
 
 export interface PolicyProjection {
@@ -67,13 +69,14 @@ export async function readInstallationMode(db: D1Database): Promise<Installation
 export async function listMemberships(db: D1Database, userId: string): Promise<Membership[]> {
 	const { results } = await db
 		.prepare(
-			'SELECT m.tenant_id, t.activated_at FROM tenant_memberships m JOIN tenants t ON t.id = m.tenant_id WHERE m.user_id = ? ORDER BY m.created_at, m.tenant_id LIMIT 2'
+			'SELECT m.tenant_id, t.activated_at, EXISTS (SELECT 1 FROM tenant_deletions d WHERE d.tenant_id = m.tenant_id) AS deleting FROM tenant_memberships m JOIN tenants t ON t.id = m.tenant_id WHERE m.user_id = ? ORDER BY m.created_at, m.tenant_id LIMIT 2'
 		)
 		.bind(userId)
-		.all<{ tenant_id: unknown; activated_at: unknown }>();
+		.all<{ tenant_id: unknown; activated_at: unknown; deleting: unknown }>();
 	return results.map((row) => ({
 		tenantId: text(row.tenant_id, 'tenant'),
-		activated: row.activated_at !== null
+		activated: row.activated_at !== null,
+		deleting: row.deleting === 1
 	}));
 }
 
@@ -107,7 +110,8 @@ export async function createTenant(db: D1Database, tenant: NewTenant): Promise<v
 }
 
 // Replaces the limits and takes the next revision in one statement, so concurrent updates each
-// get their own revision and the newest one wins in every store. Returns null for no tenant.
+// get their own revision and the newest one wins in every store. Returns null for no tenant, or
+// for a tenant whose deletion has started.
 export async function updateTenantPolicy(
 	db: D1Database,
 	tenantId: string,
@@ -117,7 +121,7 @@ export async function updateTenantPolicy(
 	checkLimits(limits);
 	const row = await db
 		.prepare(
-			'UPDATE tenant_policy SET revision = revision + 1, active_link_limit = ?, monthly_click_limit = ?, retention_days = ?, domain_limit = ?, updated_at = ? WHERE tenant_id = ? RETURNING revision'
+			'UPDATE tenant_policy SET revision = revision + 1, active_link_limit = ?, monthly_click_limit = ?, retention_days = ?, domain_limit = ?, updated_at = ? WHERE tenant_id = ?6 AND NOT EXISTS (SELECT 1 FROM tenant_deletions WHERE tenant_id = ?6) RETURNING revision'
 		)
 		.bind(
 			limits.activeLinkLimit,
@@ -139,13 +143,14 @@ export async function readTenantShard(db: D1Database, tenantId: string): Promise
 	return row ? text(row.analytics_shard_id, 'shard') : null;
 }
 
+// Null also for a tenant whose deletion has started: no store may receive its policy again.
 export async function readPolicyProjection(
 	db: D1Database,
 	tenantId: string
 ): Promise<PolicyProjection | null> {
 	const row = await db
 		.prepare(
-			'SELECT p.revision, p.routing_revision, p.analytics_revision, t.analytics_shard_id, p.active_link_limit, p.domain_limit, p.monthly_click_limit, p.retention_days FROM tenant_policy p JOIN tenants t ON t.id = p.tenant_id WHERE p.tenant_id = ?'
+			'SELECT p.revision, p.routing_revision, p.analytics_revision, t.analytics_shard_id, p.active_link_limit, p.domain_limit, p.monthly_click_limit, p.retention_days FROM tenant_policy p JOIN tenants t ON t.id = p.tenant_id WHERE p.tenant_id = ? AND NOT EXISTS (SELECT 1 FROM tenant_deletions d WHERE d.tenant_id = p.tenant_id)'
 		)
 		.bind(tenantId)
 		.first<Record<string, unknown>>();
@@ -180,7 +185,7 @@ export async function listPendingProjections(
 	const column = revisionColumn[store];
 	const { results } = await db
 		.prepare(
-			`SELECT tenant_id FROM tenant_policy WHERE ${column} < revision ORDER BY updated_at, tenant_id LIMIT ?`
+			`SELECT tenant_id FROM tenant_policy p WHERE ${column} < revision AND NOT EXISTS (SELECT 1 FROM tenant_deletions d WHERE d.tenant_id = p.tenant_id) ORDER BY updated_at, tenant_id LIMIT ?`
 		)
 		.bind(limit)
 		.all<{ tenant_id: unknown }>();

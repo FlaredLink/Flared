@@ -41,6 +41,7 @@ export interface DimensionRow {
 // A link and day keep at most this many referrer host names; later ones count as "other".
 export const referrerLimit = 50;
 export const receiptLifetimeMs = 72 * 60 * 60 * 1000;
+export const tombstoneLifetimeMs = 90 * 86400000;
 
 function count(value: unknown, field: string): number {
 	if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0)
@@ -365,7 +366,13 @@ export async function purgeExpired(
 			.prepare(
 				'DELETE FROM event_receipts WHERE (tenant_id, event_id) IN (SELECT tenant_id, event_id FROM event_receipts WHERE received_at < ? LIMIT ?)'
 			)
-			.bind(now - receiptLifetimeMs, limit)
+			.bind(now - receiptLifetimeMs, limit),
+		// A deleted tenant's tombstone outlives the replay horizon, then goes.
+		db
+			.prepare(
+				'DELETE FROM tenant_tombstones WHERE tenant_id IN (SELECT tenant_id FROM tenant_tombstones WHERE deleted_at < ? LIMIT ?)'
+			)
+			.bind(now - tombstoneLifetimeMs, limit)
 	]);
 	return { deleted: results.reduce((sum, result) => sum + (result.meta.changes ?? 0), 0) };
 }

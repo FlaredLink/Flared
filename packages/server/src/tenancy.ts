@@ -16,6 +16,8 @@ import { resolveShard, type AnalyticsShards } from './shards';
 export type TenantResolution =
 	| { status: 'active'; tenantId: string }
 	| { status: 'pending'; tenantId: string }
+	// The workspace is being deleted: nothing may act in it.
+	| { status: 'deleting'; tenantId: string }
 	| { status: 'none' };
 
 export class TenancyError extends Error {
@@ -37,7 +39,7 @@ export async function resolveTenant(
 	}
 	const [membership] = memberships;
 	return {
-		status: membership.activated ? 'active' : 'pending',
+		status: membership.deleting ? 'deleting' : membership.activated ? 'active' : 'pending',
 		tenantId: membership.tenantId
 	};
 }

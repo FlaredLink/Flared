@@ -257,6 +257,8 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 				'Your workspace is still being set up. Try again.',
 				30
 			);
+		if (tenant.status === 'deleting')
+			throw new ApiError('ACCOUNT_DELETING', 'This account is being deleted.');
 		context.set('tenantId', tenant.tenantId);
 		context.set('principal', principal);
 		await next();

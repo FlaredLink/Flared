@@ -20,7 +20,8 @@
 		"./oauth/provider": "./src/oauth/provider.ts",
 		"./mcp": "./src/mcp.ts",
 		"./domains": "./src/domains.ts",
-		"./notices": "./src/notices.ts"
+		"./notices": "./src/notices.ts",
+		"./deletion": "./src/deletion.ts"
 	},
 	"dependencies": {
 		"@better-auth/api-key": "1.7.7",

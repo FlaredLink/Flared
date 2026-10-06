@@ -33,6 +33,10 @@ declare namespace Cloudflare {
 		EXPORT_IDENTITY: D1Database;
 		EXPORT_ROUTING: D1Database;
 		EXPORT_ANALYTICS: D1Database;
+		DELETION_IDENTITY: D1Database;
+		DELETION_ROUTING: D1Database;
+		DELETION_ANALYTICS: D1Database;
+		DELETION_SINGLE_IDENTITY: D1Database;
 		IDENTITY_MIGRATIONS: import('cloudflare:test').D1Migration[];
 		ROUTING_MIGRATIONS: import('cloudflare:test').D1Migration[];
 		ANALYTICS_MIGRATIONS: import('cloudflare:test').D1Migration[];

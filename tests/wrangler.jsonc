@@ -167,6 +167,26 @@
 			"binding": "EXPORT_ANALYTICS",
 			"database_name": "export-analytics",
 			"database_id": "00000000-0000-0000-0000-000000000042"
+		},
+		{
+			"binding": "DELETION_IDENTITY",
+			"database_name": "deletion-identity",
+			"database_id": "00000000-0000-0000-0000-000000000043"
+		},
+		{
+			"binding": "DELETION_ROUTING",
+			"database_name": "deletion-routing",
+			"database_id": "00000000-0000-0000-0000-000000000044"
+		},
+		{
+			"binding": "DELETION_ANALYTICS",
+			"database_name": "deletion-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000045"
+		},
+		{
+			"binding": "DELETION_SINGLE_IDENTITY",
+			"database_name": "deletion-single-identity",
+			"database_id": "00000000-0000-0000-0000-000000000046"
 		}
 	]
 }
