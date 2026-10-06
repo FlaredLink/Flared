@@ -13,6 +13,8 @@ import { createSessionOptions } from '../packages/server/src/auth/options';
 import { createApiTokenPlugin, createToken } from '../packages/server/src/auth/api-tokens';
 import { authenticateBearer, createApi } from '../packages/server/src/api';
 import { projectPolicy } from '../packages/server/src/tenancy';
+import { writeExport } from '../packages/client/src/export';
+import { utcDay } from '../packages/contracts/src/analytics';
 import {
 	FlaredApiError,
 	createClient,
@@ -224,6 +226,36 @@ describe('API client', () => {
 		expect(analytics.linkId).toBe(created.link.id);
 		expect(analytics.total).toBe(0);
 		expect((await client().getUsage()).clickLimit).toBe(5000);
+	});
+
+	it('writes the export pages into one JSON document', async () => {
+		const { links } = await client().listLinks({ limit: 100 });
+		const linkId = links[0]?.id;
+		if (!linkId) throw new Error('Expected a link from the earlier test');
+		const today = utcDay(Date.now());
+		await env.CLIENT_ANALYTICS.batch([
+			env.CLIENT_ANALYTICS.prepare(
+				"INSERT INTO daily_totals (tenant_id, link_id, day, clicks) VALUES ('tenant-1', ?, ?, 4)"
+			).bind(linkId, today),
+			env.CLIENT_ANALYTICS.prepare(
+				"INSERT INTO daily_dimensions (tenant_id, link_id, day, dimension, value, clicks) VALUES ('tenant-1', ?, ?, 'device', 'mobile', 4)"
+			).bind(linkId, today)
+		]);
+		let text = '';
+		const counts = await writeExport(client(readOnly), (part) => {
+			text += part;
+		});
+		expect(counts).toEqual({ links: links.length, dailyTotals: 1, dailyDimensions: 1 });
+		const file = JSON.parse(text) as Record<string, unknown>;
+		expect(file).toMatchObject({
+			format: 'flared.export/1',
+			dailyTotals: [{ linkId, day: today, clicks: 4 }],
+			dailyDimensions: [{ linkId, day: today, dimension: 'device', value: 'mobile', clicks: 4 }],
+			retentionDays: 30
+		});
+		expect((file.links as { id: string }[]).map((link) => link.id)).toEqual(
+			links.map((link) => link.id)
+		);
 	});
 
 	it('turns API errors into typed errors without the token', async () => {

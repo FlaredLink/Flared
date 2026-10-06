@@ -9,6 +9,14 @@ import {
 } from '@flared/contracts/analytics';
 import { isDomain, isDomainPage, type Domain, type DomainPage } from '@flared/contracts/domains';
 import { isErrorCode, type ErrorCode } from '@flared/contracts/errors';
+import {
+	isExportDimensionsPage,
+	isExportLinkPage,
+	isExportTotalsPage,
+	type ExportDimensionsPage,
+	type ExportLinkPage,
+	type ExportTotalsPage
+} from '@flared/contracts/export';
 import { isLink, isLinkPage, type Link, type LinkPage } from '@flared/contracts/links';
 import { isApiIdentity, type ApiIdentity } from '@flared/contracts/tokens';
 
@@ -76,6 +84,9 @@ export interface FlaredClient {
 	addDomain(hostname: string): Promise<{ domain: Domain; created: boolean }>;
 	checkDomain(id: string): Promise<Domain>;
 	removeDomain(id: string): Promise<void>;
+	exportLinks(cursor?: string): Promise<ExportLinkPage>;
+	exportDailyTotals(cursor?: string): Promise<ExportTotalsPage>;
+	exportDailyDimensions(cursor?: string): Promise<ExportDimensionsPage>;
 }
 
 const maxRetryWaitSeconds = 30;
@@ -175,6 +186,12 @@ export function createClient(options: ClientOptions): FlaredClient {
 	}
 
 	const id = (value: string) => encodeURIComponent(value);
+	const after = (cursor?: string) => (cursor ? `?cursor=${encodeURIComponent(cursor)}` : '');
+	async function page<T>(path: string, valid: (body: unknown) => body is T): Promise<T> {
+		const { status, body } = await request('GET', path, { retry: true });
+		if (!valid(body)) throw invalid(status);
+		return body;
+	}
 	async function domainFrom(promise: ReturnType<typeof request>): Promise<Domain> {
 		const { status, body } = await promise;
 		const domain = record(body)?.domain;
@@ -255,6 +272,15 @@ export function createClient(options: ClientOptions): FlaredClient {
 		},
 		async removeDomain(domainId) {
 			await request('DELETE', `/domains/${id(domainId)}`, { retry: false });
+		},
+		exportLinks(cursor) {
+			return page(`/export/links${after(cursor)}`, isExportLinkPage);
+		},
+		exportDailyTotals(cursor) {
+			return page(`/export/daily-totals${after(cursor)}`, isExportTotalsPage);
+		},
+		exportDailyDimensions(cursor) {
+			return page(`/export/daily-dimensions${after(cursor)}`, isExportDimensionsPage);
 		}
 	};
 }

@@ -152,6 +152,21 @@
 			"binding": "USAGE_ANALYTICS",
 			"database_name": "usage-analytics",
 			"database_id": "00000000-0000-0000-0000-000000000039"
+		},
+		{
+			"binding": "EXPORT_IDENTITY",
+			"database_name": "export-identity",
+			"database_id": "00000000-0000-0000-0000-000000000040"
+		},
+		{
+			"binding": "EXPORT_ROUTING",
+			"database_name": "export-routing",
+			"database_id": "00000000-0000-0000-0000-000000000041"
+		},
+		{
+			"binding": "EXPORT_ANALYTICS",
+			"database_name": "export-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000042"
 		}
 	]
 }

@@ -7,6 +7,8 @@ import type { ErrorCode } from '@flared/contracts/errors';
 import {
 	AnalyticsRangeError,
 	AnalyticsUnavailableError,
+	getExportDimensions,
+	getExportTotals,
 	getLinkAnalytics,
 	getRecentClicks,
 	getUsage
@@ -57,6 +59,7 @@ import {
 	changeLink,
 	createLink,
 	errorBody,
+	exportLinks,
 	getLink,
 	listLinks,
 	statusOf,
@@ -428,6 +431,40 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		return respond({ status: 200, body: JSON.stringify({ usage }) });
 	});
 
+	// A workspace export is read in pages; the client writes them into one file.
+	app.get('/export/links', requireScope('links:read'), async (context) => {
+		const page = await exportLinks(
+			routing,
+			context.var.tenantId,
+			context.req.query('cursor') ?? null
+		);
+		return respond({ status: 200, body: JSON.stringify(page) });
+	});
+
+	app.get('/export/daily-totals', requireScope('analytics:read'), async (context) => {
+		if (!dependencies.analytics) throw new AnalyticsUnavailableError();
+		const page = await getExportTotals(
+			identity,
+			dependencies.analytics,
+			context.var.tenantId,
+			context.req.query('cursor') ?? null,
+			now()
+		);
+		return respond({ status: 200, body: JSON.stringify(page) });
+	});
+
+	app.get('/export/daily-dimensions', requireScope('analytics:read'), async (context) => {
+		if (!dependencies.analytics) throw new AnalyticsUnavailableError();
+		const page = await getExportDimensions(
+			identity,
+			dependencies.analytics,
+			context.var.tenantId,
+			context.req.query('cursor') ?? null,
+			now()
+		);
+		return respond({ status: 200, body: JSON.stringify(page) });
+	});
+
 	// Who is calling. Needs no scope, so a client can check any token.
 	app.get('/me', (context) => {
 		const { principal } = context.var;
@@ -520,6 +557,9 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	app.all('/domains/:id', (context) => methodNotAllowed(context, 'GET, DELETE'));
 	app.all('/domains/:id/check', (context) => methodNotAllowed(context, 'POST'));
 	app.all('/usage', (context) => methodNotAllowed(context, 'GET'));
+	app.all('/export/links', (context) => methodNotAllowed(context, 'GET'));
+	app.all('/export/daily-totals', (context) => methodNotAllowed(context, 'GET'));
+	app.all('/export/daily-dimensions', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/me', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/tokens', (context) => methodNotAllowed(context, 'GET, POST'));
 	app.all('/tokens/:id', (context) => methodNotAllowed(context, 'DELETE'));

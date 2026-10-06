@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Analytics-shard records: the policy copy, event receipts, daily aggregates, and monthly usage.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
+import type { ExportDailyDimension, ExportDailyTotal } from '@flared/contracts/export';
 
 export interface AnalyticsPolicy {
 	tenantId: string;
@@ -229,6 +230,61 @@ export async function readLinkClickTotals(
 		.bind(tenantId, from, ...linkIds)
 		.all<Record<string, unknown>>();
 	return new Map(results.map((row) => [text(row.link_id, 'link'), count(row.clicks, 'clicks')]));
+}
+
+// One export page of a tenant's daily totals from a day on, in primary key order. after is the
+// last row of the previous page.
+export async function readExportTotals(
+	db: D1Database,
+	tenantId: string,
+	from: string,
+	after: { linkId: string; day: string } | null,
+	limit: number
+): Promise<ExportDailyTotal[]> {
+	const { results } = await db
+		.prepare(
+			`SELECT link_id, day, clicks FROM daily_totals WHERE tenant_id = ? AND day >= ?${after ? ' AND (link_id, day) > (?, ?)' : ''} ORDER BY link_id, day LIMIT ?`
+		)
+		.bind(tenantId, from, ...(after ? [after.linkId, after.day] : []), limit)
+		.all<Record<string, unknown>>();
+	return results.map((row) => ({
+		linkId: text(row.link_id, 'link'),
+		day: text(row.day, 'day'),
+		clicks: count(row.clicks, 'clicks')
+	}));
+}
+
+// The same for the daily breakdowns.
+export async function readExportDimensions(
+	db: D1Database,
+	tenantId: string,
+	from: string,
+	after: Omit<ExportDailyDimension, 'clicks'> | null,
+	limit: number
+): Promise<ExportDailyDimension[]> {
+	const { results } = await db
+		.prepare(
+			`SELECT link_id, day, dimension, value, clicks FROM daily_dimensions WHERE tenant_id = ? AND day >= ?${after ? ' AND (link_id, day, dimension, value) > (?, ?, ?, ?)' : ''} ORDER BY link_id, day, dimension, value LIMIT ?`
+		)
+		.bind(
+			tenantId,
+			from,
+			...(after ? [after.linkId, after.day, after.dimension, after.value] : []),
+			limit
+		)
+		.all<Record<string, unknown>>();
+	return results.map((row) => {
+		const dimension = row.dimension;
+		if (dimension !== 'country' && dimension !== 'device' && dimension !== 'referrer')
+			throw new Error('Invalid stored dimension');
+		return {
+			linkId: text(row.link_id, 'link'),
+			day: text(row.day, 'day'),
+			dimension,
+			value: text(row.value, 'value'),
+			clicks: count(row.clicks, 'clicks')
+		};
+	});
 }
 
 export interface MonthlyUsage {

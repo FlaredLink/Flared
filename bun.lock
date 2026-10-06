@@ -75,6 +75,7 @@
     "packages/ui": {
       "name": "@flared/ui",
       "dependencies": {
+        "@flared/client": "workspace:*",
         "@flared/contracts": "workspace:*",
         "@simplewebauthn/browser": "13.3.0",
       },

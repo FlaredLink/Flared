@@ -38,6 +38,10 @@ Given a `clicks` sink (a Queue producer), the redirect handler sends one event a
 
 A tenant becomes active when routing and its analytics shard both hold its policy (`projectPolicy`, `retryProjections`). `purgeExpired` removes aggregates past the tenant's retention and receipts after 72 hours. The API adds `GET /v1/links/:id/analytics` (UTC days, clamped to retention), `GET /v1/usage`, and `clicksLast30Days` on listed links.
 
+## Export
+
+`GET /v1/export/links` (`links:read`), `GET /v1/export/daily-totals`, and `GET /v1/export/daily-dimensions` (`analytics:read`) return a workspace in pages: every link, active and disabled, and the daily totals and breakdowns within the retention window, in key order. Follow `nextCursor` until it is null. `writeExport` (`@flared/client/export`) writes the pages as one JSON document with the format `flared.export/1`, and `linksCsv` writes the links as CSV. `flared export --out FILE` uses them. No export file is stored on the server.
+
 ## Limits, usage, and notices
 
 `updatePolicy` (`@flared/server/tenancy`) stores new limits as the next policy revision and projects them to routing and the tenant's analytics shard. A failed projection returns `projected: false`, and `retryProjections` finishes it later. Lower limits never disable existing links or domains; they block new ones. A self-hosted operator changes limits this way.

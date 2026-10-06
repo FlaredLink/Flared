@@ -4,6 +4,7 @@
 // token management routes for the dashboard are not part of the public API.
 import { deviceCategories } from './analytics';
 import { domainFailures, domainStates } from './domains';
+import { exportAnalyticsPageSize, exportDimensions, exportLinkPageSize } from './export';
 import { errorStatus } from './errors';
 import { maxDestinationLength, maxIdempotencyKeyLength, maxTitleLength } from './links';
 import { tokenScopes, type TokenScope } from './tokens';
@@ -147,6 +148,34 @@ const schemas = {
 		},
 		asOf: dateTime
 	}),
+	ExportLinkPage: object({
+		links: { type: 'array', items: ref('Link'), maxItems: exportLinkPageSize },
+		nextCursor: nullable({ type: 'string' })
+	}),
+	ExportDailyTotal: object({ linkId: { type: 'string' }, day, clicks: count }),
+	ExportDailyDimension: object({
+		linkId: { type: 'string' },
+		day,
+		dimension: { type: 'string', enum: [...exportDimensions] },
+		value: { type: 'string' },
+		clicks: count
+	}),
+	ExportTotalsPage: object({
+		from: { ...day, description: 'The first retained UTC day.' },
+		retentionDays: count,
+		rows: { type: 'array', items: ref('ExportDailyTotal'), maxItems: exportAnalyticsPageSize },
+		nextCursor: nullable({ type: 'string' })
+	}),
+	ExportDimensionsPage: object({
+		from: { ...day, description: 'The first retained UTC day.' },
+		retentionDays: count,
+		rows: {
+			type: 'array',
+			items: ref('ExportDailyDimension'),
+			maxItems: exportAnalyticsPageSize
+		},
+		nextCursor: nullable({ type: 'string' })
+	}),
 	Domain: object({
 		id: { type: 'string' },
 		hostname: { type: 'string' },
@@ -209,6 +238,12 @@ const json = (schema: unknown) => ({ 'application/json': { schema } });
 const errorResponse = { description: 'An error. See the code.', content: json(ref('Error')) };
 const linkId = { name: 'id', in: 'path', required: true, schema: { type: 'string' } };
 const domainId = { name: 'id', in: 'path', required: true, schema: { type: 'string' } };
+const cursor = {
+	name: 'cursor',
+	in: 'query',
+	description: 'The nextCursor of the previous page.',
+	schema: { type: 'string' }
+};
 const domainResponse = (description: string) => ({
 	description,
 	content: json(object({ domain: ref('Domain') }))
@@ -430,6 +465,45 @@ export function openApiDocument(serverUrl: string) {
 						content: json(object({ usage: ref('Usage') }))
 					}
 				})
+			},
+			'/export/links': {
+				get: operation(
+					'Export every link',
+					'links:read',
+					{
+						'200': {
+							description: `Up to ${exportLinkPageSize} links, active and disabled, newest first. Follow nextCursor until it is null.`,
+							content: json(ref('ExportLinkPage'))
+						}
+					},
+					{ parameters: [cursor] }
+				)
+			},
+			'/export/daily-totals': {
+				get: operation(
+					'Export retained daily click totals',
+					'analytics:read',
+					{
+						'200': {
+							description: `Up to ${exportAnalyticsPageSize} rows by link and UTC day, within the retention period.`,
+							content: json(ref('ExportTotalsPage'))
+						}
+					},
+					{ parameters: [cursor] }
+				)
+			},
+			'/export/daily-dimensions': {
+				get: operation(
+					'Export retained daily breakdowns',
+					'analytics:read',
+					{
+						'200': {
+							description: `Up to ${exportAnalyticsPageSize} rows of clicks by link, UTC day, and country, device, or referrer, within the retention period.`,
+							content: json(ref('ExportDimensionsPage'))
+						}
+					},
+					{ parameters: [cursor] }
+				)
 			},
 			'/openapi.json': {
 				get: {

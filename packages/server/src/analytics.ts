@@ -15,8 +15,16 @@ import {
 	type Usage
 } from '@flared/contracts/analytics';
 import {
+	exportAnalyticsPageSize,
+	exportDimensions,
+	type ExportDimensionsPage,
+	type ExportTotalsPage
+} from '@flared/contracts/export';
+import {
 	ingestClick,
 	readDailyTotals,
+	readExportDimensions,
+	readExportTotals,
 	readDimensions,
 	readLinkClickTotals,
 	readMonthlyUsage,
@@ -25,6 +33,7 @@ import {
 } from '@flared/data/analytics';
 import { readLimitUsage } from '@flared/data/routing-policy';
 import { readTenantShard } from '@flared/data/tenancy';
+import { ApiError } from './links';
 import { resolveShard, UnknownShardError, type AnalyticsShards } from './shards';
 
 // The parts of a Queue message and batch that the consumer uses.
@@ -251,4 +260,101 @@ export async function getRecentClicks(
 		console.error(JSON.stringify({ event: 'recent_clicks_unavailable' }));
 		return null;
 	}
+}
+
+// An export cursor is the last row's key as base64url JSON. The tenant always comes from the
+// request, so a cursor cannot reach another workspace's rows.
+function encodeExportCursor(key: string[]): string {
+	let binary = '';
+	for (const byte of new TextEncoder().encode(JSON.stringify(key)))
+		binary += String.fromCharCode(byte);
+	return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function decodeExportCursor(value: string, length: number): string[] {
+	const invalid = () =>
+		new ApiError('INVALID_INPUT', 'Use the nextCursor value from the previous page.');
+	if (value.length > 4096 || !/^[A-Za-z0-9_-]+$/.test(value)) throw invalid();
+	let key: unknown;
+	try {
+		const binary = atob(value.replace(/-/g, '+').replace(/_/g, '/'));
+		key = JSON.parse(
+			new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(
+				Uint8Array.from(binary, (character) => character.charCodeAt(0))
+			)
+		);
+	} catch {
+		throw invalid();
+	}
+	if (
+		!Array.isArray(key) ||
+		key.length !== length ||
+		!key.every((part) => typeof part === 'string' && part.length > 0 && part.length <= 512)
+	)
+		throw invalid();
+	return key;
+}
+
+// One page of the tenant's retained daily totals for an export.
+export async function getExportTotals(
+	identity: D1Database,
+	shards: AnalyticsShards,
+	tenantId: string,
+	cursor: string | null,
+	now: number,
+	limit = exportAnalyticsPageSize
+): Promise<ExportTotalsPage> {
+	const after = cursor ? decodeExportCursor(cursor, 2) : null;
+	const { db, policy } = await tenantShard(identity, shards, tenantId);
+	const from = oldestRetainedDay(now, policy.retentionDays);
+	const rows = await readExportTotals(
+		db,
+		tenantId,
+		from,
+		after ? { linkId: after[0], day: after[1] } : null,
+		limit + 1
+	);
+	const page = rows.slice(0, limit);
+	const last = page.at(-1);
+	return {
+		from,
+		retentionDays: policy.retentionDays,
+		rows: page,
+		nextCursor: rows.length > limit && last ? encodeExportCursor([last.linkId, last.day]) : null
+	};
+}
+
+// One page of the tenant's retained daily breakdowns for an export.
+export async function getExportDimensions(
+	identity: D1Database,
+	shards: AnalyticsShards,
+	tenantId: string,
+	cursor: string | null,
+	now: number,
+	limit = exportAnalyticsPageSize
+): Promise<ExportDimensionsPage> {
+	const after = cursor ? decodeExportCursor(cursor, 4) : null;
+	const dimension = exportDimensions.find((name) => name === after?.[2]);
+	if (after && !dimension)
+		throw new ApiError('INVALID_INPUT', 'Use the nextCursor value from the previous page.');
+	const { db, policy } = await tenantShard(identity, shards, tenantId);
+	const from = oldestRetainedDay(now, policy.retentionDays);
+	const rows = await readExportDimensions(
+		db,
+		tenantId,
+		from,
+		after && dimension ? { linkId: after[0], day: after[1], dimension, value: after[3] } : null,
+		limit + 1
+	);
+	const page = rows.slice(0, limit);
+	const last = page.at(-1);
+	return {
+		from,
+		retentionDays: policy.retentionDays,
+		rows: page,
+		nextCursor:
+			rows.length > limit && last
+				? encodeExportCursor([last.linkId, last.day, last.dimension, last.value])
+				: null
+	};
 }

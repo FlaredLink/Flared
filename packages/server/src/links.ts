@@ -3,6 +3,7 @@
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
 import type { ErrorBody, ErrorCode } from '@flared/contracts/errors';
 import { errorStatus } from '@flared/contracts/errors';
+import { exportLinkPageSize, type ExportLinkPage } from '@flared/contracts/export';
 import type { CreateLinkInput, Link, LinkPage, UpdateLinkInput } from '@flared/contracts/links';
 import { isReservedSlug } from '@flared/contracts/reserved';
 import {
@@ -217,6 +218,26 @@ export async function listLinks(
 			clicksLast30Days: clicks ? (clicks.get(row.id) ?? 0) : null
 		})),
 		nextCursor: rows.length > query.limit && last ? encodeCursor(last) : null
+	};
+}
+
+// Every link of the tenant, active and disabled, newest first, for an export.
+export async function exportLinks(
+	routing: D1Database,
+	tenantId: string,
+	cursor: string | null,
+	limit = exportLinkPageSize
+): Promise<ExportLinkPage> {
+	const rows = await listLinkRows(routing, tenantId, {
+		limit: limit + 1,
+		after: cursor ? decodeCursor(cursor) : null,
+		search: null
+	});
+	const page = rows.slice(0, limit);
+	const last = page.at(-1);
+	return {
+		links: page.map(toApiLink),
+		nextCursor: rows.length > limit && last ? encodeCursor(last) : null
 	};
 }
 

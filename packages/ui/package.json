@@ -31,6 +31,10 @@
 			"svelte": "./src/tokens/TokenList.svelte"
 		},
 		"./tokens/client": "./src/tokens/client.ts",
+		"./export/ExportPanel.svelte": {
+			"types": "./src/export/ExportPanel.svelte",
+			"svelte": "./src/export/ExportPanel.svelte"
+		},
 		"./oauth/ConsentCard.svelte": {
 			"types": "./src/oauth/ConsentCard.svelte",
 			"svelte": "./src/oauth/ConsentCard.svelte"
@@ -55,6 +59,7 @@
 		}
 	},
 	"dependencies": {
+		"@flared/client": "workspace:*",
 		"@flared/contracts": "workspace:*",
 		"@simplewebauthn/browser": "13.3.0"
 	},

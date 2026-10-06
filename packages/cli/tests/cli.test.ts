@@ -135,6 +135,29 @@ function fakeApi(state: { failWith?: ErrorCode; links?: object[]; domains?: obje
 					asOf: '2026-10-02T10:00:00.000Z'
 				}
 			});
+		// Two pages of links, so the export follows the cursor.
+		if (path === '/export/links')
+			return Response.json(
+				url.searchParams.get('cursor') === 'next'
+					? { links: [twin], nextCursor: null }
+					: { links: [launch], nextCursor: 'next' }
+			);
+		if (path === '/export/daily-totals')
+			return Response.json({
+				from: '2026-09-03',
+				retentionDays: 30,
+				rows: [{ linkId: launch.id, day: '2026-10-01', clicks: 3 }],
+				nextCursor: null
+			});
+		if (path === '/export/daily-dimensions')
+			return Response.json({
+				from: '2026-09-03',
+				retentionDays: 30,
+				rows: [
+					{ linkId: launch.id, day: '2026-10-01', dimension: 'country', value: 'US', clicks: 3 }
+				],
+				nextCursor: null
+			});
 		if (path === '/usage')
 			return Response.json({
 				usage: {
@@ -186,6 +209,20 @@ async function cli(
 		writeFile: async (path, data) => {
 			files.set(path, data);
 		},
+		openFile: async (path) => {
+			let text = '';
+			return {
+				write: async (part) => {
+					text += part;
+				},
+				finish: async () => {
+					files.set(path, text);
+				},
+				discard: async () => {
+					files.delete(path);
+				}
+			};
+		},
 		fetch: (options.api ?? fakeApi()).fetch
 	};
 	const code = await run(argv, io);
@@ -218,6 +255,7 @@ describe('flared CLI', () => {
 			['link', 'update', 'launch', '--title', 'x', '--clear-title'],
 			['link', 'update', 'launch'],
 			['link', 'qr', 'launch', '--format', 'png'],
+			['export'],
 			['domain'],
 			['domain', 'nope'],
 			['domain', 'add'],
@@ -431,6 +469,35 @@ describe('flared CLI', () => {
 		if (!(data instanceof Uint8Array)) throw new Error('Expected PNG bytes');
 		expect([...data.slice(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 		expect(data).toEqual(await qrPng(launch.shortUrl, 512));
+	});
+
+	it('exports every page into one JSON file, or leaves no file on failure', async () => {
+		const saved = await cli(['export', '--out', 'flared.json'], { env: signedIn });
+		expect(saved.code).toBe(exitCodes.ok);
+		expect(saved.stdout).toBe(
+			'Saved 2 links, 1 daily totals, and 1 daily breakdown rows to flared.json.'
+		);
+		const text = saved.files.get('flared.json');
+		if (typeof text !== 'string') throw new Error('Expected the export text');
+		const file = JSON.parse(text) as Record<string, unknown>;
+		expect(file).toMatchObject({
+			format: 'flared.export/1',
+			links: [launch, twin],
+			dailyTotals: [{ linkId: launch.id, day: '2026-10-01', clicks: 3 }],
+			dailyDimensions: [
+				{ linkId: launch.id, day: '2026-10-01', dimension: 'country', value: 'US', clicks: 3 }
+			],
+			analyticsFrom: '2026-09-03',
+			retentionDays: 30
+		});
+		expect(Number.isNaN(Date.parse(String(file.exportedAt)))).toBe(false);
+
+		const refused = await cli(['export', '--out', 'flared.json'], {
+			env: signedIn,
+			api: fakeApi({ failWith: 'INSUFFICIENT_SCOPE' })
+		});
+		expect(refused.code).toBe(exitCodes.forbidden);
+		expect(refused.files.has('flared.json')).toBe(false);
 	});
 
 	it('lists domains with their status, DNS records, and problems', async () => {

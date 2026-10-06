@@ -2,6 +2,7 @@
 // The flared command. run() takes its input and output as arguments so that tests can drive it.
 import { parseArgs } from 'node:util';
 import { createClient, FlaredApiError, type FlaredClient } from '@flared/client';
+import { writeExport } from '@flared/client/export';
 import { defaultQrSize, qrPng, qrSvg } from '@flared/client/qr';
 import { normalizeHostname, type Domain } from '@flared/contracts/domains';
 import type { ListedLink } from '@flared/contracts/links';
@@ -35,6 +36,12 @@ export interface CliIo {
 	readSecret(question: string): Promise<string>;
 	readStdin(): Promise<string>;
 	writeFile(path: string, data: string | Uint8Array): Promise<void>;
+	// A file written in parts. finish() makes it appear at path; discard() leaves nothing there.
+	openFile(path: string): Promise<{
+		write(text: string): Promise<void>;
+		finish(): Promise<void>;
+		discard(): Promise<void>;
+	}>;
 	fetch?: typeof fetch;
 }
 
@@ -391,6 +398,33 @@ const commands: Record<string, Command> = {
 			const link = await api.getLink(await resolveLink(api, args[0]));
 			const analytics = await api.getAnalytics(link.id, { from: options.from, to: options.to });
 			print(analyticsReport(link, analytics), { analytics });
+		}
+	},
+	export: {
+		usage: 'flared export --out FILE',
+		summary:
+			'Save every link and the retained daily analytics as one JSON file. The token needs links:read and analytics:read.',
+		options: ['out'],
+		args: 0,
+		async run({ options, io, json, client, print }) {
+			const out = options.out;
+			if (!out) throw new UsageError('Give the file to write with --out FILE.');
+			const api = await client();
+			const file = await io.openFile(out);
+			if (!json) io.stderr(`Exporting to ${out}…`);
+			let counts;
+			try {
+				counts = await writeExport(api, (text) => file.write(text));
+				await file.finish();
+			} catch (error) {
+				await file.discard();
+				throw error;
+			}
+			const numbers = new Intl.NumberFormat('en-US');
+			print(
+				`Saved ${numbers.format(counts.links)} links, ${numbers.format(counts.dailyTotals)} daily totals, and ${numbers.format(counts.dailyDimensions)} daily breakdown rows to ${out}.`,
+				{ file: out, ...counts }
+			);
 		}
 	},
 	usage: {
