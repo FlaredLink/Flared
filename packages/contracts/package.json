@@ -14,6 +14,7 @@
 		"./oauth": "./src/oauth.ts",
 		"./domains": "./src/domains.ts",
 		"./export": "./src/export.ts",
-		"./workspace": "./src/workspace.ts"
+		"./workspace": "./src/workspace.ts",
+		"./icons": "./src/icons.ts"
 	}
 }

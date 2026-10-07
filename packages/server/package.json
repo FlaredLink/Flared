@@ -36,7 +36,8 @@
 		"./setup": "./src/setup.ts",
 		"./operator": "./src/operator.ts",
 		"./operations": "./src/operations.ts",
-		"./jobs": "./src/jobs.ts"
+		"./jobs": "./src/jobs.ts",
+		"./icons": "./src/icons.ts"
 	},
 	"dependencies": {
 		"@better-auth/api-key": "1.7.7",

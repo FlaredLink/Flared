@@ -282,6 +282,21 @@
 			"binding": "MIGRATION_ANALYTICS",
 			"database_name": "migration-analytics",
 			"database_id": "00000000-0000-0000-0000-000000000065"
+		},
+		{
+			"binding": "ICONS_IDENTITY",
+			"database_name": "icons-identity",
+			"database_id": "00000000-0000-0000-0000-000000000066"
+		},
+		{
+			"binding": "ICONS_ROUTING",
+			"database_name": "icons-routing",
+			"database_id": "00000000-0000-0000-0000-000000000067"
+		},
+		{
+			"binding": "ICONS_ANALYTICS",
+			"database_name": "icons-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000068"
 		}
 	]
 }

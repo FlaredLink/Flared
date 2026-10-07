@@ -72,7 +72,8 @@ const sessionOnly = [
 	'GET /connected-apps',
 	'DELETE /connected-apps/{clientId}',
 	'GET /workspace',
-	'PATCH /workspace'
+	'PATCH /workspace',
+	'GET /icons/{hostname}'
 ];
 const document = openApiDocument(baseUrl);
 type Operation = { responses: Record<string, { content?: Record<string, { schema: unknown }> }> };

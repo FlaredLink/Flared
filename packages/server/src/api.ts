@@ -37,6 +37,8 @@ import { defaultQrSize, maxQrSize, minQrSize, qrPng, qrSvg } from '@flared/clien
 import { knownAssistant, type ConnectedApp, type ConnectedAppPage } from '@flared/contracts/oauth';
 import { deleteGrant, listGrants } from '@flared/data/oauth';
 import { countCreationAttempt } from '@flared/data/links';
+import { iconHostname } from '@flared/contracts/icons';
+import { iconHeaders, resolveIcon, type Fetcher, type IconStore } from './icons';
 import {
 	TokenLimitError,
 	createToken,
@@ -111,6 +113,16 @@ export interface ApiDependencies {
 	// A single-workspace installation's tenant. Any other tenant is refused, in addition to the
 	// database's one-tenant guard.
 	fixedTenantId?: string;
+	// Site icons for the dashboard. Without a store, every icon answers 404 and the dashboard
+	// shows a letter tile.
+	icons?: IconSettings;
+}
+
+export interface IconSettings {
+	store: IconStore;
+	fetch?: Fetcher;
+	// Fetches from sites for each workspace and minute; stored icons are always served.
+	fetchesPerMinute?: number;
 }
 
 // Reads "Authorization: Bearer <token>" only. Applications that accept tokens use this as
@@ -509,6 +521,34 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		return respond({ status: 200, body: JSON.stringify({ workspace }) });
 	});
 
+	// A site's icon for the dashboard, from the shared store or fetched from the site. A session
+	// is required and each workspace has a fetch budget, so the route is no open proxy.
+	app.get('/icons/:hostname', async (context) => {
+		sessionOnly(context, 'Site icons are for the Flared app.');
+		const icons = dependencies.icons;
+		const hostname = iconHostname(context.req.param('hostname'));
+		const none = (maxAge: number) =>
+			new Response(null, {
+				status: 404,
+				headers: { 'cache-control': `private, max-age=${maxAge}` }
+			});
+		if (!icons || !hostname) return none(86400);
+		const time = now();
+		let limited = false;
+		const icon = await resolveIcon(icons.store, hostname, icons.fetch ?? fetch, time, async () => {
+			const allowance = await countCreationAttempt(
+				routing,
+				`${context.var.tenantId}:icons`,
+				time,
+				icons.fetchesPerMinute ?? 60
+			);
+			limited = !allowance.allowed;
+			return allowance.allowed;
+		});
+		if (icon?.status !== 'found') return none(limited ? 60 : 86400);
+		return new Response(icon.body, { headers: iconHeaders(icon.type) });
+	});
+
 	app.get('/tokens', async (context) => {
 		const principal = sessionOnly(context);
 		const page: ApiTokenPage = {
@@ -595,6 +635,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	app.all('/export/daily-dimensions', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/me', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/workspace', (context) => methodNotAllowed(context, 'GET, PATCH'));
+	app.all('/icons/:hostname', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/tokens', (context) => methodNotAllowed(context, 'GET, POST'));
 	app.all('/tokens/:id', (context) => methodNotAllowed(context, 'DELETE'));
 	app.all('/connected-apps', (context) => methodNotAllowed(context, 'GET'));
