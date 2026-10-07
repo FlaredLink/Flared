@@ -30,6 +30,7 @@ Create an API token in the Flared app under Settings. `flared login` asks for it
 | `flared domain remove DOMAIN --yes`                                                       | Remove a domain. Its links stop redirecting until you add it again. |
 | `flared analytics LINK [--from YYYY-MM-DD] [--to YYYY-MM-DD]`                             | Clicks by day, country, referrer, and device.                       |
 | `flared usage`                                                                            | Usage against the workspace limits, with warnings.                  |
+| `flared export --out FILE`                                                                | Save every link and the retained daily analytics as one JSON file.  |
 
 `LINK` is a link ID or a slug. `DOMAIN` is a domain hostname or ID. Every command accepts `--json` for machine-readable output and `--api-url URL`.
 
