@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
+	import EmptyState from '../empty/EmptyState.svelte';
 	import type { Action } from 'svelte/action';
 	import {
 		domainCheckIntervalMs,
@@ -176,7 +177,7 @@
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
 
 	{#if workspaceDomains.length === 0}
-		<p class="empty">No custom domains yet.</p>
+		<EmptyState>No custom domains yet.</EmptyState>
 	{:else}
 		<ul aria-label="Your custom domains">
 			{#each workspaceDomains as domain (domain.id)}

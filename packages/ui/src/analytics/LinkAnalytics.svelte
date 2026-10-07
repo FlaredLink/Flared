@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
+	import EmptyState from '../empty/EmptyState.svelte';
 	import type { DimensionClicks, LinkAnalytics } from '@flared/contracts/analytics';
 
 	interface Range {
@@ -96,10 +97,10 @@
 	</div>
 
 	{#if analytics.total === 0}
-		<p class="empty">
+		<EmptyState>
 			No clicks in this range yet. Open the short link in a browser; the click shows here within a
 			few minutes.
-		</p>
+		</EmptyState>
 	{:else}
 		<figure class="chart">
 			<div
@@ -191,7 +192,6 @@
 		font-weight: 650;
 	}
 	.range,
-	.empty,
 	.as-of {
 		color: var(--color-muted, #667085);
 		font-size: 0.85rem;

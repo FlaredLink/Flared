@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
+	import EmptyState from '../empty/EmptyState.svelte';
 	import type { Link, ListedLink } from '@flared/contracts/links';
 	import { blockLabel } from './messages';
 
@@ -44,7 +45,7 @@
 	<h2 id="link-list-heading">Your links</h2>
 	<p class="status" role="status" aria-live="polite">{status}</p>
 	{#if links.length === 0}
-		<p class="empty">No links yet. Create your first short link above.</p>
+		<EmptyState>No links yet. Create your first short link above.</EmptyState>
 	{:else}
 		<ul>
 			{#each links as link (link.id)}
@@ -96,8 +97,7 @@
 	.status:empty {
 		display: none;
 	}
-	.status,
-	.empty {
+	.status {
 		margin-top: 0.5rem;
 		color: var(--color-muted, #667085);
 		font-size: 0.85rem;
