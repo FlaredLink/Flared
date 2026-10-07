@@ -3,7 +3,12 @@ import { env } from 'cloudflare:workers';
 import { applyD1Migrations } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { ClickEvent } from '../packages/contracts/src/analytics';
-import { deviceCategory, isAutomated } from '../packages/server/src/clicks';
+import {
+	browserFamily,
+	deviceCategory,
+	isAutomated,
+	osFamily
+} from '../packages/server/src/clicks';
 import {
 	createRedirectHandler,
 	snapshotLifetimeMs,
@@ -327,12 +332,14 @@ describe('click events', () => {
 		const [event] = events;
 		expect(Object.keys(event).sort()).toEqual([
 			'analyticsShardId',
+			'browser',
 			'country',
 			'deviceCategory',
 			'eventId',
 			'kind',
 			'linkId',
 			'occurredAt',
+			'os',
 			'referrerHostname',
 			'schemaVersion',
 			'tenantId'
@@ -345,7 +352,9 @@ describe('click events', () => {
 			occurredAt: start,
 			country: 'unknown',
 			deviceCategory: 'mobile',
-			referrerHostname: 'news.example'
+			referrerHostname: 'news.example',
+			browser: 'safari',
+			os: 'ios'
 		});
 		expect(events[1].eventId).not.toBe(event.eventId);
 		expect(JSON.stringify(events)).not.toMatch(/secret|192\.0\.2\.1|story|iPhone/);
@@ -423,5 +432,92 @@ describe('automation classifier', () => {
 			'desktop'
 		);
 		expect(deviceCategory('Something else')).toBe('unknown');
+	});
+
+	it('maps user agents to a browser and an OS family', () => {
+		const cases: [string, string, string][] = [
+			[browser, 'safari', 'ios'],
+			[
+				'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+				'chrome',
+				'windows'
+			],
+			[
+				'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 Edg/129.0.0.0',
+				'edge',
+				'windows'
+			],
+			[
+				'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15',
+				'safari',
+				'macos'
+			],
+			[
+				'Mozilla/5.0 (Macintosh; Intel Mac OS X 14.6; rv:130.0) Gecko/20100101 Firefox/130.0',
+				'firefox',
+				'macos'
+			],
+			[
+				'Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0',
+				'firefox',
+				'linux'
+			],
+			[
+				'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/129.0.6668.69 Mobile/15E148 Safari/604.1',
+				'chrome',
+				'ios'
+			],
+			[
+				'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/130.0 Mobile/15E148 Safari/605.1.15',
+				'firefox',
+				'ios'
+			],
+			[
+				'Mozilla/5.0 (Linux; Android 14; SM-S921B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/25.0 Chrome/121.0.0.0 Mobile Safari/537.36',
+				'samsung',
+				'android'
+			],
+			[
+				'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36 OPR/84.0.0.0',
+				'opera',
+				'android'
+			],
+			[
+				'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36',
+				'chrome',
+				'android'
+			],
+			[
+				'Mozilla/5.0 (Linux; Android 14; Pixel 8; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/129.0.0.0 Mobile Safari/537.36',
+				'other',
+				'android'
+			],
+			[
+				'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 [FBAN/FBIOS;FBAV/470.0]',
+				'other',
+				'ios'
+			],
+			[
+				'Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+				'chrome',
+				'chromeos'
+			],
+			[
+				'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 YaBrowser/24.10 Safari/537.36',
+				'other',
+				'windows'
+			],
+			[
+				'Mozilla/5.0 (Mobile; Windows Phone 8.1; Android 4.0; ARM; Trident/7.0; Touch; rv:11.0; IEMobile/11.0; NOKIA; Lumia 635) like iPhone OS 7_0_3 Mac OS X AppleWebKit/537 (KHTML, like Gecko) Mobile Safari/537',
+				'other',
+				'windows'
+			],
+			['Something else', 'other', 'other'],
+			['', 'unknown', 'unknown']
+		];
+		for (const [agent, browserName, osName] of cases) {
+			expect(browserFamily(agent), agent).toBe(browserName);
+			expect(osFamily(agent), agent).toBe(osName);
+		}
 	});
 });
