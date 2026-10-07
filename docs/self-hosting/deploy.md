@@ -6,7 +6,7 @@ This guide deploys one standalone Flared installation: one owner, one workspace,
 
 - A Cloudflare account on **Workers Paid** (US$5 a month).
 - A GitHub or GitLab account. Deploy on Cloudflare copies this repository into it.
-- Two random secrets. Generate each one with `openssl rand -base64 48`. Keep them different.
+- Two random secrets. Generate them at [flared.page/secrets](https://flared.page/secrets), which makes them in your browser, or run `openssl rand -base64 48` once for each. Keep them different.
 
 ## Deploy
 

@@ -48,10 +48,10 @@
 				"description": "The app address with https:// and no path, such as https://flared.<your-account-subdomain>.workers.dev. You can set it after the first deploy."
 			},
 			"AUTH_SECRET": {
-				"description": "A random value of 32 to 256 characters that signs sessions. Generate it with: openssl rand -base64 48"
+				"description": "A random value of 32 to 256 characters that signs sessions. Generate one at https://flared.page/secrets or with: openssl rand -base64 48"
 			},
 			"SETUP_SECRET": {
-				"description": "A different random value of at least 32 bytes. You type it once at /setup to create the owner; delete it afterwards."
+				"description": "A different random value of at least 32 bytes, from the same page. You type it once at /setup to create the owner; delete it afterwards."
 			},
 			"IDENTITY": {
 				"description": "Accounts, sessions, the workspace, and its limits."
