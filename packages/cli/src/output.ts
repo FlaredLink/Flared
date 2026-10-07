@@ -77,6 +77,8 @@ export function analyticsReport(link: Link, analytics: LinkAnalytics): string {
 			['Countries', top(analytics.countries)],
 			['Referrers', top(analytics.referrers)],
 			['Devices', top(analytics.devices)],
+			...(analytics.browsers ? [['Browsers', top(analytics.browsers)]] : []),
+			...(analytics.operatingSystems ? [['Systems', top(analytics.operatingSystems)]] : []),
 			['As of', utc(analytics.asOf)]
 		])
 	].join('\n');

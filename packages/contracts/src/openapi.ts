@@ -2,7 +2,7 @@
 // The OpenAPI 3.1 description of the public /v1 API. It is written by hand from the contracts
 // in this package; tests check it against the API's routes and real responses. The session-only
 // token management routes for the dashboard are not part of the public API.
-import { deviceCategories } from './analytics';
+import { browserFamilies, deviceCategories, osFamilies } from './analytics';
 import { domainFailures, domainStates } from './domains';
 import { exportAnalyticsPageSize, exportDimensions, exportLinkPageSize } from './export';
 import { errorStatus } from './errors';
@@ -121,6 +121,16 @@ const schemas = {
 			type: 'array',
 			items: ref('DimensionClicks'),
 			description: 'Referrer host names; at most 50 per link and day, the rest under "other".'
+		},
+		browsers: {
+			type: 'array',
+			items: ref('DimensionClicks'),
+			description: `One of ${browserFamilies.join(', ')}. Clicks recorded before browser recording started have no entry, so the sum can be less than total.`
+		},
+		operatingSystems: {
+			type: 'array',
+			items: ref('DimensionClicks'),
+			description: `One of ${osFamilies.join(', ')}. Clicks recorded before OS recording started have no entry, so the sum can be less than total.`
 		},
 		asOf: dateTime
 	}),
@@ -508,7 +518,7 @@ export function openApiDocument(serverUrl: string) {
 					'analytics:read',
 					{
 						'200': {
-							description: `Up to ${exportAnalyticsPageSize} rows of clicks by link, UTC day, and country, device, or referrer, within the retention period.`,
+							description: `Up to ${exportAnalyticsPageSize} rows of clicks by link, UTC day, and country, device, referrer, browser, or OS, within the retention period.`,
 							content: json(ref('ExportDimensionsPage'))
 						}
 					},

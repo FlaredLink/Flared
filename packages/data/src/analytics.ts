@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Analytics-shard records: the policy copy, event receipts, daily aggregates, and monthly usage.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
-import type { ExportDailyDimension, ExportDailyTotal } from '@flared/contracts/export';
+import {
+	exportDimensions,
+	type ExportDailyDimension,
+	type ExportDailyTotal,
+	type ExportDimension
+} from '@flared/contracts/export';
 
 export interface AnalyticsPolicy {
 	tenantId: string;
@@ -26,6 +31,9 @@ export interface ClickRecord {
 	country: string;
 	device: string;
 	referrer: string;
+	// Null for an event sent before browser and OS recording: no row is written for it.
+	browser: string | null;
+	os: string | null;
 }
 
 // admitted: counted. skipped: the monthly allowance was full. duplicate: an earlier attempt
@@ -33,7 +41,7 @@ export interface ClickRecord {
 export type IngestOutcome = 'admitted' | 'skipped' | 'duplicate' | 'no_policy';
 
 export interface DimensionRow {
-	dimension: 'country' | 'device' | 'referrer';
+	dimension: ExportDimension;
 	value: string;
 	clicks: number;
 }
@@ -53,6 +61,12 @@ function count(value: unknown, field: string): number {
 function text(value: unknown, field: string): string {
 	if (typeof value !== 'string' || !value) throw new Error(`Invalid stored ${field}`);
 	return value;
+}
+
+function storedDimension(value: unknown): ExportDimension {
+	const dimension = exportDimensions.find((name) => name === value);
+	if (!dimension) throw new Error('Invalid stored dimension');
+	return dimension;
 }
 
 export async function applyAnalyticsPolicy(db: D1Database, policy: AnalyticsPolicy): Promise<void> {
@@ -138,6 +152,8 @@ export async function ingestClick(
 			.bind(tenantId, linkId, day, ...guard),
 		dimension('country', click.country),
 		dimension('device', click.device),
+		...(click.browser === null ? [] : [dimension('browser', click.browser)]),
+		...(click.os === null ? [] : [dimension('os', click.os)]),
 		// A known referrer always counts under its name; a new one only while the link and day
 		// hold fewer than the limit.
 		db
@@ -194,7 +210,8 @@ export async function readDailyTotals(
 	return new Map(results.map((row) => [text(row.day, 'day'), count(row.clicks, 'clicks')]));
 }
 
-// Sums each value over the range. Referrers stay bounded: 51 values per day at most.
+// Sums each value over the range. Referrers stay bounded: 51 values per day at most; the
+// other dimensions are fixed lists.
 export async function readDimensions(
 	db: D1Database,
 	tenantId: string,
@@ -208,12 +225,11 @@ export async function readDimensions(
 		)
 		.bind(tenantId, linkId, from, to)
 		.all<Record<string, unknown>>();
-	return results.map((row) => {
-		const dimension = row.dimension;
-		if (dimension !== 'country' && dimension !== 'device' && dimension !== 'referrer')
-			throw new Error('Invalid stored dimension');
-		return { dimension, value: text(row.value, 'value'), clicks: count(row.clicks, 'clicks') };
-	});
+	return results.map((row) => ({
+		dimension: storedDimension(row.dimension),
+		value: text(row.value, 'value'),
+		clicks: count(row.clicks, 'clicks')
+	}));
 }
 
 // Clicks since a day for each of up to 100 links of one tenant.
@@ -275,18 +291,13 @@ export async function readExportDimensions(
 			limit
 		)
 		.all<Record<string, unknown>>();
-	return results.map((row) => {
-		const dimension = row.dimension;
-		if (dimension !== 'country' && dimension !== 'device' && dimension !== 'referrer')
-			throw new Error('Invalid stored dimension');
-		return {
-			linkId: text(row.link_id, 'link'),
-			day: text(row.day, 'day'),
-			dimension,
-			value: text(row.value, 'value'),
-			clicks: count(row.clicks, 'clicks')
-		};
-	});
+	return results.map((row) => ({
+		linkId: text(row.link_id, 'link'),
+		day: text(row.day, 'day'),
+		dimension: storedDimension(row.dimension),
+		value: text(row.value, 'value'),
+		clicks: count(row.clicks, 'clicks')
+	}));
 }
 
 export interface MonthlyUsage {

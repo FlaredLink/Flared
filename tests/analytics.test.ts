@@ -53,6 +53,8 @@ function click(tenantId: string, change: Partial<ClickRecord> = {}): ClickRecord
 		country: 'JP',
 		device: 'mobile',
 		referrer: 'news.example',
+		browser: 'safari',
+		os: 'ios',
 		...change
 	};
 }
@@ -103,10 +105,26 @@ describe('ingestion', () => {
 			.bind('t-count')
 			.all();
 		expect(results).toEqual([
+			{ dimension: 'browser', value: 'safari', clicks: 1 },
 			{ dimension: 'country', value: 'JP', clicks: 1 },
 			{ dimension: 'device', value: 'mobile', clicks: 1 },
+			{ dimension: 'os', value: 'ios', clicks: 1 },
 			{ dimension: 'referrer', value: 'news.example', clicks: 1 }
 		]);
+	});
+
+	it('counts an event sent before browser recording without browser or OS rows', async () => {
+		await addPolicy('t-legacy');
+		const record = click('t-legacy', { browser: null, os: null });
+		expect(await ingestClick(shard(), record, 'token-a', start)).toBe('admitted');
+		expect(await total('t-legacy')).toBe(1);
+		expect(
+			await scalar(
+				"SELECT COUNT(*) FROM daily_dimensions WHERE tenant_id = ? AND dimension IN ('browser','os')",
+				't-legacy'
+			)
+		).toBe(0);
+		expect(await dimensionRows('t-legacy')).toBe(3);
 	});
 
 	it('changes nothing when a later attempt replays a committed event', async () => {
@@ -287,6 +305,49 @@ describe('ingestion', () => {
 	});
 });
 
+describe('browser and OS migration', () => {
+	it('keeps every breakdown row and accepts only the listed dimensions', async () => {
+		const db = env.MIGRATION_ANALYTICS;
+		const migrations = env.ANALYTICS_MIGRATIONS;
+		const index = migrations.findIndex((item) => item.name.startsWith('0005_'));
+		expect(index).toBeGreaterThan(0);
+		await applyD1Migrations(db, migrations.slice(0, index), 'flared_core_migrations');
+		const insert = (dimension: string, value: string, clicks: number) =>
+			db
+				.prepare(
+					"INSERT INTO daily_dimensions (tenant_id, link_id, day, dimension, value, clicks) VALUES ('t-old', 'link-1', '2026-10-01', ?, ?, ?)"
+				)
+				.bind(dimension, value, clicks)
+				.run();
+		await insert('country', 'JP', 4);
+		await insert('device', 'mobile', 3);
+		await insert('referrer', 'news.example', 2);
+		await expect(insert('browser', 'chrome', 1)).rejects.toThrow();
+		await applyD1Migrations(db, migrations, 'flared_core_migrations');
+		const { results } = await db
+			.prepare(
+				"SELECT dimension, value, clicks FROM daily_dimensions WHERE tenant_id = 't-old' ORDER BY dimension"
+			)
+			.all();
+		expect(results).toEqual([
+			{ dimension: 'country', value: 'JP', clicks: 4 },
+			{ dimension: 'device', value: 'mobile', clicks: 3 },
+			{ dimension: 'referrer', value: 'news.example', clicks: 2 }
+		]);
+		await insert('browser', 'chrome', 1);
+		await insert('os', 'android', 1);
+		await expect(insert('version', '129', 1)).rejects.toThrow();
+		await expect(insert('country', 'JP', 1)).rejects.toThrow();
+		expect(
+			await db
+				.prepare(
+					"SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'daily_dimensions_day'"
+				)
+				.first('name')
+		).toBe('daily_dimensions_day');
+	});
+});
+
 describe('retention', () => {
 	it('removes rows past each tenant retention and receipts past 72 hours', async () => {
 		await addPolicy('t-old', 5000, 30);
@@ -405,6 +466,25 @@ describe('consumer', () => {
 		).toBe(0);
 	});
 
+	it('counts events with and without browser and OS fields', async () => {
+		await addPolicy('t-families');
+		const { results } = await consume([
+			event({ tenantId: 't-families', browser: 'firefox', os: 'linux' }),
+			event({ tenantId: 't-families' })
+		]);
+		expect(results).toEqual(['admitted', 'admitted']);
+		const { results: rows } = await shard()
+			.prepare(
+				"SELECT dimension, value, clicks FROM daily_dimensions WHERE tenant_id = ? AND dimension IN ('browser','os') ORDER BY dimension"
+			)
+			.bind('t-families')
+			.all();
+		expect(rows).toEqual([
+			{ dimension: 'browser', value: 'firefox', clicks: 1 },
+			{ dimension: 'os', value: 'linux', clicks: 1 }
+		]);
+	});
+
 	it('retries when the database fails', async () => {
 		const broken = {
 			prepare() {
@@ -425,6 +505,13 @@ describe('event contract', () => {
 		expect(parseClickEvent(event({ referrerHostname: 'https://a.example/path' }))).toBeNull();
 		expect(parseClickEvent(event({ tenantId: 'x'.repeat(65) }))).toBeNull();
 		expect(parseClickEvent(event({ checkId: 'check-1' }))).toBeNull();
+		expect(parseClickEvent(event({ browser: 'chrome', os: 'android' }))).toMatchObject({
+			browser: 'chrome',
+			os: 'android'
+		});
+		expect(parseClickEvent({ ...event(), browser: 'Chrome 129' })).toBeNull();
+		expect(parseClickEvent({ ...event(), os: 'Windows 11' })).toBeNull();
+		expect(parseClickEvent({ ...event(), browser: null })).toBeNull();
 	});
 
 	it('keeps only the referrer host name', () => {
@@ -515,21 +602,27 @@ describe('analytics API', () => {
 		await addTenant('user-b', 'api-b');
 		await addLink('api-a', 'link-a', 'alpha');
 		await addLink('api-b', 'link-b', 'bravo');
-		for (const [tenantId, linkId, linkDay] of [
-			['api-a', 'link-a', '2026-10-01'],
-			['api-a', 'link-a', '2026-10-02'],
-			['api-a', 'link-a', '2026-10-02'],
-			['api-b', 'link-b', '2026-10-02']
-		])
+		// The first click was counted before browser and OS recording.
+		for (const [tenantId, linkId, linkDay, recorded] of [
+			['api-a', 'link-a', '2026-10-01', false],
+			['api-a', 'link-a', '2026-10-02', true],
+			['api-a', 'link-a', '2026-10-02', true],
+			['api-b', 'link-b', '2026-10-02', true]
+		] as const)
 			await ingestClick(
 				shard(),
-				click(tenantId, { linkId, day: linkDay, referrer: 'unknown' }),
+				click(tenantId, {
+					linkId,
+					day: linkDay,
+					referrer: 'unknown',
+					...(recorded ? {} : { browser: null, os: null })
+				}),
 				'token',
 				start
 			);
 	});
 
-	it('returns daily totals with empty days and the three breakdowns', async () => {
+	it('returns daily totals with empty days and every breakdown', async () => {
 		const response = await get('user-a', '/v1/links/link-a/analytics?from=2026-09-30');
 		expect(response.status).toBe(200);
 		const { analytics } = (await response.json()) as { analytics: Record<string, unknown> };
@@ -546,6 +639,8 @@ describe('analytics API', () => {
 			countries: [{ value: 'JP', clicks: 3 }],
 			devices: [{ value: 'mobile', clicks: 3 }],
 			referrers: [{ value: 'unknown', clicks: 3 }],
+			browsers: [{ value: 'safari', clicks: 2 }],
+			operatingSystems: [{ value: 'ios', clicks: 2 }],
 			asOf: new Date(start).toISOString()
 		});
 	});

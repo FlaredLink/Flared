@@ -10,6 +10,32 @@ export const clickEventMaxSkewMs = 5 * 60 * 1000;
 export const deviceCategories = ['desktop', 'mobile', 'tablet', 'unknown'] as const;
 export type DeviceCategory = (typeof deviceCategories)[number];
 
+// Families only: no version, engine, or device model. unknown means the request sent no user
+// agent; other means a user agent outside the list.
+export const browserFamilies = [
+	'chrome',
+	'safari',
+	'firefox',
+	'edge',
+	'samsung',
+	'opera',
+	'other',
+	'unknown'
+] as const;
+export type BrowserFamily = (typeof browserFamilies)[number];
+
+export const osFamilies = [
+	'ios',
+	'android',
+	'windows',
+	'macos',
+	'linux',
+	'chromeos',
+	'other',
+	'unknown'
+] as const;
+export type OsFamily = (typeof osFamilies)[number];
+
 export type ClickEventKind = 'production' | 'test';
 
 export interface ClickEvent {
@@ -26,6 +52,9 @@ export interface ClickEvent {
 	deviceCategory: DeviceCategory;
 	// Lowercase host name of the referring page, or unknown.
 	referrerHostname: string;
+	// Absent from events sent before browser and OS recording, which count without them.
+	browser?: BrowserFamily;
+	os?: OsFamily;
 }
 
 const idPattern = /^[A-Za-z0-9_-]{1,64}$/;
@@ -67,6 +96,14 @@ function isDevice(value: unknown): value is DeviceCategory {
 	return typeof value === 'string' && deviceCategories.some((device) => device === value);
 }
 
+function isBrowser(value: unknown): value is BrowserFamily {
+	return typeof value === 'string' && browserFamilies.some((browser) => browser === value);
+}
+
+function isOs(value: unknown): value is OsFamily {
+	return typeof value === 'string' && osFamilies.some((os) => os === value);
+}
+
 // Returns null for any event that the consumer must not count.
 export function parseClickEvent(value: unknown): ClickEvent | null {
 	if (!isRecord(value)) return null;
@@ -81,7 +118,9 @@ export function parseClickEvent(value: unknown): ClickEvent | null {
 		'occurredAt',
 		'country',
 		'deviceCategory',
-		'referrerHostname'
+		'referrerHostname',
+		'browser',
+		'os'
 	];
 	if (Object.keys(value).some((key) => !allowed.includes(key))) return null;
 	const {
@@ -95,7 +134,9 @@ export function parseClickEvent(value: unknown): ClickEvent | null {
 		occurredAt,
 		country,
 		deviceCategory,
-		referrerHostname
+		referrerHostname,
+		browser,
+		os
 	} = value;
 	if (schemaVersion !== clickEventSchemaVersion) return null;
 	if (typeof eventId !== 'string' || !uuidPattern.test(eventId)) return null;
@@ -118,6 +159,8 @@ export function parseClickEvent(value: unknown): ClickEvent | null {
 		(referrerHostname !== 'unknown' && !hostnamePattern.test(referrerHostname))
 	)
 		return null;
+	if (browser !== undefined && !isBrowser(browser)) return null;
+	if (os !== undefined && !isOs(os)) return null;
 	return {
 		schemaVersion,
 		eventId,
@@ -129,7 +172,9 @@ export function parseClickEvent(value: unknown): ClickEvent | null {
 		occurredAt,
 		country,
 		deviceCategory,
-		referrerHostname
+		referrerHostname,
+		...(browser !== undefined ? { browser } : {}),
+		...(os !== undefined ? { os } : {})
 	};
 }
 
@@ -170,6 +215,10 @@ export interface LinkAnalytics {
 	devices: DimensionClicks[];
 	// At most 50 host names per link and day; the rest count under "other".
 	referrers: DimensionClicks[];
+	// Clicks recorded before browser and OS recording have no entry, so these can sum to less
+	// than total. Servers before that release leave both out.
+	browsers?: DimensionClicks[];
+	operatingSystems?: DimensionClicks[];
 	asOf: string;
 }
 
@@ -257,6 +306,9 @@ export function isLinkAnalytics(value: unknown): value is LinkAnalytics {
 		isRows<DimensionClicks>(analytics.countries, 'value') &&
 		isRows<DimensionClicks>(analytics.devices, 'value') &&
 		isRows<DimensionClicks>(analytics.referrers, 'value') &&
+		(analytics.browsers === undefined || isRows<DimensionClicks>(analytics.browsers, 'value')) &&
+		(analytics.operatingSystems === undefined ||
+			isRows<DimensionClicks>(analytics.operatingSystems, 'value')) &&
 		typeof analytics.asOf === 'string'
 	);
 }

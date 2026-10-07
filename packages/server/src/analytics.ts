@@ -99,7 +99,9 @@ export function createClickConsumer(dependencies: ClickConsumerDependencies) {
 					month: utcMonth(event.occurredAt),
 					country: event.country,
 					device: event.deviceCategory,
-					referrer: event.referrerHostname
+					referrer: event.referrerHostname,
+					browser: event.browser ?? null,
+					os: event.os ?? null
 				},
 				crypto.randomUUID(),
 				time
@@ -256,6 +258,8 @@ export async function getLinkAnalytics(
 		countries: of('country'),
 		devices: of('device'),
 		referrers: of('referrer'),
+		browsers: of('browser'),
+		operatingSystems: of('os'),
 		asOf: new Date(now).toISOString()
 	};
 }

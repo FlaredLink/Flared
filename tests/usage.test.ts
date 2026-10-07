@@ -66,7 +66,9 @@ async function clicks(tenantId: string, count: number, month = '2026-10') {
 				month,
 				country: 'JP',
 				device: 'mobile',
-				referrer: 'unknown'
+				referrer: 'unknown',
+				browser: 'chrome',
+				os: 'windows'
 			},
 			`token-${eventCounter}`,
 			start

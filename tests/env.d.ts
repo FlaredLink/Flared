@@ -55,6 +55,7 @@ declare namespace Cloudflare {
 		SETUP_ROUTING: D1Database;
 		SETUP_ANALYTICS: D1Database;
 		SETUP_BROKEN: D1Database;
+		MIGRATION_ANALYTICS: D1Database;
 		IDENTITY_MIGRATIONS: import('cloudflare:test').D1Migration[];
 		ROUTING_MIGRATIONS: import('cloudflare:test').D1Migration[];
 		ANALYTICS_MIGRATIONS: import('cloudflare:test').D1Migration[];

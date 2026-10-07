@@ -8,7 +8,7 @@ export const exportFormat = 'flared.export/1';
 export const exportLinkPageSize = 1000;
 export const exportAnalyticsPageSize = 10000;
 
-export const exportDimensions = ['country', 'device', 'referrer'] as const;
+export const exportDimensions = ['country', 'device', 'referrer', 'browser', 'os'] as const;
 export type ExportDimension = (typeof exportDimensions)[number];
 
 export interface ExportLinkPage {

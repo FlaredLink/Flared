@@ -151,6 +151,8 @@ function toAnalytics(value: unknown): LinkAnalytics | null {
 	const countries = dimensionRows(body.countries);
 	const devices = dimensionRows(body.devices);
 	const referrers = dimensionRows(body.referrers);
+	const browsers = dimensionRows(body.browsers);
+	const operatingSystems = dimensionRows(body.operatingSystems);
 	if (
 		typeof body.linkId !== 'string' ||
 		!day(body.from) ||
@@ -161,7 +163,9 @@ function toAnalytics(value: unknown): LinkAnalytics | null {
 		!days.every((row) => day(row.day) && count(row.clicks)) ||
 		!countries ||
 		!devices ||
-		!referrers
+		!referrers ||
+		!browsers ||
+		!operatingSystems
 	)
 		return null;
 	return {
@@ -173,6 +177,8 @@ function toAnalytics(value: unknown): LinkAnalytics | null {
 		countries,
 		devices,
 		referrers,
+		browsers,
+		operatingSystems,
 		asOf: body.asOf
 	};
 }

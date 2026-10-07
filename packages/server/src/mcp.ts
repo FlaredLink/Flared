@@ -315,7 +315,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 		{
 			title: 'Get link analytics',
 			description:
-				'Gets clicks for one link by day, country, device, and referrer. The range is in UTC days and defaults to the last 30 days.',
+				'Gets clicks for one link by day, country, device, referrer, browser, and operating system. The range is in UTC days and defaults to the last 30 days.',
 			inputSchema: z.object({
 				link: z.string().min(1).max(100).describe('The link ID or slug.'),
 				from: z
@@ -339,6 +339,8 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 					countries: z.array(clicks),
 					devices: z.array(clicks),
 					referrers: z.array(clicks),
+					browsers: z.array(clicks).optional(),
+					operatingSystems: z.array(clicks).optional(),
 					asOf: z.string()
 				})
 			}),

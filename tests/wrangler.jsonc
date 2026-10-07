@@ -277,6 +277,11 @@
 			"binding": "SETUP_BROKEN",
 			"database_name": "setup-broken",
 			"database_id": "00000000-0000-0000-0000-000000000064"
+		},
+		{
+			"binding": "MIGRATION_ANALYTICS",
+			"database_name": "migration-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000065"
 		}
 	]
 }
