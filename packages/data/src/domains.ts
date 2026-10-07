@@ -280,3 +280,25 @@ export async function activeDomainKind(
 	if (!row) return null;
 	return row.tenant_id === null ? 'platform' : 'workspace';
 }
+
+// Makes a hostname an active platform domain, the default when none exists. Safe to repeat:
+// the hostname keeps its namespace, and a domain that exists is left as it is. A standalone
+// installation adds its app host this way during setup.
+export async function ensurePlatformDomain(
+	db: D1Database,
+	hostname: string,
+	now: number
+): Promise<void> {
+	await db.batch([
+		db
+			.prepare(
+				'INSERT INTO domain_namespaces (id, hostname, created_at) VALUES (?, ?, ?) ON CONFLICT(hostname) DO NOTHING'
+			)
+			.bind(crypto.randomUUID(), hostname, now),
+		db
+			.prepare(
+				"INSERT INTO domains (id, tenant_id, state, is_default, created_at, updated_at, claimed_at, activated_at) SELECT n.id, NULL, 'active', NOT EXISTS (SELECT 1 FROM domains WHERE is_default = 1), ?1, ?1, ?1, ?1 FROM domain_namespaces n WHERE n.hostname = ?2 AND NOT EXISTS (SELECT 1 FROM domains d WHERE d.id = n.id)"
+			)
+			.bind(now, hostname)
+	]);
+}

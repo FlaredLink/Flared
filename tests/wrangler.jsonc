@@ -227,6 +227,56 @@
 			"binding": "JOBS_IDENTITY",
 			"database_name": "jobs-identity",
 			"database_id": "00000000-0000-0000-0000-000000000054"
+		},
+		{
+			"binding": "OWNER_IDENTITY",
+			"database_name": "owner-identity",
+			"database_id": "00000000-0000-0000-0000-000000000055"
+		},
+		{
+			"binding": "OWNER_ROUTING",
+			"database_name": "owner-routing",
+			"database_id": "00000000-0000-0000-0000-000000000056"
+		},
+		{
+			"binding": "OWNER_ANALYTICS",
+			"database_name": "owner-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000057"
+		},
+		{
+			"binding": "SETUP_RACE_IDENTITY",
+			"database_name": "setup-race-identity",
+			"database_id": "00000000-0000-0000-0000-000000000058"
+		},
+		{
+			"binding": "SETUP_RESUME_IDENTITY",
+			"database_name": "setup-resume-identity",
+			"database_id": "00000000-0000-0000-0000-000000000059"
+		},
+		{
+			"binding": "SETUP_MULTI_IDENTITY",
+			"database_name": "setup-multi-identity",
+			"database_id": "00000000-0000-0000-0000-000000000060"
+		},
+		{
+			"binding": "SETUP_CLOSED_IDENTITY",
+			"database_name": "setup-closed-identity",
+			"database_id": "00000000-0000-0000-0000-000000000061"
+		},
+		{
+			"binding": "SETUP_ROUTING",
+			"database_name": "setup-routing",
+			"database_id": "00000000-0000-0000-0000-000000000062"
+		},
+		{
+			"binding": "SETUP_ANALYTICS",
+			"database_name": "setup-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000063"
+		},
+		{
+			"binding": "SETUP_BROKEN",
+			"database_name": "setup-broken",
+			"database_id": "00000000-0000-0000-0000-000000000064"
 		}
 	]
 }

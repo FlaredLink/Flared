@@ -11,6 +11,7 @@
 		"./links": "./src/links.ts",
 		"./routing-policy": "./src/routing-policy.ts",
 		"./tenancy": "./src/tenancy.ts",
+		"./setup": "./src/setup.ts",
 		"./tokens": "./src/tokens.ts",
 		"./oauth": "./src/oauth.ts",
 		"./domains": "./src/domains.ts",

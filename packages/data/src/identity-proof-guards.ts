@@ -51,6 +51,9 @@ function nextAttempt(previous: string, replacement: string): boolean {
 		replacement === `${previous.slice(0, delimiter)}:${count + 1}`
 	);
 }
+// Username sign-in reads only the user and its credential account, never verification rows;
+// tests/username-probe.test.ts runs it outside any proof scope to prove that.
+const trustedPlugins = ['email-otp', 'magic-link', 'passkey', 'username'];
 /**
  * Storage correction for Better Auth 1.7.7 sign-in OTP / magic-link plugins, also used by
  * passkey ceremonies: options issue a challenge, verification consumes it exactly once.
@@ -71,9 +74,7 @@ export function installD1ProofGuards(
 		options.databaseHooks?.verification ||
 		options.verification?.modelName ||
 		options.verification?.fields ||
-		options.plugins?.some(
-			(plugin) => plugin.id !== 'email-otp' && plugin.id !== 'magic-link' && plugin.id !== 'passkey'
-		)
+		options.plugins?.some((plugin) => !trustedPlugins.includes(plugin.id))
 	) {
 		throw new Error('Unsupported verification configuration for D1 proof guards');
 	}

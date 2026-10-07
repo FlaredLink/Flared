@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Matches getAuthTables from Better Auth 1.7.7 with emailOTP, magicLink, passkey, apiKey, and the
-// OAuth provider with MCP and CIMD. Array and JSON fields are stored as JSON text.
+// Matches getAuthTables from Better Auth 1.7.7 with emailOTP, magicLink, username, passkey, apiKey,
+// and the OAuth provider with MCP and CIMD. Array and JSON fields are stored as JSON text.
 import { sqliteTable, text, integer, index } from 'drizzle-orm/sqlite-core';
 const time = (name: string) => integer(name, { mode: 'timestamp_ms' });
 export const user = sqliteTable('user', {
@@ -10,7 +10,10 @@ export const user = sqliteTable('user', {
 	emailVerified: integer('emailVerified', { mode: 'boolean' }).notNull().default(false),
 	image: text('image'),
 	createdAt: time('createdAt').notNull(),
-	updatedAt: time('updatedAt').notNull()
+	updatedAt: time('updatedAt').notNull(),
+	// The username plugin's fields, for the standalone owner only (migration 0011).
+	username: text('username').unique(),
+	displayUsername: text('displayUsername')
 });
 export const session = sqliteTable(
 	'session',

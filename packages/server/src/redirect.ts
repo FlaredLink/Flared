@@ -33,6 +33,8 @@ export interface RedirectDependencies {
 	cacheName?: string;
 	// Without a sink, redirects work and no click is recorded.
 	clicks?: ClickSink;
+	// A single-workspace installation's tenant. A link of any other tenant is not found.
+	fixedTenantId?: string;
 	now?: () => number;
 }
 
@@ -156,6 +158,8 @@ export function createRedirectHandler(dependencies: RedirectDependencies) {
 		return pending.then(() => response);
 	}
 
+	const foreign = (target: RedirectTarget) =>
+		dependencies.fixedTenantId !== undefined && target.tenantId !== dependencies.fixedTenantId;
 	const notFound = (request: Request) => unavailable(request, 'not-found', dependencies);
 	const blocked = (request: Request) => unavailable(request, 'blocked', dependencies);
 	const failed = (request: Request) => unavailable(request, 'unavailable', dependencies);
@@ -184,7 +188,8 @@ export function createRedirectHandler(dependencies: RedirectDependencies) {
 
 		const key = new Request(`https://${hostname}/${slug}`);
 		const cached = await readSnapshot(key);
-		if (cached && now() < cached.validUntil) return redirectTo(request, cached, background);
+		if (cached && now() < cached.validUntil)
+			return foreign(cached) ? notFound(request) : redirectTo(request, cached, background);
 
 		// The deadline counts from the query start, so a slow read cannot extend it.
 		const validUntil = now() + snapshotLifetimeMs;
@@ -201,6 +206,7 @@ export function createRedirectHandler(dependencies: RedirectDependencies) {
 		if (now() >= validUntil) return failed(request);
 
 		const { target } = lookup;
+		if (foreign(target)) return notFound(request);
 		return redirectTo(request, target, background, [storeSnapshot(key, { ...target, validUntil })]);
 	}
 

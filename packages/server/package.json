@@ -10,6 +10,8 @@
 		"./auth/routes": "./src/auth/routes.ts",
 		"./auth/limits": "./src/auth/limits.ts",
 		"./auth/validation": "./src/auth/validation.ts",
+		"./auth/owner": "./src/auth/owner.ts",
+		"./auth/attempts": "./src/auth/attempts.ts",
 		"./email": "./src/email/transport.ts",
 		"./web": "./src/web/forward.ts",
 		"./web/auth": "./src/web/auth.ts",
@@ -30,6 +32,7 @@
 		"./notices": "./src/notices.ts",
 		"./deletion": "./src/deletion.ts",
 		"./account": "./src/account.ts",
+		"./setup": "./src/setup.ts",
 		"./operator": "./src/operator.ts",
 		"./operations": "./src/operations.ts",
 		"./jobs": "./src/jobs.ts"

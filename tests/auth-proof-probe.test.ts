@@ -127,6 +127,11 @@ beforeEach(async () => {
 		'DROP TABLE IF EXISTS session; DROP TABLE IF EXISTS account; DROP TABLE IF EXISTS verification; DROP TABLE IF EXISTS user;'
 	);
 	await env.IDENTITY.exec((env.PROBE_BASELINE ? sql : migration).replace(/^--.*$/gm, ''));
+	// The shared Drizzle schema also maps the user columns that migration 0011 adds.
+	if (!env.PROBE_BASELINE)
+		await env.IDENTITY.exec(
+			'ALTER TABLE user ADD COLUMN username TEXT; ALTER TABLE user ADD COLUMN displayUsername TEXT;'
+		);
 });
 afterEach(() => vi.useRealTimers());
 

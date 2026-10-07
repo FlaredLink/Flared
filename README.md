@@ -104,7 +104,7 @@ The unmodified library fails three tested D1 invariants: wrong-attempt restorati
 Callers must:
 
 1. Use the shared identity migration and adapter, without secondary storage, custom verification schema/identifier settings or verification hooks.
-2. Construct only the trusted pinned sign-in OTP, magic-link and passkey plugins; build the passkey plugin with `createPasskeyPlugin` from `@flared/server/auth/passkey`. Plugin initialization hooks are a trusted composer concern; they cannot all be introspected by the guard.
+2. Construct only the trusted pinned sign-in OTP, magic-link, username, and passkey plugins; build the passkey plugin with `createPasskeyPlugin` from `@flared/server/auth/passkey`. Plugin initialization hooks are a trusted composer concern; they cannot all be introspected by the guard.
 3. Await the auth instance's `$context`, then install guards before exposing any API.
 4. Wrap each sign-in issuance/verification call in its own `withIdentityProofScope('issue' | 'verify', ...)`. Passkey options calls issue a challenge; passkey verification calls consume it. Scope state is isolated across simultaneous calls, including calls sharing an instance.
 5. Expose only intended sign-in server methods through validated routes. Do not mount the generic library HTTP handler or expose password reset, email change, other OTP types or unscoped proof operations.
@@ -131,7 +131,20 @@ A table name that an edition passes goes into SQL text, so it must match `^[a-z]
 
 The harness uses `2026-08-22` and `nodejs_compat`; this is the latest compatibility date supported by the pinned test runtime. The guarded probe passes 16 tests. `FLARED_PROBE_BASELINE=1 bun run test:auth-probe` deliberately reproduces the three failures against unmodified storage and exits nonzero; it is diagnostic, not the passing CI command.
 
-The cloud email-code/magic-link composition is maintained separately. The standalone username/password application and deployment setup remain planned; no email setup is required to run the core tests.
+The cloud email-code/magic-link composition is maintained separately. No email setup is required to run the core tests.
+
+## Standalone owner and setup
+
+A standalone installation has one owner who signs in with a username and password; no email, OAuth application, or Flared service is involved. The standalone application that composes these modules is still to come.
+
+- `@flared/server/auth/owner`: `createOwnerAuth` builds Better Auth 1.7.7 with the username plugin and the shared passkey plugin. Email sign-up, sign-in, and reset stay off. The owner's email is the internal address `<user id>@owner.invalid`; it is never verified, shown, or sent to. `createOwnerAuthRoutes` adds `POST /api/auth/sign-in/password`, `/api/auth/reauth/password`, and `/api/auth/password/change` to the shared routes. Passwords have 12 to 128 characters. Every credential failure answers 401 `INVALID_CREDENTIALS`.
+- `@flared/server/auth/attempts`: each password route and setup reserves its budget in `auth_attempts` with one conditional insert before any hash runs. Sign-in allows 10 attempts per source in 15 minutes and 100 in total per hour; reauthentication and password change 5 per user in 15 minutes; setup 5 per source in 15 minutes and 30 in total per hour.
+- Reauthentication takes only the password; the username comes from the session, so it cannot switch users. A password change needs a fresh sign-in and the current password, checked before the new one is hashed. It then ends every session of the owner and signs in again.
+- `IdentityRule`: every session reader passes its edition's rule. The cloud needs a verified email. Standalone needs a username with a password account.
+- `@flared/server/setup`: `POST /api/setup` takes the `SETUP_SECRET`, a username, a password, and a workspace name. It needs the exact app origin, JSON of at most 4 KB, the setup budget, and a secret of at least 32 bytes that differs from the auth secret; it compares the secret in constant time. The first proven request claims the installation in one batch with every value fixed. A retry with the secret, the same username, and the same password resumes the claim; anything else answers 409. The steps create the owner, the workspace, the app host as the default platform domain, and the policy projections; each step advances in the same batch as its records. Activation clears the stored hash. Setup never opens again after activation or deletion, whether or not the secret remains configured.
+- `fixedTenantId` on `createApi`, `createRedirectHandler`, and `createClickConsumer` refuses any other tenant in a single-workspace installation, in addition to the database's one-tenant guard.
+
+Identity migration `0011_standalone.sql` adds the username columns, a unique password account per user, `installation_setup`, `auth_attempts`, `passkey_attempts`, `job_runs`, and `owner_audit`. The shared Drizzle schema writes the username columns on every new user, so apply this migration before running code that includes it. `tests/standalone.test.ts` covers setup claims and resumes under concurrency, the closed states, username sign-in outside any proof scope, the budgets, reauthentication, password change with a failed later step, the identity rules, OAuth consent, and the single-workspace binding.
 
 ## License
 

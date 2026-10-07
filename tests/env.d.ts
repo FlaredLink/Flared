@@ -45,6 +45,16 @@ declare namespace Cloudflare {
 		SHARED_IDENTITY: D1Database;
 		ACCOUNT_IDENTITY: D1Database;
 		JOBS_IDENTITY: D1Database;
+		OWNER_IDENTITY: D1Database;
+		OWNER_ROUTING: D1Database;
+		OWNER_ANALYTICS: D1Database;
+		SETUP_RACE_IDENTITY: D1Database;
+		SETUP_RESUME_IDENTITY: D1Database;
+		SETUP_MULTI_IDENTITY: D1Database;
+		SETUP_CLOSED_IDENTITY: D1Database;
+		SETUP_ROUTING: D1Database;
+		SETUP_ANALYTICS: D1Database;
+		SETUP_BROKEN: D1Database;
 		IDENTITY_MIGRATIONS: import('cloudflare:test').D1Migration[];
 		ROUTING_MIGRATIONS: import('cloudflare:test').D1Migration[];
 		ANALYTICS_MIGRATIONS: import('cloudflare:test').D1Migration[];

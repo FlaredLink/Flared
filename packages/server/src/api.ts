@@ -106,6 +106,9 @@ export interface ApiDependencies {
 	domains?: DomainSettings;
 	now?: () => number;
 	creationsPerMinute?: number;
+	// A single-workspace installation's tenant. Any other tenant is refused, in addition to the
+	// database's one-tenant guard.
+	fixedTenantId?: string;
 }
 
 // Reads "Authorization: Bearer <token>" only. Applications that accept tokens use this as
@@ -249,7 +252,10 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			(tenant.status !== 'active' || tenant.tenantId !== principal.tenantId)
 		)
 			throw new ApiError('UNAUTHENTICATED', 'Sign in to continue.');
-		if (tenant.status === 'none')
+		if (
+			tenant.status === 'none' ||
+			(dependencies.fixedTenantId !== undefined && tenant.tenantId !== dependencies.fixedTenantId)
+		)
 			throw new ApiError('NO_WORKSPACE', 'Your account has no workspace.');
 		if (tenant.status === 'pending')
 			throw new ApiError(

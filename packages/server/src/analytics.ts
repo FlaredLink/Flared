@@ -56,6 +56,8 @@ export interface ClickConsumerDependencies {
 	now?: () => number;
 	// Delay before a retry when the shard does not hold the tenant's policy yet.
 	policyRetryDelaySeconds?: number;
+	// A single-workspace installation's tenant. An event of any other tenant is dropped.
+	fixedTenantId?: string;
 }
 
 export type ConsumeResult = 'admitted' | 'skipped' | 'duplicate' | 'dropped' | 'retry';
@@ -81,6 +83,8 @@ export function createClickConsumer(dependencies: ClickConsumerDependencies) {
 		if (!event) return drop(message, 'invalid');
 		// Synthetic checks arrive with their own plan; until then a test event is never counted.
 		if (event.kind !== 'production') return drop(message, 'unsupported_kind');
+		if (dependencies.fixedTenantId !== undefined && event.tenantId !== dependencies.fixedTenantId)
+			return drop(message, 'foreign_tenant');
 		if (event.occurredAt < time - clickEventMaxAgeMs) return drop(message, 'expired');
 		if (event.occurredAt > time + clickEventMaxSkewMs) return drop(message, 'future');
 		try {

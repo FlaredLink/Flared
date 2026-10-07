@@ -93,9 +93,14 @@ export async function listMemberships(db: D1Database, userId: string): Promise<M
 // One batch: a database guard (missing installation, single mode, one workspace per user)
 // rejects the whole tenant, so no partial tenant is left behind.
 export async function createTenant(db: D1Database, tenant: NewTenant): Promise<void> {
+	await db.batch(tenantStatements(db, tenant));
+}
+
+// The statements of createTenant, for a caller that commits them with its own records.
+export function tenantStatements(db: D1Database, tenant: NewTenant): D1PreparedStatement[] {
 	checkLimits(tenant.limits);
 	const { limits, now } = tenant;
-	await db.batch([
+	return [
 		db
 			.prepare('INSERT INTO tenants (id, name, analytics_shard_id, created_at) VALUES (?, ?, ?, ?)')
 			.bind(tenant.id, tenant.name, tenant.analyticsShardId, now),
@@ -116,7 +121,7 @@ export async function createTenant(db: D1Database, tenant: NewTenant): Promise<v
 				limits.domainLimit,
 				now
 			)
-	]);
+	];
 }
 
 // Replaces the limits and takes the next revision in one statement, so concurrent updates each
