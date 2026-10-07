@@ -9,6 +9,6 @@
 		"types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers/types", "node"],
 		"lib": ["ES2022"]
 	},
-	"include": ["**/*.ts", "../tests/**/*.ts"],
+	"include": ["**/*.ts", "../tests/**/*.ts", "../scripts/**/*.ts"],
 	"exclude": ["../tests/vitest.config.ts"]
 }

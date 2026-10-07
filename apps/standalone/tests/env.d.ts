@@ -4,6 +4,9 @@ declare namespace Cloudflare {
 		IDENTITY: D1Database;
 		ROUTING: D1Database;
 		ANALYTICS_1: D1Database;
+		RECOVERY_IDENTITY: D1Database;
+		RECOVERY_ROUTING: D1Database;
+		RECOVERY_ANALYTICS: D1Database;
 		IDENTITY_MIGRATIONS: import('cloudflare:test').D1Migration[];
 		ROUTING_MIGRATIONS: import('cloudflare:test').D1Migration[];
 		ANALYTICS_MIGRATIONS: import('cloudflare:test').D1Migration[];
