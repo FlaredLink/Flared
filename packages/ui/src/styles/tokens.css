@@ -1,31 +1,32 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
-/* Flared design roles over the Kumo semantic tokens. */
+/* Flared design roles over the Kumo semantic tokens. Each colour is light-dark(light, dark):
+ * the page follows the system setting, and data-mode on <html> holds a viewer's own choice. */
 :root {
-	color-scheme: light;
-	--color-paper: #ffffff;
-	--color-ink: oklch(25% 0 0);
-	--color-strong: oklch(19% 0 0);
-	--color-muted: oklch(45% 0 0);
-	--color-surface: #ffffff;
-	--color-rule: oklch(90% 0 0);
-	--color-input: #ffffff;
-	--color-disabled: oklch(94% 0 0);
+	color-scheme: light dark;
+	--color-paper: light-dark(#ffffff, oklch(15% 0 0));
+	--color-ink: light-dark(oklch(25% 0 0), oklch(91% 0 0));
+	--color-strong: light-dark(oklch(19% 0 0), oklch(97% 0 0));
+	--color-muted: light-dark(oklch(45% 0 0), oklch(71% 0 0));
+	--color-surface: light-dark(#ffffff, oklch(18.5% 0 0));
+	--color-rule: light-dark(oklch(90% 0 0), oklch(29% 0 0));
+	--color-input: light-dark(#ffffff, oklch(18.5% 0 0));
+	--color-disabled: light-dark(oklch(94% 0 0), oklch(27% 0 0));
 	--color-accent: var(--text-color-kumo-brand);
 	--color-button-primary: #c94b00;
 	--color-button-primary-hover: #b84400;
 	--color-on-primary: #ffffff;
-	--color-accent-ink: oklch(53% 0.17 42);
-	--color-accent-edge: oklch(89% 0.077 63);
+	--color-accent-ink: light-dark(oklch(53% 0.17 42), oklch(76% 0.14 55));
+	--color-accent-edge: light-dark(oklch(89% 0.077 63), oklch(42% 0.1 50));
 	--color-focus: var(--color-kumo-brand);
 	--color-positive: var(--text-color-kumo-success);
-	--color-code: oklch(22% 0 0);
+	--color-code: light-dark(oklch(22% 0 0), oklch(11% 0 0));
 	--color-code-text: oklch(95% 0 0);
 	--color-code-muted: oklch(74% 0 0);
-	--color-shadow: oklch(22% 0 0 / 0.09);
-	--color-shadow-soft: oklch(22% 0 0 / 0.035);
+	--color-shadow: light-dark(oklch(22% 0 0 / 0.09), oklch(0% 0 0 / 0.5));
+	--color-shadow-soft: light-dark(oklch(22% 0 0 / 0.035), oklch(0% 0 0 / 0.3));
 	--color-clear: transparent;
-	--color-accent-soft: oklch(97% 0.022 45);
-	--color-chart-fill: oklch(88% 0.08 50 / 0.35);
+	--color-accent-soft: light-dark(oklch(97% 0.022 45), oklch(25% 0.045 45));
+	--color-chart-fill: light-dark(oklch(88% 0.08 50 / 0.35), oklch(62% 0.15 50 / 0.25));
 	--color-code-success: oklch(77% 0.17 130);
 	--color-terminal-red: oklch(68% 0.2 25);
 	--color-terminal-yellow: oklch(85% 0.17 90);
@@ -55,4 +56,10 @@
 	--dur-fast: 140ms;
 	--shadow-card: 0 8px 28px var(--color-shadow-soft);
 	--shadow-float: 0 12px 35px var(--color-shadow), 0 1px 4px var(--color-shadow-soft);
+}
+:root[data-mode='light'] {
+	color-scheme: light;
+}
+:root[data-mode='dark'] {
+	color-scheme: dark;
 }

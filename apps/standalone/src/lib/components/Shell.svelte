@@ -6,6 +6,7 @@
 	import { Collapsible } from 'bits-ui';
 	import type { Usage } from '@flared/contracts/analytics';
 	import UsageBanner from '@flared/ui/usage/UsageBanner.svelte';
+	import ThemeControl from '@flared/ui/theme/ThemeControl.svelte';
 	import Brand from './Brand.svelte';
 	import Icon, { type IconName } from './Icon.svelte';
 	import SourceFooter from './SourceFooter.svelte';
@@ -62,6 +63,7 @@
 			><Icon name="signOut" size={18} />{pending ? 'Signing out…' : 'Sign out'}</button
 		>
 		{#if error}<p class="app-error" role="alert">{error}</p>{/if}
+		<div class="app-theme"><ThemeControl /></div>
 	</div>
 {/snippet}
 
@@ -145,6 +147,9 @@
 	.app-account {
 		border-top: var(--rule);
 		padding: 1rem 0.75rem 0;
+	}
+	.app-theme {
+		margin-top: 0.75rem;
 	}
 	.app-email {
 		overflow: hidden;
