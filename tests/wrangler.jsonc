@@ -212,6 +212,21 @@
 			"binding": "OPERATIONS_ANALYTICS",
 			"database_name": "operations-analytics",
 			"database_id": "00000000-0000-0000-0000-000000000051"
+		},
+		{
+			"binding": "SHARED_IDENTITY",
+			"database_name": "shared-identity",
+			"database_id": "00000000-0000-0000-0000-000000000052"
+		},
+		{
+			"binding": "ACCOUNT_IDENTITY",
+			"database_name": "account-identity",
+			"database_id": "00000000-0000-0000-0000-000000000053"
+		},
+		{
+			"binding": "JOBS_IDENTITY",
+			"database_name": "jobs-identity",
+			"database_id": "00000000-0000-0000-0000-000000000054"
 		}
 	]
 }

@@ -24,7 +24,7 @@ Tests run locally in Cloudflare's workerd runtime with real D1 storage. They req
 - `@flared/server`: absolute session defaults, safe principal extraction, structured Cloudflare email delivery, trusted service forwarding, the `/v1` links and analytics API, the short-link redirect handler, the click Queue consumer (`@flared/server/analytics`) and the analytics shard map (`@flared/server/shards`).
 - `@flared/client`: the typed `/v1` client for the CLI and the MCP endpoint. It takes an API URL and a token, checks each response's shape, and throws `FlaredApiError` with the API error code. It retries only reads and keyed link creation, after 429, 503, or a network error.
 - `@flaredlink/cli` (`packages/cli`): the published `flared` command for Node.js 20 or later. `bun run build:cli` bundles it into `packages/cli/dist/flared.js`; `bun run test:cli` runs its tests. See its [README](packages/cli/README.md).
-- `@flared/ui`: the link create form and link list, the link analytics view, the usage warning banner and usage meters, the API token list (`@flared/ui/tokens/TokenList.svelte`), the passkey list, and the browser passkey ceremonies (`@flared/ui/passkeys/client`) against the shared `/api/auth/passkey/*` routes.
+- `@flared/ui`: the link create form and link list, the link analytics view, the usage warning banner and usage meters, the API token list (`@flared/ui/tokens/TokenList.svelte`), the passkey list, and the browser passkey ceremonies (`@flared/ui/passkeys/client`) against the shared `/api/auth/passkey/*` routes. `@flared/ui/styles` holds the Kumo tokens (MIT), the Flared design roles, and element defaults; each app imports it once.
 
 Import declared subpath exports. Apply `packages/data/migrations/identity` to the identity database, `packages/data/migrations/routing` to the routing database, and `packages/data/migrations/analytics` to every analytics shard through a migration runner; never modify a released migration.
 
@@ -110,9 +110,22 @@ Callers must:
 5. Expose only intended sign-in server methods through validated routes. Do not mount the generic library HTTP handler or expose password reset, email change, other OTP types or unscoped proof operations.
 6. Clean expired verification rows, including consumed tombstones, in bounded batches using an expiry predicate.
 
+## Edition composition
+
+Each edition composes these shared modules in its own Worker and keeps only its sign-in method and policy.
+
+- `@flared/server/auth/routes`: `createAuthRoutes` serves `/api/auth/session`, sign-out, passkey sign-in, passkey registration, listing, renaming, deletion, and passkey reauthentication. The edition passes its sign-in routes and their methods, its auth instance, the app origin, and the table of passkey attempts (`@flared/server/auth/limits`). Every other path answers 404. Every POST needs the exact app `Origin`, JSON, and at most 4 KB.
+- `@flared/server/web/auth` and `@flared/server/web/api`: the application side. `forwardAuthRoute` forwards a browser request with a fixed set of headers and the trusted client address; `getAuthState`, `getPasskeys`, and the API readers serve server-rendered pages.
+- `@flared/server/api/compose`: `apiAuthenticator` reads only the session cookie for the app's same-origin API, and only `Authorization: Bearer` for the token API.
+- `@flared/server/oauth/handler`: the authorization server routes, the MCP endpoint, the protected resource metadata, the MCP server card, and the AI catalog, with the MCP resource URL from deployment configuration.
+- `@flared/server/account`: `POST /api/account/delete`. The edition names the confirmation value and may refuse a deletion for its own reasons.
+- `@flared/server/jobs`: `createJobLedger` records the outcome of each scheduled job in the edition's table.
+
+A table name that an edition passes goes into SQL text, so it must match `^[a-z][a-z0-9_]{0,62}$`. `tests/shared-routes.test.ts` covers these modules under workerd and D1.
+
 ## Passkeys
 
-`createPasskeyPlugin(origin, rpName)` pins `@better-auth/passkey` 1.7.7 to the configured app origin and its host as the relying party. It requires a discoverable credential and user verification. The library itself skips the user-verification check, so the plugin's hooks refuse a ceremony without it before anything is stored. Registration needs a session created in the last 10 minutes (`freshAge`). Library deletion needs only a session, so the composing application must check freshness before it deletes a passkey. `confirmWithPasskey` in `@flared/ui/passkeys/client` posts to `/api/auth/reauth/passkey/options` and `/verify`. The library signs in whoever owns the passkey, so an edition that serves those routes must refuse a passkey that does not belong to the signed-in user before verification. Identity migration `0003_passkey.sql` adds the `passkey` table; deleting a user deletes their passkeys.
+`createPasskeyPlugin(origin, rpName)` pins `@better-auth/passkey` 1.7.7 to the configured app origin and its host as the relying party. It requires a discoverable credential and user verification. The library itself skips the user-verification check, so the plugin's hooks refuse a ceremony without it before anything is stored. Registration needs a session created in the last 10 minutes (`freshAge`). Library deletion needs only a session, so the composing application must check freshness before it deletes a passkey. `confirmWithPasskey` in `@flared/ui/passkeys/client` posts to `/api/auth/reauth/passkey/options` and `/verify`. The library signs in whoever owns the passkey, so `createAuthRoutes` refuses a passkey that does not belong to the signed-in user before verification. Identity migration `0003_passkey.sql` adds the `passkey` table; deleting a user deletes their passkeys.
 
 `tests/passkey-probe.test.ts` proves the plugin under workerd and D1 with a software authenticator: single-use challenges under concurrent verification, replay refusal, wrong origin and relying party, missing user verification, ownership on rename and delete, immediate effect of deletion, and the seven-day session. The library answers a registration with a wrong origin or relying party with 500, not 400.
 
