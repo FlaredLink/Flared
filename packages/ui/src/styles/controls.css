@@ -1,0 +1,102 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Shared app controls: page container, skip link, buttons, icon buttons, and eyebrow text. */
+.container {
+	width: min(100% - 2.5rem, 1184px);
+	margin-inline: auto;
+}
+.skip-link {
+	position: fixed;
+	top: 0.5rem;
+	left: 1rem;
+	z-index: 100;
+	padding: 0.75rem;
+	color: var(--color-ink);
+	background: var(--color-paper);
+	border: var(--rule);
+	transform: translateY(-200%);
+}
+.skip-link:focus {
+	transform: translateY(0);
+}
+.button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.65rem;
+	border: 1px solid var(--color-clear);
+	border-radius: var(--radius-sm);
+	min-height: 46px;
+	padding: 0.75rem 1.15rem;
+	font-size: 0.8125rem;
+	font-weight: 620;
+	line-height: 1.35;
+	white-space: nowrap;
+	transition:
+		transform var(--dur-fast) var(--ease-out),
+		opacity var(--dur-fast) var(--ease-out);
+}
+.button.primary {
+	color: var(--color-on-primary);
+	background: var(--color-button-primary);
+	border-color: var(--color-button-primary);
+	box-shadow: 0 3px 8px var(--color-shadow-soft);
+}
+.button.secondary {
+	color: var(--color-ink);
+	background: var(--color-paper);
+	border-color: var(--color-rule);
+	box-shadow: 0 1px 2px var(--color-shadow-soft);
+}
+.button:hover {
+	transform: translateY(-1px);
+	opacity: 0.88;
+}
+.button.primary:hover {
+	background: var(--color-button-primary-hover);
+	border-color: var(--color-button-primary-hover);
+	opacity: 1;
+}
+/* Fading the brand colour left white text unreadable; disabled buttons use solid neutral colours. */
+.button:disabled,
+.button:disabled:hover {
+	transform: none;
+	opacity: 1;
+	color: var(--color-muted);
+	background: var(--color-disabled);
+	border-color: var(--color-disabled);
+	box-shadow: none;
+}
+.button:active {
+	transform: translateY(1px);
+}
+.button.small-button {
+	min-height: 40px;
+	padding: 0.65rem 1rem;
+	font-size: 0.75rem;
+}
+.button.wide {
+	width: 100%;
+}
+.button-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.75rem;
+	align-items: center;
+}
+.icon-button {
+	display: grid;
+	place-items: center;
+	width: 44px;
+	height: 44px;
+	background: var(--color-paper);
+	border: var(--rule);
+	border-radius: var(--radius-sm);
+}
+.eyebrow {
+	font-size: 0.64rem;
+	text-transform: uppercase;
+	letter-spacing: 0.15em;
+	font-weight: 650;
+	color: var(--color-accent-ink);
+	margin-bottom: 1.2rem;
+}

@@ -6,7 +6,7 @@
 - `tokens.css`: Flared design roles over those tokens.
 - `base.css`: element defaults.
 
-Each app imports `@flared/ui/styles` once and adds its own shell, navigation, and pages.
+Each app imports `@flared/ui/styles` once and adds its own shell, navigation, and pages. `@flared/ui/styles/controls` adds the shared page container, skip link, buttons, icon buttons, and eyebrow text.
 
 Kumo source: https://github.com/cloudflare/kumo/blob/8a8535b0d5fc9d90c37b12aad2b92fe3d092f008/packages/kumo/src/styles/theme-kumo.css
 

@@ -7,13 +7,23 @@
 		confirmation: string;
 		// Whether the last sign-in is recent enough for the request.
 		fresh: boolean;
+		// What happens after the deletion, such as signing up again in the cloud.
+		afterDeletion: string;
 		// Why deletion cannot start now, with a link to fix it; null when it can.
 		blocked: { message: string; href: string; action: string } | null;
 		onReauthRequired: () => void;
 		onDeleted: () => void | Promise<void>;
 	}
 
-	let { endpoint, confirmation, fresh, blocked, onReauthRequired, onDeleted }: Props = $props();
+	let {
+		endpoint,
+		confirmation,
+		fresh,
+		afterDeletion,
+		blocked,
+		onReauthRequired,
+		onDeleted
+	}: Props = $props();
 
 	let open = $state(false);
 	let typed = $state('');
@@ -71,7 +81,7 @@
 			<ul>
 				<li>Your short links stop redirecting within a minute.</li>
 				<li>Their addresses stay reserved, so no one else can use them.</li>
-				<li>You can sign up again later with the same email, into a new, empty account.</li>
+				<li>{afterDeletion}</li>
 			</ul>
 			<label for="delete-confirmation">Type <strong>{confirmation}</strong> to confirm</label>
 			<input
