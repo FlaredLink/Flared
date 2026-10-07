@@ -45,7 +45,7 @@ export const load: LayoutServerLoad = async ({ parent, platform, request, url })
 		? await getAuthState(service, request.headers, url.origin)
 		: { status: 'unavailable' };
 	if (auth.status !== 'authenticated') return { auth, usage: null, workspaceName: null };
-	// Usage feeds the limit banner and the name the sidebar tile on every app page.
+	// On every app page, usage feeds the limit banner and the name feeds the sidebar tile.
 	const [usage, workspaceName] = await Promise.all([
 		loadUsage(platform, request.headers),
 		loadWorkspaceName(platform, request.headers)
