@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The SQL of the operator password reset. Wrangler runs a file without bound parameters, so
 // every value is checked against a strict pattern before it enters the text.
+import { passwordHashPattern } from '@flared/server/auth/password';
+
 export const userIdPattern =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-// Better Auth's scrypt format: a 16-byte salt and a 64-byte key, both hex.
-export const passwordHashPattern = /^[0-9a-f]{32}:[0-9a-f]{128}$/;
 
 // Exactly one owner with exactly one password account, or the command stops.
 export const ownerQuery = `SELECT u.id AS id, u.username AS username,

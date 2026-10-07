@@ -4,11 +4,11 @@
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { hashPassword } from 'better-auth/crypto';
+import { hashPassword, passwordHashPattern } from '@flared/server/auth/password';
 import { readSetupState } from '@flared/data/setup';
 import { createOwnerAuthRoutes } from '@flared/server/auth/owner';
 import { handleSetup } from '@flared/server/setup';
-import { passwordHashPattern, resetPasswordSql } from '../scripts/reset-sql';
+import { resetPasswordSql } from '../scripts/reset-sql';
 
 const origin = 'https://flared.example.workers.dev';
 const config = {
@@ -76,7 +76,7 @@ describe('owner password reset', () => {
 	it('builds SQL only from checked values', () => {
 		const valid = {
 			userId,
-			passwordHash: `${'a'.repeat(32)}:${'b'.repeat(128)}`,
+			passwordHash: `pbkdf2-sha256$100000$${'a'.repeat(32)}$${'b'.repeat(64)}`,
 			auditId: crypto.randomUUID(),
 			now: 1
 		};

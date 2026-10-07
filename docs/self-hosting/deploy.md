@@ -4,7 +4,7 @@ This guide deploys one standalone Flared installation: one owner, one workspace,
 
 ## Before you start
 
-- A Cloudflare account on **Workers Paid** (US$5 a month). The password hash runs as JavaScript in the Worker, and one sign-in needs more CPU time than the Free plan's 10 ms limit allows.
+- A Cloudflare account on **Workers Paid** (US$5 a month).
 - A GitHub or GitLab account. Deploy on Cloudflare copies this repository into it.
 - Two random secrets. Generate each one with `openssl rand -base64 48`. Keep them different.
 

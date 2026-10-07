@@ -15,6 +15,7 @@ import { reserveAttempt, type AttemptKind } from './attempts';
 import { keyedHash } from './limits';
 import { createSessionOptions } from './options';
 import { createPasskeyPlugin } from './passkey';
+import { hashPassword, verifyPassword } from './password';
 import {
 	authenticated,
 	authFailure,
@@ -55,7 +56,12 @@ export async function createOwnerAuth(db: D1Database, config: OwnerAuthConfig) {
 		verification: { disableCleanup: true },
 		logger: { disabled: true },
 		// Email sign-up, sign-in, and reset stay off; the username plugin signs in on its own.
-		emailAndPassword: { enabled: false, minPasswordLength, maxPasswordLength },
+		emailAndPassword: {
+			enabled: false,
+			minPasswordLength,
+			maxPasswordLength,
+			password: { hash: hashPassword, verify: verifyPassword }
+		},
 		// This fixed trusted plugin list is part of the proof-guard contract.
 		plugins: [username(), createPasskeyPlugin(config.origin, 'Flared')]
 	});

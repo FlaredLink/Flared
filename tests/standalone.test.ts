@@ -16,6 +16,11 @@ import {
 	ownerEmail,
 	type OwnerAuth
 } from '../packages/server/src/auth/owner';
+import {
+	hashPassword,
+	passwordHashPattern,
+	verifyPassword
+} from '../packages/server/src/auth/password';
 import { readPrincipal } from '../packages/server/src/auth/session';
 import { createOAuthRoutes } from '../packages/server/src/oauth/routes';
 import { createRedirectHandler } from '../packages/server/src/redirect';
@@ -417,6 +422,30 @@ describe('owner sign-in', () => {
 			(await call(new Jar(), '/api/auth/sign-in/password', { username: 'owner.one' })).status
 		).toBe(400);
 		expect(await count(db(), 'SELECT COUNT(*) AS n FROM verification')).toBe(0);
+	});
+
+	it('stores a salted PBKDF2 hash and matches no other stored form', async () => {
+		const stored = await db()
+			.prepare("SELECT password FROM account WHERE userId = ? AND providerId = 'credential'")
+			.bind(userId)
+			.first<{ password: string }>();
+		const hash = stored?.password ?? '';
+		expect(hash).toMatch(passwordHashPattern);
+		expect(await verifyPassword({ hash, password })).toBe(true);
+		expect(await verifyPassword({ hash, password: `${password} ` })).toBe(false);
+		const again = await hashPassword(password);
+		expect(again).not.toBe(hash);
+		expect(await verifyPassword({ hash: again, password })).toBe(true);
+		const key = hash.slice(-64);
+		const flipped = `${key[0] === '0' ? '1' : '0'}${key.slice(1)}`;
+		for (const other of [
+			`${hash.slice(0, -64)}${flipped}`,
+			hash.replace('$100000$', '$1000$'),
+			// Better Auth's scrypt form.
+			`${'0'.repeat(32)}:${'0'.repeat(128)}`,
+			''
+		])
+			expect(await verifyPassword({ hash: other, password }), other).toBe(false);
 	});
 
 	it('reserves the sign-in budget before hashing, also under concurrency', async () => {

@@ -8,8 +8,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
-import { hashPassword } from 'better-auth/crypto';
-import { ownerQuery, passwordHashPattern, resetPasswordSql, userIdPattern } from './reset-sql';
+import { hashPassword, passwordHashPattern } from '@flared/server/auth/password';
+import { ownerQuery, resetPasswordSql, userIdPattern } from './reset-sql';
 
 const target = process.argv.includes('--local') ? '--local' : '--remote';
 
