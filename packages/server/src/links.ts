@@ -65,7 +65,7 @@ export function toApiLink(row: LinkRow): Link {
 
 // Rejection sampling keeps every character equally likely.
 export function generateSlug(
-	random: (bytes: Uint8Array) => void = (b) => crypto.getRandomValues(b)
+	random: (bytes: Uint8Array<ArrayBuffer>) => void = (b) => crypto.getRandomValues(b)
 ): string {
 	let slug = '';
 	const limit = 256 - (256 % slugAlphabet.length);
