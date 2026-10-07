@@ -10,6 +10,7 @@ import type { Link, LinkPage, ListedLink } from '@flared/contracts/links';
 import { isApiTokenPage, type ApiTokenPage } from '@flared/contracts/tokens';
 import { isConnectedAppPage, type ConnectedAppPage } from '@flared/contracts/oauth';
 import { isDomainPage, type DomainPage } from '@flared/contracts/domains';
+import { isWorkspace, type Workspace } from '@flared/contracts/workspace';
 import type { AuthService } from './forward';
 
 // The application side of the product API: typed reads and writes for server-rendered pages.
@@ -228,6 +229,16 @@ export async function fetchUsage(
 	if (!result.ok) return result;
 	const usage = result.body.usage;
 	return isUsage(usage) ? { ok: true, usage } : { ok: false, failure: malformed };
+}
+
+export async function fetchWorkspace(
+	service: ApiService,
+	headers: Headers
+): Promise<{ ok: true; workspace: Workspace } | { ok: false; failure: ApiFailure }> {
+	const result = await getJson(service, headers, '/v1/workspace');
+	if (!result.ok) return result;
+	const workspace = result.body.workspace;
+	return isWorkspace(workspace) ? { ok: true, workspace } : { ok: false, failure: malformed };
 }
 
 export async function fetchTokens(

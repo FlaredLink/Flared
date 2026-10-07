@@ -13,8 +13,17 @@
 	import { postJson } from '$lib/auth-client';
 	import { appRoutes } from '$lib/routes';
 
-	let { account, usage, children }: { account: string; usage: Usage | null; children: Snippet } =
+	let {
+		account,
+		workspaceName,
+		usage,
+		children
+	}: { account: string; workspaceName: string | null; usage: Usage | null; children: Snippet } =
 		$props();
+	// The tile shows the first letter of the name, as the mockups and most workspace switchers do.
+	const workspaceInitial = $derived(
+		workspaceName ? (Array.from(workspaceName)[0] ?? '').toLocaleUpperCase() : ''
+	);
 	// The links and domains pages leave out the domain warning; the domain list shows its own.
 	// Settings shows the same usage as meters.
 	const path = $derived(page.url.pathname);
@@ -50,13 +59,24 @@
 </script>
 
 {#snippet menu()}
-	<nav class="app-nav" aria-label="App navigation">
-		{#each nav as item}<a
-				href={item.href}
-				aria-current={page.url.pathname === item.href ? 'page' : undefined}
-				onclick={() => (open = false)}><Icon name={item.icon} size={18} />{item.label}</a
-			>{/each}
-	</nav>
+	<div>
+		{#if workspaceName}<a
+				class="app-workspace"
+				href="{appRoutes.settings}#workspace"
+				title="Workspace settings"
+				onclick={() => (open = false)}
+				><span class="app-workspace-initial" aria-hidden="true">{workspaceInitial}</span><span
+					class="app-workspace-name">{workspaceName}</span
+				></a
+			>{/if}
+		<nav class="app-nav" aria-label="App navigation">
+			{#each nav as item}<a
+					href={item.href}
+					aria-current={page.url.pathname === item.href ? 'page' : undefined}
+					onclick={() => (open = false)}><Icon name={item.icon} size={18} />{item.label}</a
+				>{/each}
+		</nav>
+	</div>
 	<div class="app-account">
 		<p class="app-email" title={account}>{account}</p>
 		<button class="app-sign-out" type="button" disabled={pending} onclick={() => void signOut()}
@@ -121,6 +141,39 @@
 	}
 	:global(.app-sidebar-body.mobile-only) {
 		display: none;
+	}
+	.app-workspace {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		min-height: 44px;
+		margin-bottom: 0.75rem;
+		padding: 0.35rem 0.6rem;
+		border: var(--rule);
+		border-radius: var(--radius-md);
+		color: var(--color-strong);
+		font-size: 0.875rem;
+		font-weight: 600;
+	}
+	.app-workspace:hover {
+		border-color: var(--color-accent-edge);
+	}
+	.app-workspace-initial {
+		display: grid;
+		flex: none;
+		place-items: center;
+		width: 1.75rem;
+		height: 1.75rem;
+		border-radius: var(--radius-sm);
+		background: var(--color-accent-soft);
+		color: var(--color-accent-ink);
+		font-size: 0.8rem;
+		font-weight: 700;
+	}
+	.app-workspace-name {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.app-nav {
 		display: grid;

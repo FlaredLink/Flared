@@ -366,6 +366,59 @@ describe('token API', () => {
 		expect((await call('GET', '/v1/links', bearer(secret))).status).toBe(401);
 	});
 
+	it("renames only the session's own workspace and validates the name", async () => {
+		const read = async (user: string) =>
+			(
+				(await (await call('GET', '/v1/workspace', session(user))).json()) as {
+					workspace: { name: string };
+				}
+			).workspace.name;
+		expect(await read('user-4')).toBe('Workspace');
+		const renamed = await call('PATCH', '/v1/workspace', session('user-4'), {
+			name: '  Launch \t team  '
+		});
+		expect(renamed.status).toBe(200);
+		expect(await read('user-4')).toBe('Launch team');
+		expect(await read('user-5')).toBe('Workspace');
+
+		for (const body of [
+			{ name: '   ' },
+			{ name: 'x'.repeat(61) },
+			{ name: 'bell\u0007' },
+			{ name: 42 },
+			{ name: 'Fine', tenantId: 'tenant-5' }
+		]) {
+			const response = await call('PATCH', '/v1/workspace', session('user-4'), body);
+			expect(response.status).toBe(422);
+			expect(await code(response)).toBe('INVALID_INPUT');
+		}
+		expect(await read('user-4')).toBe('Launch team');
+		expect(await read('user-5')).toBe('Workspace');
+
+		const noOrigin = await call(
+			'PATCH',
+			'/v1/workspace',
+			{ 'x-test-user': 'user-4' },
+			{
+				name: 'Other'
+			}
+		);
+		expect(await code(noOrigin)).toBe('ORIGIN_REJECTED');
+		// user-4 holds the maximum number of tokens, so another full-access token stands in.
+		const token = await issue('user-7', scopePresets.full);
+		for (const method of ['GET', 'PATCH']) {
+			const response = await call(
+				method,
+				'/v1/workspace',
+				bearer(token),
+				method === 'PATCH' ? { name: 'Token' } : undefined
+			);
+			expect(response.status).toBe(403);
+			expect(await code(response)).toBe('INSUFFICIENT_SCOPE');
+		}
+		expect(await read('user-4')).toBe('Launch team');
+	});
+
 	it('answers the 25th-token limit and the request limit with stable codes', async () => {
 		for (let n = 0; n < 25; n += 1) await issue('user-1', ['links:read']).catch(() => undefined);
 		const over = await call('POST', '/v1/tokens', session('user-1'), input);

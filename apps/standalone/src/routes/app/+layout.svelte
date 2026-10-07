@@ -13,7 +13,11 @@
 </script>
 
 {#if data.auth.status === 'authenticated' && !signInPage}
-	<Shell account={data.auth.principal.user.name} usage={data.usage}>{@render children()}</Shell>
+	<Shell
+		account={data.auth.principal.user.name}
+		workspaceName={data.workspaceName}
+		usage={data.usage}>{@render children()}</Shell
+	>
 {:else}
 	<AuthFrame>{@render children()}</AuthFrame>
 {/if}

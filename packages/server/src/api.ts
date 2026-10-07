@@ -31,6 +31,8 @@ import {
 } from '@flared/contracts/tokens';
 import { openApiDocument } from '@flared/contracts/openapi';
 import { parseAddDomain } from '@flared/contracts/domains';
+import { parseRenameWorkspace, type Workspace } from '@flared/contracts/workspace';
+import { readTenantName, renameTenant } from '@flared/data/tenancy';
 import { defaultQrSize, maxQrSize, minQrSize, qrPng, qrSvg } from '@flared/client/qr';
 import type { ConnectedApp, ConnectedAppPage } from '@flared/contracts/oauth';
 import { deleteGrant, listGrants } from '@flared/data/oauth';
@@ -490,6 +492,23 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		return respond({ status: 200, body: JSON.stringify(identity) });
 	});
 
+	// The workspace name, for the dashboard only.
+	app.get('/workspace', async (context) => {
+		sessionOnly(context, 'Rename the workspace from the Flared app.');
+		const name = await readTenantName(identity, context.var.tenantId);
+		if (name === null) throw new ApiError('NOT_FOUND', 'Workspace not found.');
+		const workspace: Workspace = { name };
+		return respond({ status: 200, body: JSON.stringify({ workspace }) });
+	});
+
+	app.patch('/workspace', async (context) => {
+		sessionOnly(context, 'Rename the workspace from the Flared app.');
+		const workspace = parseRenameWorkspace(await readJson(context.req.raw));
+		if (!(await renameTenant(identity, context.var.tenantId, workspace.name)))
+			throw new ApiError('NOT_FOUND', 'Workspace not found.');
+		return respond({ status: 200, body: JSON.stringify({ workspace }) });
+	});
+
 	app.get('/tokens', async (context) => {
 		const principal = sessionOnly(context);
 		const page: ApiTokenPage = {
@@ -574,6 +593,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	app.all('/export/daily-totals', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/export/daily-dimensions', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/me', (context) => methodNotAllowed(context, 'GET'));
+	app.all('/workspace', (context) => methodNotAllowed(context, 'GET, PATCH'));
 	app.all('/tokens', (context) => methodNotAllowed(context, 'GET, POST'));
 	app.all('/tokens/:id', (context) => methodNotAllowed(context, 'DELETE'));
 	app.all('/connected-apps', (context) => methodNotAllowed(context, 'GET'));
@@ -612,10 +632,12 @@ function appHost(clientId: string, uri: string | null): string {
 }
 
 // Tokens cannot list, create, or revoke tokens.
-function sessionOnly(context: ApiContext): Extract<ApiPrincipal, { kind: 'session' }> {
+function sessionOnly(
+	context: ApiContext,
+	message = 'Manage tokens from the Flared app.'
+): Extract<ApiPrincipal, { kind: 'session' }> {
 	const { principal } = context.var;
-	if (principal.kind !== 'session')
-		throw new ApiError('INSUFFICIENT_SCOPE', 'Manage tokens from the Flared app.');
+	if (principal.kind !== 'session') throw new ApiError('INSUFFICIENT_SCOPE', message);
 	return principal;
 }
 

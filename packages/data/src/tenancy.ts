@@ -158,6 +158,27 @@ export async function readTenantShard(db: D1Database, tenantId: string): Promise
 	return row ? text(row.analytics_shard_id, 'shard') : null;
 }
 
+export async function readTenantName(db: D1Database, tenantId: string): Promise<string | null> {
+	const row = await db
+		.prepare('SELECT name FROM tenants WHERE id = ?')
+		.bind(tenantId)
+		.first<{ name: unknown }>();
+	return row ? text(row.name, 'name') : null;
+}
+
+// The caller validates the name. Returns false when the tenant does not exist.
+export async function renameTenant(
+	db: D1Database,
+	tenantId: string,
+	name: string
+): Promise<boolean> {
+	const result = await db
+		.prepare('UPDATE tenants SET name = ? WHERE id = ?')
+		.bind(name, tenantId)
+		.run();
+	return result.meta.changes === 1;
+}
+
 // Null also for a tenant whose deletion has started: no store may receive its policy again.
 export async function readPolicyProjection(
 	db: D1Database,

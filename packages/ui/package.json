@@ -61,6 +61,10 @@
 			"types": "./src/usage/UsageMeters.svelte",
 			"svelte": "./src/usage/UsageMeters.svelte"
 		},
+		"./workspace/WorkspaceName.svelte": {
+			"types": "./src/workspace/WorkspaceName.svelte",
+			"svelte": "./src/workspace/WorkspaceName.svelte"
+		},
 		"./theme/ThemeControl.svelte": {
 			"types": "./src/theme/ThemeControl.svelte",
 			"svelte": "./src/theme/ThemeControl.svelte"

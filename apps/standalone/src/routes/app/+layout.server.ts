@@ -2,7 +2,7 @@
 import { redirect } from '@sveltejs/kit';
 import type { Usage } from '@flared/contracts/analytics';
 import { getAuthState, type AuthState } from '@flared/server/web/auth';
-import { fetchUsage } from '@flared/server/web/api';
+import { fetchUsage, fetchWorkspace } from '@flared/server/web/api';
 import { appRoutes } from '$lib/routes';
 import type { LayoutServerLoad } from './$types';
 
@@ -21,6 +21,21 @@ async function loadUsage(
 	}
 }
 
+async function loadWorkspaceName(
+	platform: App.Platform | undefined,
+	headers: Headers
+): Promise<string | null> {
+	const service = platform?.env.API_SERVICE;
+	if (!service) return null;
+	try {
+		const result = await fetchWorkspace(service, headers);
+		return result.ok ? result.workspace.name : null;
+	} catch {
+		console.error(JSON.stringify({ event: 'workspace_unavailable' }));
+		return null;
+	}
+}
+
 export const load: LayoutServerLoad = async ({ parent, platform, request, url }) => {
 	const { installation } = await parent();
 	if (installation.state === 'unclaimed' || installation.state === 'initializing')
@@ -29,9 +44,11 @@ export const load: LayoutServerLoad = async ({ parent, platform, request, url })
 	const auth: AuthState = service
 		? await getAuthState(service, request.headers, url.origin)
 		: { status: 'unavailable' };
-	// Usage feeds the limit banner on every app page.
-	return {
-		auth,
-		usage: auth.status === 'authenticated' ? await loadUsage(platform, request.headers) : null
-	};
+	if (auth.status !== 'authenticated') return { auth, usage: null, workspaceName: null };
+	// Usage feeds the limit banner and the name the sidebar tile on every app page.
+	const [usage, workspaceName] = await Promise.all([
+		loadUsage(platform, request.headers),
+		loadWorkspaceName(platform, request.headers)
+	]);
+	return { auth, usage, workspaceName };
 };

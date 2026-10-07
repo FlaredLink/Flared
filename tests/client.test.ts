@@ -70,7 +70,9 @@ const sessionOnly = [
 	'POST /tokens',
 	'DELETE /tokens/{id}',
 	'GET /connected-apps',
-	'DELETE /connected-apps/{clientId}'
+	'DELETE /connected-apps/{clientId}',
+	'GET /workspace',
+	'PATCH /workspace'
 ];
 const document = openApiDocument(baseUrl);
 type Operation = { responses: Record<string, { content?: Record<string, { schema: unknown }> }> };

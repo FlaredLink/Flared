@@ -9,6 +9,7 @@
 	import PasskeyList from '@flared/ui/passkeys/PasskeyList.svelte';
 	import TokenList from '@flared/ui/tokens/TokenList.svelte';
 	import UsageMeters from '@flared/ui/usage/UsageMeters.svelte';
+	import WorkspaceName from '@flared/ui/workspace/WorkspaceName.svelte';
 	import {
 		confirmWithPasskey,
 		passkeyErrorMessage,
@@ -201,6 +202,13 @@
 		</form>
 		{#if reauthError}<p class="error" role="alert">{reauthError}</p>{/if}
 	</section>
+	<div class="divider"></div>
+{/if}
+
+{#if data.workspaceName !== null}
+	<div id="workspace" class="anchor">
+		<WorkspaceName apiBase="/api/v1" name={data.workspaceName} onRenamed={invalidateAll} />
+	</div>
 	<div class="divider"></div>
 {/if}
 
