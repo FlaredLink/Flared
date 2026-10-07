@@ -241,7 +241,7 @@
 	}
 	input[aria-invalid='true'],
 	select[aria-invalid='true'] {
-		border-color: var(--color-accent-ink, #b42318);
+		border-color: var(--color-danger, #b42318);
 	}
 	.slug {
 		display: flex;
@@ -273,7 +273,7 @@
 		font-size: 0.8rem;
 	}
 	.error {
-		color: var(--color-accent-ink, #b42318);
+		color: var(--color-danger, #b42318);
 		font-size: 0.85rem;
 	}
 	button {

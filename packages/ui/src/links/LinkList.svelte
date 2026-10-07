@@ -156,8 +156,8 @@
 		font-size: 0.75rem;
 	}
 	.badge.blocked {
-		background: var(--color-accent-soft, #fee4e2);
-		color: var(--color-accent-ink, #b42318);
+		background: var(--color-danger-soft, #fee4e2);
+		color: var(--color-danger, #b42318);
 	}
 	.meta {
 		display: flex;

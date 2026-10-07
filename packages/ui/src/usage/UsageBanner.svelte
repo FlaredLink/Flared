@@ -54,13 +54,14 @@
 		max-width: 44rem;
 		margin-bottom: 1.5rem;
 		padding: 1rem 1.25rem;
-		border: 1px solid var(--color-rule, #d0d5dd);
+		border: 1px solid var(--color-warning, #b54708);
 		border-radius: var(--radius-md, 0.75rem);
-		background: var(--color-surface, #f9fafb);
+		background: var(--color-warning-soft, #fffaeb);
 		color: var(--color-ink, #101828);
 	}
 	.usage-banner.full {
-		border-color: var(--color-accent-ink, #b42318);
+		border-color: var(--color-danger, #b42318);
+		background: var(--color-danger-soft, #fef3f2);
 	}
 	h2 {
 		font-size: 1rem;

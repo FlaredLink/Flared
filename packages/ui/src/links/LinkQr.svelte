@@ -81,7 +81,7 @@
 	}
 	.error {
 		padding: 0.75rem;
-		color: var(--color-accent-ink, #b42318);
+		color: var(--color-danger, #b42318);
 		font-size: 0.8rem;
 		text-align: center;
 	}

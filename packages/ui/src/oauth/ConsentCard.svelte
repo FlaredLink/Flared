@@ -123,13 +123,14 @@
 	}
 	.warning {
 		padding: 0.75rem 0.9rem;
-		border: 1px solid var(--color-accent-ink, #b42318);
+		border: 1px solid var(--color-warning, #b54708);
+		background: var(--color-warning-soft, #fffaeb);
 		border-radius: var(--radius-sm, 6px);
 		color: var(--color-strong, #101828);
 		font-size: 0.85rem;
 	}
 	.error {
-		color: var(--color-accent-ink, #b42318);
+		color: var(--color-danger, #b42318);
 		font-size: 0.85rem;
 	}
 	.actions {

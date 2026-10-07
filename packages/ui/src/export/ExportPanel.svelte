@@ -101,7 +101,7 @@
 		display: none;
 	}
 	.error {
-		color: var(--color-accent-ink, #b42318);
+		color: var(--color-danger, #b42318);
 		font-size: 0.85rem;
 	}
 	.actions {

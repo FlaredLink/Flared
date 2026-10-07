@@ -276,7 +276,7 @@
 		display: none;
 	}
 	.error {
-		color: var(--color-accent-ink, #b42318);
+		color: var(--color-danger, #b42318);
 		font-size: 0.85rem;
 	}
 	.reveal {
@@ -450,8 +450,8 @@
 	button.danger:hover:not(:disabled) {
 		min-height: 40px;
 		padding: 0.4rem 0.8rem;
-		border-color: var(--color-accent-ink, #b42318);
-		background: var(--color-accent-ink, #b42318);
+		border-color: var(--color-button-danger, #b42318);
+		background: var(--color-button-danger, #b42318);
 		font-size: 0.8rem;
 	}
 	button:disabled {

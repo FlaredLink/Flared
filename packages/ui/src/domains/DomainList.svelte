@@ -182,6 +182,13 @@
 			{#each workspaceDomains as domain (domain.id)}
 				<li>
 					<div class="head">
+						<span class="tile" aria-hidden="true"
+							><svg viewBox="0 0 24 24"
+								><circle cx="12" cy="12" r="9" /><path
+									d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3Z"
+								/></svg
+							></span
+						>
 						<span class="name">{domain.hostname}</span>
 						<span class="badge {domain.state}">{stateLabels[domain.state]}</span>
 					</div>
@@ -336,6 +343,13 @@
 			{#each platformDomains as domain (domain.id)}
 				<li>
 					<div class="head">
+						<span class="tile" aria-hidden="true"
+							><svg viewBox="0 0 24 24"
+								><circle cx="12" cy="12" r="9" /><path
+									d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3Z"
+								/></svg
+							></span
+						>
 						<span class="name">{domain.hostname}</span>
 						<span class="badge active">{domain.isDefault ? 'Default' : 'Active'}</span>
 					</div>
@@ -379,7 +393,7 @@
 		display: none;
 	}
 	.error {
-		color: var(--color-accent-ink, #b42318);
+		color: var(--color-danger, #b42318);
 		font-size: 0.85rem;
 	}
 	ul {
@@ -411,22 +425,58 @@
 		font-weight: 650;
 		overflow-wrap: anywhere;
 	}
+	.tile {
+		display: grid;
+		flex: none;
+		place-items: center;
+		width: 2.25rem;
+		height: 2.25rem;
+		border-radius: var(--radius-md, 8px);
+		background: var(--color-tile-teal-soft, #f0fdfa);
+		color: var(--color-tile-teal, #0f766e);
+	}
+	.tile svg {
+		width: 1.25rem;
+		height: 1.25rem;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.6;
+	}
+	/* Each state has a colour and its name, so colour is never the only signal. */
 	.badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
 		padding: 0.1rem 0.55rem;
-		border: 1px solid var(--color-rule, #d0d5dd);
 		border-radius: 999px;
 		background: var(--color-surface, #f9fafb);
-		color: var(--color-ink, #101828);
+		color: var(--color-muted, #667085);
+		box-shadow: inset 0 0 0 1px var(--color-rule, #d0d5dd);
 		font-size: 0.75rem;
 		font-weight: 600;
 	}
+	.badge::before {
+		width: 0.45rem;
+		height: 0.45rem;
+		border-radius: 50%;
+		background: currentColor;
+		content: '';
+	}
 	.badge.active {
-		border-color: var(--color-positive, #067647);
+		background: var(--color-positive-soft, #ecfdf3);
 		color: var(--color-positive, #067647);
+		box-shadow: none;
+	}
+	.badge.pending,
+	.badge.verifying {
+		background: var(--color-warning-soft, #fffaeb);
+		color: var(--color-warning, #b54708);
+		box-shadow: none;
 	}
 	.badge.failed {
-		border-color: var(--color-accent-ink, #b42318);
-		color: var(--color-accent-ink, #b42318);
+		background: var(--color-danger-soft, #fef3f2);
+		color: var(--color-danger, #b42318);
+		box-shadow: none;
 	}
 	table {
 		width: 100%;
@@ -504,7 +554,7 @@
 		outline-offset: -1px;
 	}
 	input[aria-invalid='true'] {
-		border-color: var(--color-accent-ink, #b42318);
+		border-color: var(--color-danger, #b42318);
 	}
 	button {
 		min-height: 44px;
@@ -534,8 +584,8 @@
 	}
 	button.danger,
 	button.danger:hover:not(:disabled) {
-		border-color: var(--color-accent-ink, #b42318);
-		background: var(--color-accent-ink, #b42318);
+		border-color: var(--color-button-danger, #b42318);
+		background: var(--color-button-danger, #b42318);
 		color: var(--color-on-primary, #fff);
 	}
 	button:disabled {

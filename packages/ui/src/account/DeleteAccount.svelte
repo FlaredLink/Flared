@@ -167,7 +167,7 @@
 		outline-offset: -1px;
 	}
 	.error {
-		color: var(--color-accent-ink, #b42318);
+		color: var(--color-danger, #b42318);
 		font-size: 0.85rem;
 	}
 	.actions {
@@ -183,8 +183,8 @@
 		font-weight: 620;
 	}
 	button.danger {
-		border: 1px solid var(--color-accent-ink, #b42318);
-		background: var(--color-accent-ink, #b42318);
+		border: 1px solid var(--color-button-danger, #b42318);
+		background: var(--color-button-danger, #b42318);
 		color: var(--color-on-primary, #fff);
 	}
 	button:disabled {

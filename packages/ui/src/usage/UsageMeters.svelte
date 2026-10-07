@@ -100,21 +100,27 @@
 		margin-top: 0.4rem;
 		overflow: hidden;
 		border-radius: 999px;
-		background: var(--color-surface, #f2f4f7);
-		box-shadow: inset 0 0 0 1px var(--color-rule, #d0d5dd);
+		background: var(--color-disabled, #f2f4f7);
 	}
+	/* Orange in use, amber from 80%, red when full; the count beside it says the same. */
 	.bar span {
 		display: block;
 		height: 100%;
 		border-radius: inherit;
-		background: var(--color-strong, #101828);
+		background: var(--color-button-primary, #c94b00);
 	}
-	.near .bar span,
+	.near .bar span {
+		background: var(--color-warning, #b54708);
+	}
 	.full .bar span {
-		background: var(--color-accent-ink, #b42318);
+		background: var(--color-button-danger, #b42318);
+	}
+	.near .meter-head span:last-child {
+		color: var(--color-warning, #b54708);
+		font-weight: 600;
 	}
 	.full .meter-head span:last-child {
-		color: var(--color-accent-ink, #b42318);
+		color: var(--color-danger, #b42318);
 		font-weight: 600;
 	}
 	.note {

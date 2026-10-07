@@ -19,6 +19,22 @@
 	--color-accent-edge: light-dark(oklch(89% 0.077 63), oklch(42% 0.1 50));
 	--color-focus: var(--color-kumo-brand);
 	--color-positive: var(--text-color-kumo-success);
+	--color-positive-soft: light-dark(oklch(97% 0.03 160), oklch(26% 0.045 165));
+	--color-warning: light-dark(oklch(52% 0.13 62), oklch(80% 0.15 75));
+	--color-warning-soft: light-dark(oklch(97% 0.04 85), oklch(26% 0.05 70));
+	--color-danger: var(--text-color-kumo-danger);
+	--color-danger-soft: light-dark(oklch(97% 0.02 25), oklch(26% 0.06 25));
+	--color-button-danger: light-dark(oklch(50.5% 0.213 27.5), oklch(52% 0.2 27));
+	--color-button-danger-hover: oklch(45% 0.19 27.5);
+	/* Icon tiles: a pale tile and a saturated icon, at least 5:1 in both themes. */
+	--color-tile-teal: light-dark(oklch(50% 0.09 190), oklch(78% 0.1 185));
+	--color-tile-teal-soft: light-dark(oklch(96% 0.025 190), oklch(26% 0.04 190));
+	--color-tile-violet: light-dark(oklch(52% 0.2 295), oklch(78% 0.13 295));
+	--color-tile-violet-soft: light-dark(oklch(96% 0.025 295), oklch(27% 0.05 295));
+	--color-tile-blue: light-dark(oklch(52% 0.18 258), oklch(78% 0.12 255));
+	--color-tile-blue-soft: light-dark(oklch(96% 0.025 255), oklch(26% 0.05 258));
+	--color-tile-charcoal: light-dark(oklch(25% 0 0), oklch(32% 0 0));
+	--color-tile-charcoal-icon: oklch(97% 0 0);
 	--color-code: light-dark(oklch(22% 0 0), oklch(11% 0 0));
 	--color-code-text: oklch(95% 0 0);
 	--color-code-muted: oklch(74% 0 0);
