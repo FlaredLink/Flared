@@ -1,0 +1,58 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Flared design roles over the Kumo semantic tokens. */
+:root {
+	color-scheme: light;
+	--color-paper: #ffffff;
+	--color-ink: oklch(25% 0 0);
+	--color-strong: oklch(19% 0 0);
+	--color-muted: oklch(45% 0 0);
+	--color-surface: #ffffff;
+	--color-rule: oklch(90% 0 0);
+	--color-input: #ffffff;
+	--color-disabled: oklch(94% 0 0);
+	--color-accent: var(--text-color-kumo-brand);
+	--color-button-primary: #c94b00;
+	--color-button-primary-hover: #b84400;
+	--color-on-primary: #ffffff;
+	--color-accent-ink: oklch(53% 0.17 42);
+	--color-accent-edge: oklch(89% 0.077 63);
+	--color-focus: var(--color-kumo-brand);
+	--color-positive: var(--text-color-kumo-success);
+	--color-code: oklch(22% 0 0);
+	--color-code-text: oklch(95% 0 0);
+	--color-code-muted: oklch(74% 0 0);
+	--color-shadow: oklch(22% 0 0 / 0.09);
+	--color-shadow-soft: oklch(22% 0 0 / 0.035);
+	--color-clear: transparent;
+	--color-accent-soft: oklch(97% 0.022 45);
+	--color-chart-fill: oklch(88% 0.08 50 / 0.35);
+	--color-code-success: oklch(77% 0.17 130);
+	--color-terminal-red: oklch(68% 0.2 25);
+	--color-terminal-yellow: oklch(85% 0.17 90);
+	--color-terminal-green: oklch(72% 0.2 145);
+	--font-display: 'Inter Variable', 'Inter', sans-serif;
+	--font-body: 'Inter Variable', 'Inter', sans-serif;
+	--font-wordmark: 'Space Grotesk Variable', 'Inter Variable', sans-serif;
+	--font-mono: 'Geist Mono Variable', ui-monospace, monospace;
+	--font-annotation: 'Bradley Hand', 'Segoe Print', cursive;
+	--space-xs: 0.25rem;
+	--space-sm: 0.5rem;
+	--space-md: 1rem;
+	--space-lg: 1.5rem;
+	--space-xl: 2rem;
+	--space-2xl: 3rem;
+	--space-section: clamp(3.5rem, 6vw, 5.5rem);
+	--text-display: clamp(2.5rem, 3.8vw, 3.55rem);
+	--text-heading: clamp(1.75rem, 3vw, 2.3rem);
+	--radius-sm: 0.375rem;
+	--radius-md: 0.625rem;
+	--radius-lg: 0.875rem;
+	--radius-pill: 999px;
+	--rule: 1px solid var(--color-rule);
+	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+	--ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+	--ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+	--dur-fast: 140ms;
+	--shadow-card: 0 8px 28px var(--color-shadow-soft);
+	--shadow-float: 0 12px 35px var(--color-shadow), 0 1px 4px var(--color-shadow-soft);
+}
