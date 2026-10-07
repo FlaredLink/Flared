@@ -22,7 +22,8 @@
 		"./domains": "./src/domains.ts",
 		"./notices": "./src/notices.ts",
 		"./deletion": "./src/deletion.ts",
-		"./operator": "./src/operator.ts"
+		"./operator": "./src/operator.ts",
+		"./operations": "./src/operations.ts"
 	},
 	"dependencies": {
 		"@better-auth/api-key": "1.7.7",

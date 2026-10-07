@@ -38,6 +38,14 @@ Given a `clicks` sink (a Queue producer), the redirect handler sends one event a
 
 A tenant becomes active when routing and its analytics shard both hold its policy (`projectPolicy`, `retryProjections`). `purgeExpired` removes aggregates past the tenant's retention and receipts after 72 hours. The API adds `GET /v1/links/:id/analytics` (UTC days, clamped to retention), `GET /v1/usage`, and `clicksLast30Days` on listed links.
 
+## Operations
+
+`@flared/server/operations` measures the installation for its operator; each edition sets its own thresholds and screens.
+
+- The click consumer adds its counts for each UTC minute to `ingestion_minutes` on the event's shard (analytics migration `0004_ingestion_minutes.sql`): counted, duplicate, dropped, and retried events, the largest lag from click to count, and the newest click time. The counts are written after the events commit, so a failed write loses counts, never clicks. `readIngestion` sums a window for each shard; `purgeExpired` removes minutes after 14 days. A shard without clicks has no recent minute, which alone does not mean the Queue is stuck.
+- `measureShards` records the size of each bound shard and its workspace count in `analytics_shard_samples` (identity migration `0010_operations.sql`). D1 returns the database size with each query result, so no account credentials are needed. `readShardProjections` projects each shard's size from its growth over a window; the edition chooses the window, the horizon, and the limits. Run it about once an hour.
+- `createDeadLetterConsumer` consumes the click dead-letter queue. It stores the validated event, or only the message ID for an invalid body, in `dead_letters`. `requeueDeadLetter` sends one stored event back to the click Queue; event deduplication keeps a counted click from counting twice, and an event older than 48 hours is not sent. `purgeOperations` removes samples after 90 days and dead letters after 7 days.
+
 ## Export
 
 `GET /v1/export/links` (`links:read`), `GET /v1/export/daily-totals`, and `GET /v1/export/daily-dimensions` (`analytics:read`) return a workspace in pages: every link, active and disabled, and the daily totals and breakdowns within the retention window, in key order. Follow `nextCursor` until it is null. `writeExport` (`@flared/client/export`) writes the pages as one JSON document with the format `flared.export/1`, and `linksCsv` writes the links as CSV. `flared export --out FILE` uses them. No export file is stored on the server.

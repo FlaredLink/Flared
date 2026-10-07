@@ -42,6 +42,7 @@ export interface DimensionRow {
 export const referrerLimit = 50;
 export const receiptLifetimeMs = 72 * 60 * 60 * 1000;
 export const tombstoneLifetimeMs = 90 * 86400000;
+export const ingestionMinuteLifetimeMs = 14 * 86400000;
 
 function count(value: unknown, field: string): number {
 	if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0)
@@ -372,7 +373,95 @@ export async function purgeExpired(
 			.prepare(
 				'DELETE FROM tenant_tombstones WHERE tenant_id IN (SELECT tenant_id FROM tenant_tombstones WHERE deleted_at < ? LIMIT ?)'
 			)
-			.bind(now - tombstoneLifetimeMs, limit)
+			.bind(now - tombstoneLifetimeMs, limit),
+		db
+			.prepare(
+				'DELETE FROM ingestion_minutes WHERE minute IN (SELECT minute FROM ingestion_minutes WHERE minute < ? LIMIT ?)'
+			)
+			.bind(now - ingestionMinuteLifetimeMs, limit)
 	]);
 	return { deleted: results.reduce((sum, result) => sum + (result.meta.changes ?? 0), 0) };
+}
+
+// The click consumer's counts for one UTC minute. minute is the start of the minute in ms.
+export interface IngestionMinute {
+	minute: number;
+	counted: number;
+	duplicates: number;
+	dropped: number;
+	retried: number;
+	maxLagMs: number;
+	lastOccurredAt: number | null;
+}
+
+// Adds a batch's counts to the stored minutes. The counts are for monitoring only: they are
+// written after the events commit, so a failed write loses counts, never clicks.
+export async function recordIngestionMinutes(
+	db: D1Database,
+	minutes: readonly IngestionMinute[]
+): Promise<void> {
+	if (minutes.length === 0) return;
+	await db.batch(
+		minutes.map((row) =>
+			db
+				.prepare(
+					'INSERT INTO ingestion_minutes (minute, counted, duplicates, dropped, retried, max_lag_ms, last_occurred_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(minute) DO UPDATE SET counted = counted + excluded.counted, duplicates = duplicates + excluded.duplicates, dropped = dropped + excluded.dropped, retried = retried + excluded.retried, max_lag_ms = MAX(max_lag_ms, excluded.max_lag_ms), last_occurred_at = COALESCE(MAX(last_occurred_at, excluded.last_occurred_at), last_occurred_at, excluded.last_occurred_at)'
+				)
+				.bind(
+					row.minute,
+					row.counted,
+					row.duplicates,
+					row.dropped,
+					row.retried,
+					row.maxLagMs,
+					row.lastOccurredAt
+				)
+		)
+	);
+}
+
+// Sums from `since` on, and the newest minute in which the shard counted an event. A shard
+// with no clicks has no newest minute; that alone does not mean the Queue is stuck.
+export interface IngestionSummary {
+	since: number;
+	counted: number;
+	duplicates: number;
+	dropped: number;
+	retried: number;
+	maxLagMs: number;
+	lastCountedMinute: number | null;
+	lastOccurredAt: number | null;
+}
+
+function optionalCount(value: unknown, field: string): number | null {
+	return value === null ? null : count(value, field);
+}
+
+export async function readIngestionSummary(
+	db: D1Database,
+	since: number
+): Promise<IngestionSummary> {
+	const [sums, latest] = await db.batch<Record<string, unknown>>([
+		db
+			.prepare(
+				'SELECT COALESCE(SUM(counted), 0) AS counted, COALESCE(SUM(duplicates), 0) AS duplicates, COALESCE(SUM(dropped), 0) AS dropped, COALESCE(SUM(retried), 0) AS retried, COALESCE(MAX(max_lag_ms), 0) AS max_lag_ms FROM ingestion_minutes WHERE minute >= ?'
+			)
+			.bind(since),
+		db.prepare(
+			'SELECT minute, last_occurred_at FROM ingestion_minutes WHERE counted > 0 ORDER BY minute DESC LIMIT 1'
+		)
+	]);
+	const row = sums.results[0];
+	const last = latest.results[0];
+	if (!row) throw new Error('Invalid stored ingestion summary');
+	return {
+		since,
+		counted: count(row.counted, 'counted'),
+		duplicates: count(row.duplicates, 'duplicates'),
+		dropped: count(row.dropped, 'dropped'),
+		retried: count(row.retried, 'retried'),
+		maxLagMs: count(row.max_lag_ms, 'lag'),
+		lastCountedMinute: last ? count(last.minute, 'minute') : null,
+		lastOccurredAt: last ? optionalCount(last.last_occurred_at, 'occurred time') : null
+	};
 }

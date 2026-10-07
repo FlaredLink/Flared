@@ -202,6 +202,16 @@
 			"binding": "OPERATOR_ANALYTICS",
 			"database_name": "operator-analytics",
 			"database_id": "00000000-0000-0000-0000-000000000049"
+		},
+		{
+			"binding": "OPERATIONS_IDENTITY",
+			"database_name": "operations-identity",
+			"database_id": "00000000-0000-0000-0000-000000000050"
+		},
+		{
+			"binding": "OPERATIONS_ANALYTICS",
+			"database_name": "operations-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000051"
 		}
 	]
 }

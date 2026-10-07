@@ -10,6 +10,7 @@ import {
 	utcDay,
 	usageWarnings,
 	utcMonth,
+	type ClickEvent,
 	type DimensionClicks,
 	type LinkAnalytics,
 	type Usage
@@ -29,6 +30,8 @@ import {
 	readLinkClickTotals,
 	readMonthlyUsage,
 	readShardPolicy,
+	recordIngestionMinutes,
+	type IngestionMinute,
 	type ShardPolicy
 } from '@flared/data/analytics';
 import { isTombstoned } from '@flared/data/deletions';
@@ -70,12 +73,14 @@ export function createClickConsumer(dependencies: ClickConsumerDependencies) {
 		return 'dropped';
 	}
 
-	async function consumeOne(message: QueueMessage): Promise<ConsumeResult> {
-		const event = parseClickEvent(message.body);
+	async function consumeOne(
+		message: QueueMessage,
+		event: ClickEvent | null,
+		time: number
+	): Promise<ConsumeResult> {
 		if (!event) return drop(message, 'invalid');
 		// Synthetic checks arrive with their own plan; until then a test event is never counted.
 		if (event.kind !== 'production') return drop(message, 'unsupported_kind');
-		const time = now();
 		if (event.occurredAt < time - clickEventMaxAgeMs) return drop(message, 'expired');
 		if (event.occurredAt > time + clickEventMaxSkewMs) return drop(message, 'future');
 		try {
@@ -112,9 +117,46 @@ export function createClickConsumer(dependencies: ClickConsumerDependencies) {
 		}
 	}
 
+	// Counts each event against the shard it names. An invalid event names no shard and an
+	// unbound shard has nowhere to keep counts, so only the log shows those.
 	return async function consume(batch: QueueBatch): Promise<ConsumeResult[]> {
 		const results: ConsumeResult[] = [];
-		for (const message of batch.messages) results.push(await consumeOne(message));
+		const minutes = new Map<string, Map<number, IngestionMinute>>();
+		for (const message of batch.messages) {
+			const time = now();
+			const event = parseClickEvent(message.body);
+			const result = await consumeOne(message, event, time);
+			results.push(result);
+			if (!event) continue;
+			const minute = Math.floor(time / 60000) * 60000;
+			const shard = minutes.get(event.analyticsShardId) ?? new Map<number, IngestionMinute>();
+			minutes.set(event.analyticsShardId, shard);
+			const row = shard.get(minute) ?? {
+				minute,
+				counted: 0,
+				duplicates: 0,
+				dropped: 0,
+				retried: 0,
+				maxLagMs: 0,
+				lastOccurredAt: null
+			};
+			shard.set(minute, row);
+			if (result === 'admitted' || result === 'skipped') {
+				row.counted += 1;
+				row.maxLagMs = Math.max(row.maxLagMs, time - event.occurredAt);
+				row.lastOccurredAt = Math.max(row.lastOccurredAt ?? 0, event.occurredAt);
+			} else if (result === 'duplicate') row.duplicates += 1;
+			else if (result === 'dropped') row.dropped += 1;
+			else row.retried += 1;
+		}
+		for (const [shardId, shard] of minutes) {
+			try {
+				const db = resolveShard(dependencies.shards, shardId);
+				await recordIngestionMinutes(db, [...shard.values()]);
+			} catch {
+				console.error(JSON.stringify({ event: 'ingestion_stats_failed', shardId }));
+			}
+		}
 		return results;
 	};
 }

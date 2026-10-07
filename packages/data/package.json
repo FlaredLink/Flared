@@ -15,7 +15,8 @@
 		"./oauth": "./src/oauth.ts",
 		"./domains": "./src/domains.ts",
 		"./notices": "./src/notices.ts",
-		"./deletions": "./src/deletions.ts"
+		"./deletions": "./src/deletions.ts",
+		"./operations": "./src/operations.ts"
 	},
 	"dependencies": {
 		"@flared/contracts": "workspace:*",
