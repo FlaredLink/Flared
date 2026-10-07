@@ -51,6 +51,8 @@ export interface DeletionDependencies {
 export type DeletionRequest =
 	| { status: 'started'; tenantId: string }
 	| { status: 'already_deleting'; tenantId: string }
+	// The operator suspended the workspace; it cannot be deleted until it is reinstated.
+	| { status: 'suspended'; tenantId: string }
 	| { status: 'no_workspace' };
 
 // Starts the deletion of the user's workspace. The caller has checked the session, a recent
@@ -64,6 +66,8 @@ export async function requestDeletion(
 	if (tenant.status === 'none') return { status: 'no_workspace' };
 	if (tenant.status === 'deleting')
 		return { status: 'already_deleting', tenantId: tenant.tenantId };
+	if (tenant.status === 'active' && tenant.suspension)
+		return { status: 'suspended', tenantId: tenant.tenantId };
 	const shardId = await readTenantShard(identity, tenant.tenantId);
 	const user = await identity
 		.prepare('SELECT "email", "emailVerified" FROM "user" WHERE "id" = ?')
@@ -79,8 +83,15 @@ export async function requestDeletion(
 		contactEmail: contact,
 		now
 	});
+	if (!created) {
+		// A concurrent request started the deletion, or a suspension landed after the check.
+		const current = await resolveTenant(identity, userId);
+		return current.status === 'deleting'
+			? { status: 'already_deleting', tenantId: tenant.tenantId }
+			: { status: 'suspended', tenantId: tenant.tenantId };
+	}
 	console.log(JSON.stringify({ event: 'deletion_requested', tenantId: tenant.tenantId }));
-	return { status: created ? 'started' : 'already_deleting', tenantId: tenant.tenantId };
+	return { status: 'started', tenantId: tenant.tenantId };
 }
 
 function escape(value: string): string {

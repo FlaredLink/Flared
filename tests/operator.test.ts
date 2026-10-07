@@ -6,8 +6,10 @@
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { createDeletion } from '../packages/data/src/deletions';
 import { createTenant } from '../packages/data/src/tenancy';
 import { createApi, type ApiPrincipal } from '../packages/server/src/api';
+import { requestDeletion } from '../packages/server/src/deletion';
 import {
 	blockLink,
 	reinstateTenant,
@@ -365,6 +367,52 @@ describe('tenant suspension', () => {
 			)
 			.bind(tenantId, userId)
 			.run();
+		expect(
+			await suspendTenant(identity(), stores(), operator, { tenantId, reason: 'spam', now: start })
+		).toEqual({ status: 'not_found' });
+	});
+});
+
+describe('deletion during a suspension', () => {
+	it('refuses to delete a suspended workspace and keeps its credentials', async () => {
+		const { tenantId, userId } = await addWorkspace('frozen');
+		await identity()
+			.prepare(
+				'INSERT INTO "session" (id, expiresAt, token, createdAt, updatedAt, userId) VALUES (?, ?, ?, 0, 0, ?)'
+			)
+			.bind('session-frozen', start + 86400000, 'token-frozen', userId)
+			.run();
+		await suspendTenant(identity(), stores(), operator, {
+			tenantId,
+			reason: 'phishing',
+			now: start
+		});
+		expect(await requestDeletion(identity(), userId, start)).toEqual({
+			status: 'suspended',
+			tenantId
+		});
+		expect(await count(identity(), 'tenant_deletions WHERE tenant_id = ?', tenantId)).toBe(0);
+		expect(await count(identity(), '"session" WHERE "userId" = ?', userId)).toBe(1);
+		// The batch checks again, for a suspension that lands after the first check.
+		expect(
+			await createDeletion(identity(), {
+				tenantId,
+				userId,
+				analyticsShardId: 'analytics-1',
+				contactEmail: null,
+				now: start
+			})
+		).toBe(false);
+		expect(await count(identity(), 'tenant_deletions WHERE tenant_id = ?', tenantId)).toBe(0);
+		expect(await count(identity(), '"session" WHERE "userId" = ?', userId)).toBe(1);
+
+		await reinstateTenant(identity(), stores(), operator, { tenantId, now: start });
+		expect(await requestDeletion(identity(), userId, start)).toEqual({
+			status: 'started',
+			tenantId
+		});
+		expect(await count(identity(), '"session" WHERE "userId" = ?', userId)).toBe(0);
+		// A suspension cannot land on a workspace that is being deleted.
 		expect(
 			await suspendTenant(identity(), stores(), operator, { tenantId, reason: 'spam', now: start })
 		).toEqual({ status: 'not_found' });

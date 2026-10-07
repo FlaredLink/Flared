@@ -61,7 +61,8 @@ const jobColumns =
 	'tenant_id, user_id, analytics_shard_id, contact_email, step, requested_at, routes_stopped_at, attempts';
 
 // One batch: the job, and the end of every credential of the user, so nothing can act for the
-// workspace once the request returns. Returns false when a deletion already exists.
+// workspace once the request returns. Returns false when a deletion already exists or the
+// operator suspended the tenant; a suspended tenant keeps its credentials too.
 export async function createDeletion(
 	db: D1Database,
 	request: {
@@ -73,17 +74,20 @@ export async function createDeletion(
 	}
 ): Promise<boolean> {
 	const { tenantId, userId, now } = request;
+	const hasJob = 'EXISTS (SELECT 1 FROM tenant_deletions WHERE tenant_id = ?)';
 	const [job] = await db.batch([
 		db
 			.prepare(
-				"INSERT INTO tenant_deletions (tenant_id, user_id, analytics_shard_id, contact_email, state, step, requested_at, next_attempt_at) VALUES (?, ?, ?, ?, 'running', 'accepted', ?, ?) ON CONFLICT (tenant_id) DO NOTHING"
+				"INSERT INTO tenant_deletions (tenant_id, user_id, analytics_shard_id, contact_email, state, step, requested_at, next_attempt_at) SELECT ?1, ?2, ?3, ?4, 'running', 'accepted', ?5, ?5 WHERE NOT EXISTS (SELECT 1 FROM tenant_policy WHERE tenant_id = ?1 AND suspended_at IS NOT NULL) ON CONFLICT (tenant_id) DO NOTHING"
 			)
-			.bind(tenantId, userId, request.analyticsShardId, request.contactEmail, now, now),
-		db.prepare('DELETE FROM "session" WHERE "userId" = ?').bind(userId),
-		db.prepare('DELETE FROM "apikey" WHERE "referenceId" = ?').bind(userId),
-		db.prepare('DELETE FROM "oauthAccessToken" WHERE "userId" = ?').bind(userId),
-		db.prepare('DELETE FROM "oauthRefreshToken" WHERE "userId" = ?').bind(userId),
-		db.prepare('DELETE FROM "oauthConsent" WHERE "userId" = ?').bind(userId)
+			.bind(tenantId, userId, request.analyticsShardId, request.contactEmail, now),
+		...[
+			'DELETE FROM "session" WHERE "userId" = ?',
+			'DELETE FROM "apikey" WHERE "referenceId" = ?',
+			'DELETE FROM "oauthAccessToken" WHERE "userId" = ?',
+			'DELETE FROM "oauthRefreshToken" WHERE "userId" = ?',
+			'DELETE FROM "oauthConsent" WHERE "userId" = ?'
+		].map((statement) => db.prepare(`${statement} AND ${hasJob}`).bind(userId, tenantId))
 	]);
 	return job.meta.changes === 1;
 }
