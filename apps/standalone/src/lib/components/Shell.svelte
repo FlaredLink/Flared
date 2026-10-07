@@ -260,7 +260,8 @@
 		:global(.app-sidebar-body.desktop-only) {
 			display: none;
 		}
-		:global(.app-sidebar-body.mobile-only) {
+		/* Bits UI sets hidden on the closed menu; display must not override it. */
+		:global(.app-sidebar-body.mobile-only:not([hidden])) {
 			display: flex;
 			gap: 1rem;
 			padding-inline: 1rem;
