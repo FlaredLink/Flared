@@ -2,7 +2,7 @@
 // Identity-store records of standalone setup (migration 0011). The claim fixes every value
 // when it is created. Each step advances in the same batch as its records, so two requests
 // that resume one claim cannot run a step twice.
-import type { D1Database } from '@cloudflare/workers-types/index.ts';
+import type { D1Database, D1PreparedStatement } from '@cloudflare/workers-types/index.ts';
 import { tenantStatements, type NewTenant } from './tenancy';
 
 // unclaimed: no owner yet. initializing: claimed, steps remain. active: the owner exists.
@@ -38,16 +38,7 @@ function text(value: unknown, field: string): string {
 }
 
 export async function readSetupState(db: D1Database): Promise<SetupState> {
-	const row = await db
-		.prepare(
-			'SELECT i.mode, i.closed_at, s.state FROM (SELECT 1) LEFT JOIN installation i ON i.id = 1 LEFT JOIN installation_setup s ON s.id = 1'
-		)
-		.first<{ mode: unknown; closed_at: unknown; state: unknown }>();
-	if (!row || row.mode === null) return 'unclaimed';
-	if (row.mode !== 'single') return 'misconfigured';
-	if (row.closed_at !== null) return 'closed';
-	if (row.state === 'initializing' || row.state === 'active') return row.state;
-	return 'misconfigured';
+	return (await readInstallationStatus(db)).state;
 }
 
 export async function readSetupClaim(db: D1Database): Promise<SetupClaim | null> {
@@ -181,4 +172,62 @@ export async function activateSetup(db: D1Database, now: number): Promise<boolea
 			.bind(crypto.randomUUID(), now)
 	]);
 	return (await readSetupClaim(db))?.state === 'active';
+}
+
+export interface InstallationStatus {
+	state: SetupState;
+	// The origin of the owner's last password sign-in, once setup is claimed.
+	appOrigin: string | null;
+	fixedTenantId: string | null;
+}
+
+// One read for every request of a standalone Worker.
+export async function readInstallationStatus(db: D1Database): Promise<InstallationStatus> {
+	const row = await db
+		.prepare(
+			'SELECT i.mode, i.closed_at, i.fixed_tenant_id, s.state, s.app_origin FROM (SELECT 1) LEFT JOIN installation i ON i.id = 1 LEFT JOIN installation_setup s ON s.id = 1'
+		)
+		.first<Record<string, unknown>>();
+	const fixedTenantId =
+		typeof row?.fixed_tenant_id === 'string' && row.fixed_tenant_id ? row.fixed_tenant_id : null;
+	const appOrigin = typeof row?.app_origin === 'string' && row.app_origin ? row.app_origin : null;
+	let state: SetupState;
+	if (!row || row.mode === null) state = 'unclaimed';
+	else if (row.mode !== 'single') state = 'misconfigured';
+	else if (row.closed_at !== null) state = 'closed';
+	else if (row.state === 'initializing' || row.state === 'active') state = row.state;
+	else state = 'misconfigured';
+	return { state, appOrigin, fixedTenantId };
+}
+
+// The owner signed in with a password at a new app origin. In one batch, credentials bound to
+// the old origin end: every other session, every OAuth token and consent (the issuer changed),
+// and every passkey (the relying party changed). API tokens stay. Returns whether it moved.
+export async function moveAppOrigin(
+	db: D1Database,
+	keepSessionToken: string,
+	origin: string,
+	now: number
+): Promise<boolean> {
+	const moved =
+		"EXISTS (SELECT 1 FROM installation_setup WHERE id = 1 AND state = 'active' AND app_origin <> ?)";
+	const results = await db.batch([
+		db
+			.prepare(`DELETE FROM "session" WHERE token <> ? AND ${moved}`)
+			.bind(keepSessionToken, origin),
+		...['oauthAccessToken', 'oauthRefreshToken', 'oauthConsent', 'passkey'].map((table) =>
+			db.prepare(`DELETE FROM "${table}" WHERE ${moved}`).bind(origin)
+		),
+		db
+			.prepare(
+				"INSERT INTO owner_audit (id, action, detail, created_at) SELECT ?, 'origin_moved', json_object('from', app_origin, 'to', ?2), ? FROM installation_setup WHERE id = 1 AND state = 'active' AND app_origin <> ?2"
+			)
+			.bind(crypto.randomUUID(), origin, now),
+		db
+			.prepare(
+				"UPDATE installation_setup SET app_origin = ? WHERE id = 1 AND state = 'active' AND app_origin <> ?1"
+			)
+			.bind(origin)
+	]);
+	return results.at(-1)?.meta.changes === 1;
 }

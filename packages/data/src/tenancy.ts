@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Identity-store records for the installation, tenants, owner memberships, and source policy.
-import type { D1Database } from '@cloudflare/workers-types/index.ts';
+import type { D1Database, D1PreparedStatement } from '@cloudflare/workers-types/index.ts';
 import { isBlockReason, type BlockReason } from '@flared/contracts/links';
 
 export type InstallationMode = 'single' | 'multi';

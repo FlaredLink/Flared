@@ -7,7 +7,9 @@ import { betterAuth } from 'better-auth';
 import { username } from 'better-auth/plugins';
 import type { Hono } from 'hono';
 import { createIdentityAdapter } from '@flared/data/identity-adapter';
+import { ensurePlatformDomain } from '@flared/data/domains';
 import { installD1ProofGuards } from '@flared/data/identity-proof-guards';
+import { moveAppOrigin } from '@flared/data/setup';
 import type { AuthMethods } from '../web/auth';
 import { reserveAttempt, type AttemptKind } from './attempts';
 import { keyedHash } from './limits';
@@ -108,17 +110,22 @@ function changeBody(value: unknown): { currentPassword: string; newPassword: str
 
 const invalidCredentials = () => authFailure('INVALID_CREDENTIALS', 401);
 
-// The user ID of a successful sign-in response, or null.
-async function signedInUser(response: Response): Promise<string | null> {
+// The user ID and session token of a successful sign-in response.
+async function signedInSession(
+	response: Response
+): Promise<{ userId: string | null; token: string | null }> {
 	const body: unknown = await response
 		.clone()
 		.json()
 		.catch(() => null);
-	if (typeof body !== 'object' || body === null || !('user' in body)) return null;
-	const user = body.user;
-	return typeof user === 'object' && user !== null && 'id' in user && typeof user.id === 'string'
-		? user.id
-		: null;
+	if (typeof body !== 'object' || body === null) return { userId: null, token: null };
+	const token = 'token' in body && typeof body.token === 'string' ? body.token : null;
+	const user = 'user' in body ? body.user : null;
+	const userId =
+		typeof user === 'object' && user !== null && 'id' in user && typeof user.id === 'string'
+			? user.id
+			: null;
+	return { userId, token };
 }
 
 export interface OwnerRouteOptions {
@@ -126,6 +133,10 @@ export interface OwnerRouteOptions {
 	config: OwnerAuthConfig;
 	// Creates the auth instance on first use; tests pass a shared one.
 	auth?: () => Promise<OwnerAuth>;
+	// A standalone Worker records the app origin at each password sign-in. When it differs from
+	// the stored one, credentials bound to the old origin end and the new host becomes a link
+	// domain in this routing store.
+	originMove?: { routing: D1Database };
 	now?: () => number;
 }
 
@@ -165,7 +176,19 @@ export function createOwnerAuthRoutes(options: OwnerRouteOptions): Hono {
 		const refused = await reserve('sign_in', source);
 		if (refused) return refused;
 		const outcome = await signIn(input.username, input.password, headers);
-		return outcome.ok ? authenticated(outcome.result) : outcome.response;
+		if (!outcome.ok) return outcome.response;
+		if (options.originMove) {
+			const { token } = await signedInSession(outcome.result);
+			if (!token) return authFailure('AUTH_UNAVAILABLE', 503);
+			await moveAppOrigin(db, token, config.origin, now());
+			// Safe to repeat, so a failed earlier attempt finishes here.
+			await ensurePlatformDomain(
+				options.originMove.routing,
+				new URL(config.origin).hostname,
+				now()
+			);
+		}
+		return authenticated(outcome.result);
 	}
 
 	// The username comes from the session, so reauthentication cannot switch users. A new
@@ -177,23 +200,13 @@ export function createOwnerAuthRoutes(options: OwnerRouteOptions): Hono {
 		if (refused) return refused;
 		const outcome = await signIn(principal.user.name, secret, headers);
 		if (!outcome.ok) return outcome.response;
-		if ((await signedInUser(outcome.result)) !== principal.user.id) {
-			await deleteResponseSession(outcome.result);
+		const session = await signedInSession(outcome.result);
+		if (session.userId !== principal.user.id) {
+			if (session.token)
+				await db.prepare('DELETE FROM session WHERE token = ?').bind(session.token).run();
 			return invalidCredentials();
 		}
 		return authenticated(outcome.result);
-	}
-
-	async function deleteResponseSession(response: Response): Promise<void> {
-		const body: unknown = await response
-			.clone()
-			.json()
-			.catch(() => null);
-		const token =
-			typeof body === 'object' && body !== null && 'token' in body && typeof body.token === 'string'
-				? body.token
-				: null;
-		if (token) await db.prepare('DELETE FROM session WHERE token = ?').bind(token).run();
 	}
 
 	// Verifies the current password first, because the library would hash the new one first.

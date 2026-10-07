@@ -4,6 +4,8 @@
 // through metadata that only these server functions set; its HTTP endpoints stay unexposed.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
 import { apiKey } from '@better-auth/api-key';
+import { betterAuth } from 'better-auth';
+import { createIdentityAdapter } from '@flared/data/identity-adapter';
 import {
 	isTokenScope,
 	maxTokenNameLength,
@@ -17,6 +19,7 @@ import {
 } from '@flared/contracts/tokens';
 import { deleteApiToken, listApiTokens, type StoredApiToken } from '@flared/data/tokens';
 import { resolveTenant } from '../tenancy';
+import { createSessionOptions } from './options';
 
 export const tokenRequestsPerMinute = 60;
 
@@ -33,6 +36,20 @@ export function createApiTokenPlugin() {
 
 // The two server-only plugin calls these functions use, typed loosely so that results are
 // validated here rather than trusted.
+// The instance that creates and verifies tokens. It is separate from the sign-in instance,
+// whose proof guards refuse this plugin, and no route mounts it, so the plugin's
+// /api/auth/api-key/* endpoints stay unreachable.
+export function createTokenAuth(db: D1Database, origin: string, secret: string) {
+	return betterAuth({
+		...createSessionOptions(origin),
+		secret,
+		database: createIdentityAdapter(db),
+		rateLimit: { enabled: false },
+		logger: { disabled: true },
+		plugins: [createApiTokenPlugin()]
+	});
+}
+
 export interface ApiTokenAuth {
 	api: {
 		createApiKey(input: { body: Record<string, unknown> }): Promise<unknown>;

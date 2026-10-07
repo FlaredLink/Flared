@@ -105,18 +105,35 @@ export async function reserveAttempt(
 	return { allowed: false, retryAfter: Math.max(1, Math.ceil((release - now) / 1000)) };
 }
 
-// Removes attempts that no longer count, in a bounded batch.
-export async function deleteExpiredAttempts(
+// Daily, in bounded batches: expired sign-in proofs and sessions, attempts that no longer
+// count, and passkey challenges past the passkey budget's daily window.
+export async function cleanupOwnerAuthRecords(
 	db: D1Database,
 	now: number,
 	limit: number
 ): Promise<void> {
 	if (!Number.isSafeInteger(now) || !Number.isSafeInteger(limit) || limit < 1 || limit > 1000)
-		throw new Error('Invalid attempt cleanup bounds');
-	await db
-		.prepare(
-			'DELETE FROM auth_attempts WHERE id IN (SELECT id FROM auth_attempts WHERE created_at <= ? ORDER BY created_at LIMIT ?)'
-		)
-		.bind(now - attemptRetentionMs, limit)
-		.run();
+		throw new Error('Invalid auth cleanup bounds');
+	await db.batch([
+		db
+			.prepare(
+				'DELETE FROM verification WHERE id IN (SELECT id FROM verification WHERE expiresAt <= ? ORDER BY expiresAt LIMIT ?)'
+			)
+			.bind(now, limit),
+		db
+			.prepare(
+				'DELETE FROM "session" WHERE id IN (SELECT id FROM "session" WHERE expiresAt <= ? ORDER BY expiresAt LIMIT ?)'
+			)
+			.bind(now, limit),
+		db
+			.prepare(
+				'DELETE FROM auth_attempts WHERE id IN (SELECT id FROM auth_attempts WHERE created_at <= ? ORDER BY created_at LIMIT ?)'
+			)
+			.bind(now - attemptRetentionMs, limit),
+		db
+			.prepare(
+				'DELETE FROM passkey_attempts WHERE id IN (SELECT id FROM passkey_attempts WHERE created_at <= ? ORDER BY created_at LIMIT ?)'
+			)
+			.bind(now - 2 * 86400000, limit)
+	]);
 }
