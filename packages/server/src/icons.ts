@@ -317,3 +317,11 @@ export function cacheIconStore(cache: IconCache): IconStore {
 		}
 	};
 }
+
+// A store in the named Workers cache, opened on use.
+export function workersCacheIconStore(name = 'flared-icons'): IconStore {
+	return cacheIconStore({
+		match: async (request) => (await caches.open(name)).match(request),
+		put: async (request, response) => (await caches.open(name)).put(request, response)
+	});
+}

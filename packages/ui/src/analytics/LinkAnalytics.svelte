@@ -14,9 +14,11 @@
 		analytics: LinkAnalytics;
 		// Range choices as links, so the page works without JavaScript.
 		ranges?: Range[];
+		// Address of a site's icon on the app's origin. Without it, referrers show a letter.
+		iconHref?: (hostname: string) => string;
 	}
 
-	let { analytics, ranges = [] }: Props = $props();
+	let { analytics, ranges = [], iconHref }: Props = $props();
 	const id = $props.id();
 
 	const numbers = new Intl.NumberFormat();
@@ -287,7 +289,7 @@
 							{#each breakdown.rows.slice(0, 8) as row (row.value)}
 								{@const value = share(breakdown.rows, row.clicks)}
 								<li>
-									<DimensionIcon kind={breakdown.kind} value={row.value} />
+									<DimensionIcon kind={breakdown.kind} value={row.value} {iconHref} />
 									<span class="name">{breakdown.name(row.value)}</span>
 									<span class="meter" aria-hidden="true"
 										><span style:width={`${value}%`}></span></span

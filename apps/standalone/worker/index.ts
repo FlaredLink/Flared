@@ -11,6 +11,7 @@ import { createApi, type ApiAuthentication } from '@flared/server/api';
 import { apiAuthenticator, sessionPrincipal, unavailable } from '@flared/server/api/compose';
 import { createClickConsumer } from '@flared/server/analytics';
 import { createTokenAuth } from '@flared/server/auth/api-tokens';
+import { workersCacheIconStore } from '@flared/server/icons';
 import {
 	createOwnerAuthRoutes,
 	ownerSignInMethods,
@@ -155,7 +156,8 @@ class Installation {
 			publicApiUrl: `${config.origin}/v1`,
 			domains: { reservedHostnames: [config.host] },
 			authenticate,
-			fixedTenantId: this.fixedTenantId
+			fixedTenantId: this.fixedTenantId,
+			icons: { store: workersCacheIconStore() }
 		});
 	}
 

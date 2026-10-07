@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
 	import EmptyState from '../empty/EmptyState.svelte';
+	import SiteIcon from '../icons/SiteIcon.svelte';
+	import { iconHostnameOfUrl } from '@flared/contracts/icons';
 	import type { Link, ListedLink } from '@flared/contracts/links';
 	import { blockLabel } from './messages';
 
@@ -11,9 +13,11 @@
 		// URL of the next page, or null on the last page.
 		nextHref?: string | null;
 		highlightId?: string | null;
+		// Address of a site's icon on the app's origin. Without it, rows show a letter tile.
+		iconHref?: (hostname: string) => string;
 	}
 
-	let { links, analyticsHref, nextHref = null, highlightId = null }: Props = $props();
+	let { links, analyticsHref, nextHref = null, highlightId = null, iconHref }: Props = $props();
 	let status = $state('');
 	let copiedId = $state<string | null>(null);
 
@@ -63,7 +67,12 @@
 		<ul>
 			{#each links as link (link.id)}
 				{@const spark = trend(link)}
+				{@const site = iconHostnameOfUrl(link.destination)}
 				<li class:highlight={link.id === highlightId}>
+					<SiteIcon
+						hostname={site ?? display(link.destination)}
+						src={site && iconHref ? iconHref(site) : null}
+					/>
 					<div class="main">
 						<a class="short" href={link.shortUrl} target="_blank" rel="noopener noreferrer"
 							>{display(link.shortUrl)}</a
@@ -133,8 +142,8 @@
 	}
 	li {
 		display: flex;
-		justify-content: space-between;
-		gap: 1rem;
+		align-items: center;
+		gap: 0.85rem;
 		padding: 0.85rem 1rem;
 	}
 	li + li {
@@ -145,6 +154,7 @@
 	}
 	.main {
 		display: grid;
+		flex: 1;
 		gap: 0.15rem;
 		min-width: 0;
 	}
@@ -240,10 +250,13 @@
 	}
 	@media (max-width: 40rem) {
 		li {
-			flex-direction: column;
-			gap: 0.5rem;
+			display: grid;
+			grid-template-columns: auto minmax(0, 1fr);
+			align-items: start;
+			gap: 0.5rem 0.75rem;
 		}
 		.meta {
+			grid-column: 1 / -1;
 			justify-content: space-between;
 		}
 	}

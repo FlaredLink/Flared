@@ -34,14 +34,17 @@
 	// only in the browser build, so they load after mount into a box of fixed size. Device, OS,
 	// and fallback icons are Phosphor paths.
 	import { onMount } from 'svelte';
+	import SiteIcon from '../icons/SiteIcon.svelte';
 	import { flagCodes } from './flags';
 
 	interface Props {
 		kind: IconKind;
 		value: string;
+		// Address of a site's icon on the app's origin, for referrer host names.
+		iconHref?: (hostname: string) => string;
 	}
 
-	let { kind, value }: Props = $props();
+	let { kind, value, iconHref }: Props = $props();
 
 	const browsers = new Set(['chrome', 'safari', 'firefox', 'edge', 'samsung', 'opera']);
 
@@ -72,7 +75,9 @@
 </script>
 
 <span class="icon" class:flag={flag !== null} aria-hidden="true">
-	{#if flag}
+	{#if kind === 'referrer' && value !== 'unknown' && value !== 'other'}
+		<SiteIcon hostname={value} src={iconHref ? iconHref(value) : null} size={20} />
+	{:else if flag}
 		{#if mounted}<img src={flagUrl(flag)} alt="" width="20" height="15" />{/if}
 	{:else if browser}
 		{#if mounted}<img src={browserUrl(browser)} alt="" width="18" height="18" />{/if}

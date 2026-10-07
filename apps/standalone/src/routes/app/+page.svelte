@@ -69,6 +69,7 @@
 		analyticsHref={(link) => linkRoute(link.id)}
 		nextHref={data.links.nextCursor ? `?cursor=${encodeURIComponent(data.links.nextCursor)}` : null}
 		highlightId={createdId}
+		iconHref={(hostname) => `/api/v1/icons/${hostname}`}
 	/>
 {/if}
 

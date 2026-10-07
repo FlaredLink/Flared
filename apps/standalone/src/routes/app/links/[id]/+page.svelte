@@ -41,7 +41,11 @@
 </div>
 
 {#if data.analytics.status === 'ready'}
-	<LinkAnalytics analytics={data.analytics.analytics} {ranges} />
+	<LinkAnalytics
+		analytics={data.analytics.analytics}
+		{ranges}
+		iconHref={(hostname) => `/api/v1/icons/${hostname}`}
+	/>
 {:else}
 	<section class="notice" role="alert">
 		<h2>We couldn’t load the clicks for this link</h2>
