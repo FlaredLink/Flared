@@ -3,7 +3,9 @@
 // from the app's own origin, so a viewer's browser never contacts the site or a third party.
 import { iconHostname } from '@flared/contracts/icons';
 
+// Each request has 3 seconds; one icon lookup, with its redirects and fallbacks, has 8.
 export const iconFetchTimeoutMs = 3000;
+export const iconLookupTimeoutMs = 8000;
 export const iconMaxBytes = 100 * 1024;
 // A found icon is fetched again after 30 days; a site without one is asked again after 7.
 export const iconFreshMs = 30 * 86400000;
@@ -43,10 +45,15 @@ export function sniffIcon(bytes: Uint8Array): IconType | null {
 	return null;
 }
 
-// Reads at most limit bytes; a longer body is refused, not cut.
-async function readLimited(response: Response, limit: number): Promise<Uint8Array | null> {
+// Reads at most limit bytes. An image longer than that is refused; a page is cut, because its
+// icon links are in the head near the start.
+async function readLimited(
+	response: Response,
+	limit: number,
+	overflow: 'refuse' | 'cut'
+): Promise<Uint8Array | null> {
 	const declared = Number(response.headers.get('content-length'));
-	if (Number.isFinite(declared) && declared > limit) {
+	if (overflow === 'refuse' && Number.isFinite(declared) && declared > limit) {
 		await response.body?.cancel();
 		return null;
 	}
@@ -57,11 +64,14 @@ async function readLimited(response: Response, limit: number): Promise<Uint8Arra
 	for (;;) {
 		const { done, value } = await reader.read();
 		if (done) break;
-		size += value.byteLength;
-		if (size > limit) {
+		if (size + value.byteLength > limit) {
 			await reader.cancel();
-			return null;
+			if (overflow === 'refuse') return null;
+			chunks.push(value.slice(0, limit - size));
+			size = limit;
+			break;
 		}
+		size += value.byteLength;
 		chunks.push(value);
 	}
 	const bytes = new Uint8Array(size);
@@ -96,7 +106,7 @@ async function fetchLimited(
 	for (let hop = 0; hop <= maxRedirects; hop += 1) {
 		const response = await fetcher(url.href, {
 			redirect: 'manual',
-			signal,
+			signal: AbortSignal.any([signal, AbortSignal.timeout(iconFetchTimeoutMs)]),
 			headers: { accept, 'user-agent': 'FlaredIconFetcher/1.0 (+https://flared.page)' }
 		});
 		if (response.status >= 300 && response.status < 400) {
@@ -110,7 +120,11 @@ async function fetchLimited(
 			await response.body?.cancel();
 			return null;
 		}
-		const bytes = await readLimited(response, iconMaxBytes);
+		const bytes = await readLimited(
+			response,
+			iconMaxBytes,
+			accept === 'text/html' ? 'cut' : 'refuse'
+		);
 		if (!bytes) return null;
 		return { url, bytes, type: response.headers.get('content-type') ?? '' };
 	}
@@ -143,38 +157,54 @@ function decodeHtmlEntities(value: string): string {
 		.replace(/&#47;/g, '/');
 }
 
-// /favicon.ico first, then the icon links of the home page. Returns a missing record when the
-// site has no usable icon within the limits; throws nothing for the site's own failures.
+// /favicon.ico first, then the icon links of the home page. The cache key has no "www.", so a
+// host that cannot be reached is tried again with it (some names resolve only with "www.").
+// Returns a missing record when the site has no usable icon within the limits; throws nothing
+// for the site's own failures.
 export async function fetchIcon(
 	hostname: string,
 	fetcher: Fetcher,
 	now: number
 ): Promise<StoredIcon> {
 	const missing: StoredIcon = { status: 'missing', fetchedAt: now };
-	const origin = allowedUrl(`https://${hostname}/`);
-	if (!origin) return missing;
-	const signal = AbortSignal.timeout(iconFetchTimeoutMs);
+	const deadline = AbortSignal.timeout(iconLookupTimeoutMs);
+	// Set by any response, a redirect included: then the host exists and "www." is not tried.
+	let reached = false;
+	const counted: Fetcher = async (input, init) => {
+		const response = await fetcher(input, init);
+		reached = true;
+		return response;
+	};
 	const icon = async (url: URL): Promise<StoredIcon | null> => {
-		const result = await fetchLimited(fetcher, url, 'image/*', signal);
+		const result = await fetchLimited(counted, url, 'image/*', deadline);
 		const type = result && result.bytes.byteLength > 0 ? sniffIcon(result.bytes) : null;
 		return result && type ? { status: 'found', type, body: result.bytes, fetchedAt: now } : null;
 	};
-	try {
+	const fromOrigin = async (origin: URL): Promise<StoredIcon | null> => {
 		const favicon = await icon(new URL('/favicon.ico', origin));
 		if (favicon) return favicon;
-		const page = await fetchLimited(fetcher, origin, 'text/html', signal);
-		if (!page || !/text\/html|application\/xhtml/i.test(page.type)) return missing;
+		const page = await fetchLimited(counted, origin, 'text/html', deadline);
+		if (!page || !/text\/html|application\/xhtml/i.test(page.type)) return null;
 		const html = new TextDecoder().decode(page.bytes);
 		for (const href of iconLinks(html).slice(0, 3)) {
 			const url = allowedUrl(decodeHtmlEntities(href), page.url.href);
 			if (!url) continue;
-			const linked = await icon(url);
+			const linked = await icon(url).catch(() => null);
 			if (linked) return linked;
 		}
-		return missing;
-	} catch {
-		return missing;
+		return null;
+	};
+	const origins = [`https://${hostname}/`, `https://www.${hostname}/`]
+		.map((value) => allowedUrl(value))
+		.filter((origin) => origin !== null);
+	for (const origin of origins) {
+		try {
+			return (await fromOrigin(origin)) ?? missing;
+		} catch {
+			if (reached || deadline.aborted) return missing;
+		}
 	}
+	return missing;
 }
 
 // A stored icon within its lifetime is used as it is. A stale or absent one is fetched when

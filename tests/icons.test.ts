@@ -167,6 +167,17 @@ describe('icon fetch', () => {
 		expect(loop.calls).not.toContain('https://a.example.com/4');
 	});
 
+	it('reads the start of a large home page for its icon links', async () => {
+		const html = `<head><link rel="icon" href="/i.png"></head>${'x'.repeat(iconMaxBytes * 2)}`;
+		const { fetcher } = network({
+			'https://big.example.com/': new Response(html, {
+				headers: { 'content-type': 'text/html', 'content-length': String(html.length) }
+			}),
+			'https://big.example.com/i.png': image(png)
+		});
+		expect((await fetchIcon('big.example.com', fetcher, now)).status).toBe('found');
+	});
+
 	it('refuses bodies over the size limit, declared or streamed', async () => {
 		const big = new Uint8Array(iconMaxBytes + 1);
 		big.set(png);
@@ -189,6 +200,40 @@ describe('icon fetch', () => {
 				)
 		});
 		expect((await fetchIcon('site.example.com', streamed.fetcher, now)).status).toBe('missing');
+	});
+
+	it('tries the www name when the bare name cannot be reached', async () => {
+		const asked: string[] = [];
+		const fetcher: Fetcher = async (input) => {
+			asked.push(input);
+			if (input.startsWith('https://broadcaster.example.jp/'))
+				throw new TypeError('getaddrinfo ENOTFOUND');
+			return input === 'https://www.broadcaster.example.jp/favicon.ico'
+				? image(ico)
+				: new Response('missing', { status: 404 });
+		};
+		expect((await fetchIcon('broadcaster.example.jp', fetcher, now)).status).toBe('found');
+		expect(asked).toEqual([
+			'https://broadcaster.example.jp/favicon.ico',
+			'https://www.broadcaster.example.jp/favicon.ico'
+		]);
+		// A host that answered, even with a redirect, is not asked again under www.
+		const redirected: string[] = [];
+		const timing: Fetcher = async (input) => {
+			redirected.push(input);
+			if (input === 'https://slow.example.com/favicon.ico')
+				return redirect('https://www.slow.example.com/favicon.ico');
+			throw new DOMException('The operation timed out.', 'TimeoutError');
+		};
+		expect((await fetchIcon('slow.example.com', timing, now)).status).toBe('missing');
+		expect(redirected).toEqual([
+			'https://slow.example.com/favicon.ico',
+			'https://www.slow.example.com/favicon.ico'
+		]);
+		// A site that answers without an icon is not asked again under www.
+		const answered = network({});
+		expect((await fetchIcon('site.example.com', answered.fetcher, now)).status).toBe('missing');
+		expect(answered.calls.some((url) => url.includes('www.'))).toBe(false);
 	});
 
 	it('records a missing icon when the site fails or times out', async () => {
