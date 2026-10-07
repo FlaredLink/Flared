@@ -74,6 +74,7 @@ const app = () => {
 		origin,
 		rateLimitSecret,
 		passkeyAttemptsTable: 'test_passkey_attempts',
+		identityRule: { kind: 'verified-email' },
 		signIn: {
 			methods: { '/api/auth/test/sign-in': 'POST' },
 			async handle({ body, headers }) {
@@ -466,7 +467,7 @@ describe('discovery documents', () => {
 
 describe('API authentication', () => {
 	const session = {
-		user: { id: 'user-1', email: 'a@example.com' },
+		user: { id: 'user-1', email: 'a@example.com', name: 'a@example.com' },
 		expiresAt: 'x',
 		signedInAt: '2026-10-07T00:00:00.000Z'
 	};

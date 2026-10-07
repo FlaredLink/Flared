@@ -24,6 +24,7 @@ describe('shared authentication boundaries', () => {
 		expect(() => createSessionOptions('https://flared.link/path')).toThrow();
 	});
 	it('rejects unverified and expired principals without returning tokens', async () => {
+		const emailRule = { kind: 'verified-email' } as const;
 		const now = Date.now();
 		const reader = {
 			async getSession() {
@@ -33,7 +34,7 @@ describe('shared authentication boundaries', () => {
 				};
 			}
 		};
-		expect(await readPrincipal(reader, new Headers())).toBeNull();
+		expect(await readPrincipal(reader, new Headers(), emailRule)).toBeNull();
 		const valid = {
 			async getSession() {
 				return {
@@ -42,8 +43,8 @@ describe('shared authentication boundaries', () => {
 				};
 			}
 		};
-		expect(await readPrincipal(valid, new Headers())).toEqual({
-			user: { id: 'user-1', email: 'user@example.com' },
+		expect(await readPrincipal(valid, new Headers(), emailRule)).toEqual({
+			user: { id: 'user-1', email: 'user@example.com', name: 'user@example.com' },
 			expiresAt: new Date(now + 10000).toISOString(),
 			signedInAt: new Date(now - 1000).toISOString()
 		});
@@ -55,7 +56,7 @@ describe('shared authentication boundaries', () => {
 				};
 			}
 		};
-		expect(await readPrincipal(expired, new Headers())).toBeNull();
+		expect(await readPrincipal(expired, new Headers(), emailRule)).toBeNull();
 	});
 	it('counts a session as fresh for 10 minutes after its sign-in', () => {
 		const principal = {

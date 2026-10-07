@@ -11,7 +11,7 @@ import { EmailDeliveryError } from '../email/transport';
 import { finalizeAuthResponse } from '../web/forward';
 import { sharedAuthMethods, type AuthMethods } from '../web/auth';
 import { consumePasskeyBudget } from './limits';
-import { freshUntil, readPrincipal, type AuthPrincipal } from './session';
+import { freshUntil, readPrincipal, type AuthPrincipal, type IdentityRule } from './session';
 import {
 	AuthInputError,
 	emptyBody,
@@ -157,6 +157,8 @@ export interface AuthRouteOptions {
 	rateLimitSecret: string;
 	// The edition's table of passkey challenge attempts.
 	passkeyAttemptsTable: string;
+	// Who may hold a session in this edition.
+	identityRule: IdentityRule;
 	signIn: SignInRoutes;
 	now?: () => number;
 }
@@ -168,7 +170,7 @@ export function createAuthRoutes(options: AuthRouteOptions): Hono {
 	let auth: Promise<{ api: SharedAuthApi }> | undefined;
 	const getAuth = () => (auth ??= options.auth());
 	async function signedIn(headers: Headers): Promise<AuthPrincipal | null> {
-		return readPrincipal((await getAuth()).api, headers);
+		return readPrincipal((await getAuth()).api, headers, options.identityRule);
 	}
 
 	// Authentication options for passkey sign-in and passkey reauthentication, under the
@@ -241,7 +243,7 @@ export function createAuthRoutes(options: AuthRouteOptions): Hono {
 				await withIdentityProofScope('issue', () =>
 					api.generatePasskeyRegistrationOptions({
 						headers,
-						query: { name: principal.user.email },
+						query: { name: principal.user.name },
 						asResponse: true
 					})
 				)

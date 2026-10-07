@@ -65,7 +65,8 @@ const oauth = () =>
 	createOAuthRoutes({
 		db: identity(),
 		config,
-		sourceKey: async (request) => request.headers.get('x-test-source') ?? 'source-default'
+		sourceKey: async (request) => request.headers.get('x-test-source') ?? 'source-default',
+		identityRule: { kind: 'verified-email' }
 	});
 
 // Only the records matter here: no MCP tool adds, checks, or removes a domain.

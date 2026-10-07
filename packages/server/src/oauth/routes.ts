@@ -8,7 +8,7 @@ import { isTokenScope, type TokenScope } from '@flared/contracts/tokens';
 import type { ConsentRequest } from '@flared/contracts/oauth';
 import { countRegistration } from '@flared/data/oauth';
 import { authResponseHeaders } from '../web/forward';
-import { readPrincipal } from '../auth/session';
+import { readPrincipal, type IdentityRule } from '../auth/session';
 import { resolveTenant } from '../tenancy';
 import { createOAuthServer, type OAuthServer, type OAuthServerConfig } from './provider';
 
@@ -22,6 +22,8 @@ export interface OAuthRouteDependencies {
 	// A stable, non-reversible key for the request's network source, or null when it is unknown.
 	// Open client registration is refused without one.
 	sourceKey(request: Request): Promise<string | null>;
+	// Who may hold a session in this edition.
+	identityRule: IdentityRule;
 	now?: () => number;
 }
 
@@ -193,7 +195,11 @@ export function createOAuthRoutes(dependencies: OAuthRouteDependencies) {
 
 	// The signed-in person's workspace, or a JSON error response.
 	async function signedIn(request: Request) {
-		const principal = await readPrincipal(auth().api, copyHeaders(request, ['cookie']));
+		const principal = await readPrincipal(
+			auth().api,
+			copyHeaders(request, ['cookie']),
+			dependencies.identityRule
+		);
 		if (!principal) return oauthError(401, 'login_required', 'Sign in to continue.');
 		const tenant = await resolveTenant(db, principal.user.id);
 		if (tenant.status !== 'active')

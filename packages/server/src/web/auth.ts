@@ -44,10 +44,17 @@ function safePrincipal(value: unknown): AuthPrincipal | null {
 	)
 		return null;
 	const user = record.user as Record<string, unknown>;
-	if (typeof user.id !== 'string' || !user.id || typeof user.email !== 'string' || !user.email)
+	if (
+		typeof user.id !== 'string' ||
+		!user.id ||
+		typeof user.email !== 'string' ||
+		!user.email ||
+		typeof user.name !== 'string' ||
+		!user.name
+	)
 		return null;
 	return {
-		user: { id: user.id, email: user.email },
+		user: { id: user.id, email: user.email, name: user.name },
 		expiresAt: record.expiresAt,
 		signedInAt: record.signedInAt
 	};

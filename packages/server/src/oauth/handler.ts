@@ -11,6 +11,7 @@ import {
 } from '../mcp';
 import { authResponseHeaders } from '../web/forward';
 import { keyedHash } from '../auth/limits';
+import type { IdentityRule } from '../auth/session';
 import { createMetadataFetch } from './provider';
 import { createOAuthRoutes } from './routes';
 
@@ -25,6 +26,8 @@ export interface OAuthSite {
 	rateLimitSecret: string;
 	// The MCP endpoint URL that tokens are bound to.
 	resource: string;
+	// Who may hold a session in this edition.
+	identityRule: IdentityRule;
 }
 
 export function oauthUnavailable(): Response {
@@ -56,7 +59,8 @@ export function handleOAuth(request: Request, site: OAuthSite, identity: D1Datab
 			consentPath,
 			fetchClientMetadata: createMetadataFetch()
 		},
-		sourceKey: (incoming) => sourceKey(site.rateLimitSecret, incoming)
+		sourceKey: (incoming) => sourceKey(site.rateLimitSecret, incoming),
+		identityRule: site.identityRule
 	}).fetch(request);
 }
 
