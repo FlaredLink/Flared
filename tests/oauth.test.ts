@@ -14,7 +14,7 @@ import { qrPng } from '../packages/client/src/qr';
 import { createMcpEndpoint, mcpCallsPerMinute, mcpServerCard } from '../packages/server/src/mcp';
 import { createMetadataFetch, type OAuthServerConfig } from '../packages/server/src/oauth/provider';
 import { createOAuthRoutes, registrationsPerSourceHour } from '../packages/server/src/oauth/routes';
-import { resumeAuthorizationPath } from '../packages/contracts/src/oauth';
+import { knownAssistant, resumeAuthorizationPath } from '../packages/contracts/src/oauth';
 
 const origin = 'https://app.example';
 const resource = 'https://api.example/mcp';
@@ -674,6 +674,34 @@ describe('authorization server', () => {
 	});
 });
 
+describe('known assistants', () => {
+	it('names an assistant only when every redirect URI is its own', () => {
+		expect(knownAssistant(['https://claude.ai/api/mcp/auth_callback'])).toBe('claude');
+		expect(knownAssistant(['https://chatgpt.com/connector_platform_oauth_redirect'])).toBe(
+			'chatgpt'
+		);
+		expect(knownAssistant(['https://chatgpt.com/connector/oauth/abc123'])).toBe('chatgpt');
+		expect(knownAssistant(['cursor://anysphere.cursor-retrieval/oauth/user-mcp/callback'])).toBe(
+			'cursor'
+		);
+		for (const uris of [
+			[],
+			// An app may call itself Claude; a second redirect URI could receive the code.
+			['https://claude.ai/api/mcp/auth_callback', 'https://attacker.example/callback'],
+			['https://claude.ai/api/mcp/auth_callback', 'https://chatgpt.com/connector/oauth/x'],
+			// Loopback redirects belong to whatever local program holds the port.
+			['http://localhost:3118/callback'],
+			['http://127.0.0.1/callback'],
+			['https://claude.ai.attacker.example/api/mcp/auth_callback'],
+			['https://claude.ai/api/mcp/auth_callback/extra'],
+			['http://chatgpt.com/connector_platform_oauth_redirect'],
+			['https://chatgpt.com/other'],
+			['not a url']
+		])
+			expect(knownAssistant(uris), JSON.stringify(uris)).toBeNull();
+	});
+});
+
 describe('connected apps API', () => {
 	it('lists and revokes apps in the session workspace only', async () => {
 		const { clientId, tokens } = await connect('user-3');
@@ -686,6 +714,7 @@ describe('connected apps API', () => {
 		const page = (await list.json()) as { apps: Record<string, unknown>[] };
 		expect(page.apps.find((app) => app.clientId === clientId)).toMatchObject({
 			name: 'Test client',
+			assistant: null,
 			uri: null,
 			scopes: ['links:read', 'links:write', 'analytics:read', 'usage:read'],
 			lastActiveAt: expect.any(String)

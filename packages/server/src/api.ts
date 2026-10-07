@@ -34,7 +34,7 @@ import { parseAddDomain } from '@flared/contracts/domains';
 import { parseRenameWorkspace, type Workspace } from '@flared/contracts/workspace';
 import { readTenantName, renameTenant } from '@flared/data/tenancy';
 import { defaultQrSize, maxQrSize, minQrSize, qrPng, qrSvg } from '@flared/client/qr';
-import type { ConnectedApp, ConnectedAppPage } from '@flared/contracts/oauth';
+import { knownAssistant, type ConnectedApp, type ConnectedAppPage } from '@flared/contracts/oauth';
 import { deleteGrant, listGrants } from '@flared/data/oauth';
 import { countCreationAttempt } from '@flared/data/links';
 import {
@@ -561,6 +561,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		).map((grant) => ({
 			clientId: grant.clientId,
 			name: grant.name?.trim() || appHost(grant.clientId, grant.uri),
+			assistant: knownAssistant(grant.redirectUris),
 			uri: grant.uri,
 			scopes: grant.scopes.filter(isTokenScope),
 			connectedAt: new Date(grant.connectedAt).toISOString(),

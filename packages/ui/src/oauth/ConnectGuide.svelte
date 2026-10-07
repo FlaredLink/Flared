@@ -10,8 +10,10 @@
 	const assistants = [
 		{ id: 'claude', label: 'Claude' },
 		{ id: 'chatgpt', label: 'ChatGPT' },
-		{ id: 'grok', label: 'Grok' },
 		{ id: 'claude-code', label: 'Claude Code' },
+		{ id: 'cursor', label: 'Cursor' },
+		{ id: 'vscode', label: 'VS Code' },
+		{ id: 'grok', label: 'Grok' },
 		{ id: 'other', label: 'Other' }
 	] as const;
 	type Assistant = (typeof assistants)[number]['id'];
@@ -19,6 +21,17 @@
 	let selected = $state<Assistant>('claude');
 	let copied = $state('');
 	const command = $derived(`claude mcp add --transport http flared ${mcpUrl}`);
+	// Links that open each client's add-server dialog with Flared filled in. Claude's link is not in
+	// Anthropic's documentation, so the manual steps stay below it. Cursor and VS Code document theirs.
+	const claudeLink = $derived(
+		`https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=Flared&connectorUrl=${encodeURIComponent(mcpUrl)}`
+	);
+	const cursorLink = $derived(
+		`cursor://anysphere.cursor-deeplink/mcp/install?name=flared&config=${encodeURIComponent(btoa(JSON.stringify({ url: mcpUrl })))}`
+	);
+	const vscodeLink = $derived(
+		`vscode:mcp/install?${encodeURIComponent(JSON.stringify({ name: 'flared', type: 'http', url: mcpUrl }))}`
+	);
 	const tabs: HTMLButtonElement[] = [];
 
 	async function copy(value: string, label: string) {
@@ -79,6 +92,11 @@
 
 	<div id="connect-panel" class="panel" role="tabpanel" aria-labelledby={`connect-tab-${selected}`}>
 		{#if selected === 'claude'}
+			<p class="open-row">
+				<a class="open" href={claudeLink} target="_blank" rel="noopener">Add to Claude</a>
+				<span>Opens Claude with Flared filled in. Select <strong>Add</strong>, then sign in.</span>
+			</p>
+			<p>If the form opens empty:</p>
 			<ol>
 				<li>In Claude, open <strong>Settings</strong>, then <strong>Connectors</strong>.</li>
 				<li>
@@ -121,6 +139,28 @@
 				</li>
 				<li>In Claude Code, run <code>/mcp</code>, choose flared, and sign in.</li>
 			</ol>
+		{:else if selected === 'cursor'}
+			<p class="open-row">
+				<a class="open" href={cursorLink}>Add to Cursor</a>
+				<span
+					>Opens Cursor with Flared filled in. Install it, then select <strong>Connect</strong
+					>.</span
+				>
+			</p>
+			<p>
+				Or open <strong>Cursor Settings</strong>, then <strong>MCP</strong>, add a server named
+				flared with the URL above, and sign in.
+			</p>
+		{:else if selected === 'vscode'}
+			<p class="open-row">
+				<a class="open" href={vscodeLink}>Install in VS Code</a>
+				<span>Opens VS Code with Flared filled in. Install it, then sign in when VS Code asks.</span
+				>
+			</p>
+			<p>
+				Or run <strong>MCP: Add Server</strong> from the Command Palette, choose
+				<strong>HTTP</strong>, and paste the URL above.
+			</p>
 		{:else}
 			<p>
 				Any assistant that supports remote MCP servers with OAuth can connect. Add the URL as a
@@ -198,7 +238,33 @@
 		color: var(--color-strong, #101828);
 	}
 	.panel {
+		display: grid;
+		gap: 0.6rem;
 		font-size: 0.875rem;
+	}
+	.open-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem 0.75rem;
+	}
+	.open {
+		display: inline-flex;
+		align-items: center;
+		min-height: 40px;
+		padding: 0.4rem 0.9rem;
+		border-radius: var(--radius-sm, 6px);
+		background: var(--color-button-primary, #c94b00);
+		color: var(--color-on-primary, #fff);
+		font-weight: 620;
+		text-decoration: none;
+	}
+	.open:hover {
+		background: var(--color-button-primary-hover, #b84400);
+	}
+	.open-row span {
+		color: var(--color-muted, #667085);
+		font-size: 0.8rem;
 	}
 	ol {
 		display: grid;

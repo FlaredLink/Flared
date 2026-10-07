@@ -28,9 +28,41 @@ export interface ConsentRequest {
 	offlineAccess: boolean;
 }
 
+// An assistant whose OAuth codes can reach only that assistant: every redirect URI of the client
+// is the assistant's own. The app chooses its name and icon, so they prove nothing; the redirect
+// URIs decide where codes go. A loopback redirect can belong to any local program, so it never
+// matches.
+export type KnownAssistant = 'claude' | 'chatgpt' | 'cursor';
+
+function assistantOf(redirectUri: string): KnownAssistant | null {
+	let url: URL;
+	try {
+		url = new URL(redirectUri);
+	} catch {
+		return null;
+	}
+	if (url.href === 'https://claude.ai/api/mcp/auth_callback') return 'claude';
+	if (
+		url.protocol === 'https:' &&
+		url.host === 'chatgpt.com' &&
+		(url.pathname === '/connector_platform_oauth_redirect' ||
+			url.pathname.startsWith('/connector/oauth/'))
+	)
+		return 'chatgpt';
+	if (url.protocol === 'cursor:') return 'cursor';
+	return null;
+}
+
+export function knownAssistant(redirectUris: readonly string[]): KnownAssistant | null {
+	const [first, ...rest] = redirectUris.map(assistantOf);
+	return first && rest.every((assistant) => assistant === first) ? first : null;
+}
+
 export interface ConnectedApp {
 	clientId: string;
 	name: string;
+	// Set only when knownAssistant matches the app's redirect URIs.
+	assistant: KnownAssistant | null;
 	uri: string | null;
 	scopes: TokenScope[];
 	connectedAt: string;
@@ -89,6 +121,10 @@ export function isConnectedAppPage(value: unknown): value is ConnectedAppPage {
 			return (
 				typeof entry.clientId === 'string' &&
 				typeof entry.name === 'string' &&
+				(entry.assistant === null ||
+					entry.assistant === 'claude' ||
+					entry.assistant === 'chatgpt' ||
+					entry.assistant === 'cursor') &&
 				nullableString(entry.uri) &&
 				Array.isArray(entry.scopes) &&
 				entry.scopes.every(isTokenScope) &&

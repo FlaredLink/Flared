@@ -2,6 +2,7 @@
 <script lang="ts">
 	import { scopeDescriptions, type ConnectedAppPage } from '@flared/contracts/oauth';
 	import { revokeConnectedApp } from './client';
+	import AssistantMark from './AssistantMark.svelte';
 	import ConnectGuide from './ConnectGuide.svelte';
 
 	interface Props {
@@ -54,6 +55,11 @@
 		<ul>
 			{#each page.apps as app (app.clientId)}
 				<li>
+					<span class="tile {app.assistant ?? 'other'}" aria-hidden="true"
+						>{#if app.assistant}<AssistantMark assistant={app.assistant} />{:else}{(
+								Array.from(app.name)[0] ?? '?'
+							).toLocaleUpperCase()}{/if}</span
+					>
 					<div class="main">
 						<span class="name">{app.name}</span>
 						{#if app.uri}<span class="meta">{app.uri}</span>{/if}
@@ -144,8 +150,24 @@
 	li + li {
 		border-top: 1px solid var(--color-rule, #d0d5dd);
 	}
+	/* An official mark only for a verified assistant; any other app gets its initial. */
+	.tile {
+		display: grid;
+		flex: none;
+		place-items: center;
+		width: 2.5rem;
+		height: 2.5rem;
+		border-radius: var(--radius-md, 8px);
+		background: var(--color-disabled, #f2f4f7);
+		color: var(--color-muted, #667085);
+		font-weight: 700;
+	}
+	.tile.claude {
+		background: var(--color-accent-soft, #fff4ed);
+	}
 	.main {
 		display: grid;
+		flex: 1;
 		gap: 0.15rem;
 		min-width: 0;
 	}

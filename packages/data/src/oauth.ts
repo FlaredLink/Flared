@@ -17,6 +17,7 @@ export interface StoredGrant {
 	clientId: string;
 	name: string | null;
 	uri: string | null;
+	redirectUris: string[];
 	scopes: string[];
 	connectedAt: number;
 	lastActiveAt: number | null;
@@ -83,7 +84,7 @@ export async function listGrants(
 ): Promise<StoredGrant[]> {
 	const { results } = await db
 		.prepare(
-			`SELECT g."clientId", c."name", c."uri", g."scopes", g."createdAt",
+			`SELECT g."clientId", c."name", c."uri", c."redirectUris", g."scopes", g."createdAt",
 			(SELECT MAX(t."createdAt") FROM "oauthAccessToken" t WHERE t."clientId" = g."clientId"
 				AND t."userId" = g."userId" AND t."referenceId" = g."referenceId") AS "lastActiveAt"
 			FROM "oauthConsent" g JOIN "oauthClient" c ON c."clientId" = g."clientId"
@@ -96,6 +97,7 @@ export async function listGrants(
 		clientId: text(row.clientId, 'client'),
 		name: typeof row.name === 'string' ? row.name : null,
 		uri: typeof row.uri === 'string' ? row.uri : null,
+		redirectUris: list(row.redirectUris),
 		scopes: list(row.scopes),
 		connectedAt: number(row.createdAt, 'consent time'),
 		lastActiveAt: row.lastActiveAt === null ? null : number(row.lastActiveAt, 'activity time')
