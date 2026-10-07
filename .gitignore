@@ -6,3 +6,4 @@ coverage/
 .env
 packages/cli/dist/
 packages/cli/LICENSE.md
+.svelte-kit/

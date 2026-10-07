@@ -1,0 +1,9 @@
+{
+	// Build output locations for @sveltejs/adapter-cloudflare only. The adapter writes its
+	// Worker to `main`, so it must not read the root wrangler.jsonc, whose `main` is the
+	// hand-written entry. Keep `assets` identical to the root configuration.
+	"name": "flared",
+	"main": ".svelte-kit/cloudflare/_worker.js",
+	"compatibility_date": "2026-08-22",
+	"assets": { "binding": "ASSETS", "directory": ".svelte-kit/cloudflare" }
+}

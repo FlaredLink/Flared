@@ -1,0 +1,26 @@
+{
+	"name": "@flared/standalone",
+	"private": true,
+	"type": "module",
+	"license": "AGPL-3.0-only",
+	"scripts": {
+		"sync": "svelte-kit sync",
+		"build": "vite build",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings && tsc --noEmit --project worker/tsconfig.json",
+		"test": "vitest run --config tests/vitest.config.ts"
+	},
+	"dependencies": {
+		"@flared/contracts": "workspace:*",
+		"@flared/data": "workspace:*",
+		"@flared/server": "workspace:*",
+		"@flared/ui": "workspace:*",
+		"bits-ui": "2.19.3",
+		"phosphor-svelte": "3.1.0"
+	},
+	"devDependencies": {
+		"@sveltejs/adapter-cloudflare": "7.2.9",
+		"@sveltejs/kit": "2.70.3",
+		"@sveltejs/vite-plugin-svelte": "7.3.1",
+		"vite": "8.3.1"
+	}
+}

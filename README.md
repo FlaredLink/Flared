@@ -135,7 +135,7 @@ The cloud email-code/magic-link composition is maintained separately. No email s
 
 ## Standalone owner and setup
 
-A standalone installation has one owner who signs in with a username and password; no email, OAuth application, or Flared service is involved. The standalone application that composes these modules is still to come.
+A standalone installation has one owner who signs in with a username and password; no email, OAuth application, or Flared service is involved. `apps/standalone` composes these modules (see [Standalone app](#standalone-app)).
 
 - `@flared/server/auth/owner`: `createOwnerAuth` builds Better Auth 1.7.7 with the username plugin and the shared passkey plugin. Email sign-up, sign-in, and reset stay off. The owner's email is the internal address `<user id>@owner.invalid`; it is never verified, shown, or sent to. `createOwnerAuthRoutes` adds `POST /api/auth/sign-in/password`, `/api/auth/reauth/password`, and `/api/auth/password/change` to the shared routes. Passwords have 12 to 128 characters. Every credential failure answers 401 `INVALID_CREDENTIALS`.
 - `@flared/server/auth/attempts`: each password route and setup reserves its budget in `auth_attempts` with one conditional insert before any hash runs. Sign-in allows 10 attempts per source in 15 minutes and 100 in total per hour; reauthentication and password change 5 per user in 15 minutes; setup 5 per source in 15 minutes and 30 in total per hour.
@@ -145,6 +145,22 @@ A standalone installation has one owner who signs in with a username and passwor
 - `fixedTenantId` on `createApi`, `createRedirectHandler`, and `createClickConsumer` refuses any other tenant in a single-workspace installation, in addition to the database's one-tenant guard.
 
 Identity migration `0011_standalone.sql` adds the username columns, a unique password account per user, `installation_setup`, `auth_attempts`, `passkey_attempts`, `job_runs`, and `owner_audit`. The shared Drizzle schema writes the username columns on every new user, so apply this migration before running code that includes it. `tests/standalone.test.ts` covers setup claims and resumes under concurrency, the closed states, username sign-in outside any proof scope, the budgets, reauthentication, password change with a failed later step, the identity rules, OAuth consent, and the single-workspace binding.
+
+## Standalone app
+
+`apps/standalone` is one Worker for a self-hosted installation: the SvelteKit app, the API, auth, OAuth, MCP, short-link redirects, the click Queue consumer, and the scheduled jobs. The root `wrangler.jsonc` configures it, so the repository root is the deployable unit. Its D1 bindings are `IDENTITY`, `ROUTING`, and `ANALYTICS_1`; the Queue is `flared-clicks` with the dead-letter queue `flared-clicks-dlq`. The secrets are in `.dev.vars.example`: `APP_ORIGIN`, `AUTH_SECRET`, and `SETUP_SECRET`. `SOURCE_URL` sets the source code link in the footer; it defaults to this repository.
+
+- **Configuration.** Without a valid `APP_ORIGIN` (an `https:` origin with no path) or `AUTH_SECRET`, every request gets an operator page that names the missing secret. The page suggests the address it was reached on and stores nothing.
+- **Hosts.** The `APP_ORIGIN` host serves the reserved paths: `/app`, `/setup`, `/api/*`, `/v1/*`, `/oauth2/*`, `/mcp`, `/healthz`, and `/.well-known/*`. Every other path on it, and every path on any other host, is a short link. Another host never serves an auth route, a cookie, or an app page.
+- **Credentials.** `/api/v1/*` takes only the session cookie and the exact `Origin`; `/v1/*` takes only a bearer token; `/mcp` takes only an OAuth access token. A client address comes only from `cf-connecting-ip`.
+- **Setup gate.** Until setup finishes, the app host serves only `/setup`, `POST /api/setup`, their assets, and `/healthz`. After the owner deletes the workspace, the installation is closed: the API answers 410, pages say so, and no link opens.
+- **Moving the app host.** After `APP_ORIGIN` changes, the new host serves only sign-in until the owner signs in with the password there. That sign-in ends every session, OAuth grant, and passkey of the old origin in one batch and keeps API tokens. The old host keeps its short links.
+- **Limits.** Settings changes the workspace limits with a fresh sign-in through `/api/settings/limits`. The first limits are 10,000 active links, 50,000 recorded clicks a month, 30 days of history, and 5 own domains; they are provisional until measured.
+- **Jobs.** The 10-minute cron retries policy projections, runs deletions, records click notices, and samples the analytics database size. The daily cron cleans up auth records, link creation keys, expired analytics, limit notices, deletions, and operations records. Each job records its outcome in `job_runs`; `/healthz` answers 200 while the 10-minute run finished in the last 30 minutes.
+
+Scripts: `bun run build` builds the app, `bun run build:dry-run` also checks the Worker bundle, `bun run test:standalone` runs the Worker tests under workerd and D1, and `bun run dev` runs it locally with `.dev.vars`. `bun run deploy` applies the three migration sets to the remote databases, then deploys.
+
+Not yet available: own domains for short links, a labeled test click (the setup wizard counts the owner's first real click instead), the operator password reset command, and the self-hosting guides. Deploy on Cloudflare is not verified on a clean account yet.
 
 ## License
 

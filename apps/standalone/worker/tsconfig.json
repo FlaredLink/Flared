@@ -1,0 +1,14 @@
+{
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"strict": true,
+		"noEmit": true,
+		"skipLibCheck": true,
+		"types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers/types", "node"],
+		"lib": ["ES2022"]
+	},
+	"include": ["**/*.ts", "../tests/**/*.ts"],
+	"exclude": ["../tests/vitest.config.ts"]
+}

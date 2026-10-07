@@ -1,0 +1,11 @@
+# Secrets of a standalone Flared Worker. Deploy on Cloudflare asks for each of them.
+# Generate each secret with: openssl rand -base64 48
+
+# The address of the app, with https:// and no path, such as
+# https://flared.<your-account-subdomain>.workers.dev
+APP_ORIGIN=
+# Signs sessions. 32 to 256 characters. Never reuse SETUP_SECRET.
+AUTH_SECRET=
+# Proves you own this deployment when you create the owner at /setup. At least 32 bytes.
+# Delete it after setup; setup never opens again.
+SETUP_SECRET=

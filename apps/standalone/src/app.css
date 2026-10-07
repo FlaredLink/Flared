@@ -1,0 +1,85 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* The standalone app's own page parts on top of the shared styles. */
+@import '@flared/ui/styles';
+@import '@flared/ui/styles/controls';
+
+.page-head {
+	display: grid;
+	gap: 0.4rem;
+	margin-bottom: 1.5rem;
+}
+.page-head h1 {
+	font-size: 1.6rem;
+}
+.notice {
+	display: grid;
+	gap: 0.4rem;
+	max-width: 44rem;
+	margin-bottom: 1.5rem;
+	padding: 1.25rem;
+	border: 1px dashed var(--color-rule);
+	border-radius: var(--radius-md);
+}
+.notice h2 {
+	font-size: 1.05rem;
+}
+.notice p {
+	font-size: 0.9rem;
+}
+.card {
+	display: grid;
+	gap: 0.9rem;
+	width: min(100%, 30rem);
+	padding: 2rem;
+	border: var(--rule);
+	border-radius: var(--radius-md);
+	background: var(--color-paper);
+	box-shadow: var(--shadow-float);
+}
+.card h1 {
+	font-size: clamp(1.5rem, 4vw, 1.9rem);
+}
+.field {
+	display: grid;
+	gap: 0.35rem;
+}
+.field label {
+	color: var(--color-strong);
+	font-size: 0.85rem;
+	font-weight: 650;
+}
+.field input {
+	min-height: 44px;
+	padding: 0.6rem 0.8rem;
+	color: var(--color-ink);
+	border: var(--rule);
+	border-radius: var(--radius-sm);
+	background: var(--color-paper);
+}
+.field small {
+	color: var(--color-muted);
+	font-size: 0.8rem;
+}
+.error {
+	color: var(--color-accent-ink);
+	font-size: 0.85rem;
+}
+.section {
+	display: grid;
+	gap: 0.75rem;
+	max-width: 44rem;
+}
+.section h2 {
+	font-size: 1.05rem;
+}
+.divider {
+	max-width: 44rem;
+	margin: 2rem 0;
+	border-top: var(--rule);
+}
+.brand-link {
+	display: inline-flex;
+	min-height: 44px;
+	align-items: center;
+	white-space: nowrap;
+}
