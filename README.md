@@ -160,7 +160,9 @@ Identity migration `0011_standalone.sql` adds the username columns, a unique pas
 
 Scripts: `bun run build` builds the app, `bun run build:dry-run` also checks the Worker bundle, `bun run test:standalone` runs the Worker tests under workerd and D1, and `bun run dev` runs it locally with `.dev.vars`. `bun run deploy` applies the three migration sets to the remote databases, then deploys.
 
-Not yet available: own domains for short links, a labeled test click (the setup wizard counts the owner's first real click instead), the operator password reset command, and the self-hosting guides. Deploy on Cloudflare is not verified on a clean account yet.
+`bun run owner:reset-password` resets a forgotten owner password through the operator's Wrangler login; see [docs/self-hosting/recovery.md](docs/self-hosting/recovery.md). The self-hosting guides are in [docs/self-hosting](docs/self-hosting/deploy.md).
+
+Not yet available: own domains for short links, and a labeled test click (the setup wizard counts the owner's first real click instead). Deploy on Cloudflare is not verified on a clean account yet.
 
 ## License
 
