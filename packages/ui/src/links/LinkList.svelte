@@ -25,6 +25,19 @@
 		return `${numbers.format(link.clicksLast30Days)} ${link.clicksLast30Days === 1 ? 'click' : 'clicks'}`;
 	}
 
+	// A 64 by 20 trend line of the last 30 days, scaled to the busiest day; null without clicks.
+	function trend(link: ListedLink): { line: string; area: string } | null {
+		const daily = link.dailyClicksLast30Days;
+		if (!daily || daily.length < 2) return null;
+		const peak = Math.max(...daily);
+		if (peak === 0) return null;
+		const step = 64 / (daily.length - 1);
+		const points = daily.map(
+			(clicks, index) => `${(index * step).toFixed(1)},${(18 - (clicks / peak) * 16).toFixed(1)}`
+		);
+		return { line: `M${points.join(' L')}`, area: `M0,20 L${points.join(' L')} L64,20 Z` };
+	}
+
 	function display(url: string): string {
 		return url.replace(/^https?:\/\//, '');
 	}
@@ -49,6 +62,7 @@
 	{:else}
 		<ul>
 			{#each links as link (link.id)}
+				{@const spark = trend(link)}
 				<li class:highlight={link.id === highlightId}>
 					<div class="main">
 						<a class="short" href={link.shortUrl} target="_blank" rel="noopener noreferrer"
@@ -60,6 +74,12 @@
 						<span class="destination" title={link.destination}>{link.destination}</span>
 					</div>
 					<div class="meta">
+						{#if spark}
+							<svg class="trend" viewBox="0 0 64 20" width="64" height="20" aria-hidden="true">
+								<path d={spark.area} class="trend-area" />
+								<path d={spark.line} class="trend-line" />
+							</svg>
+						{/if}
 						{#if analyticsHref}
 							<a
 								class="clicks"
@@ -166,6 +186,19 @@
 		gap: 0.75rem;
 		color: var(--color-muted, #667085);
 		font-size: 0.8rem;
+	}
+	.trend {
+		flex: none;
+		overflow: visible;
+	}
+	.trend-area {
+		fill: var(--color-chart-fill, rgb(255 237 213 / 0.5));
+	}
+	.trend-line {
+		fill: none;
+		stroke: var(--color-accent-ink, #c4561d);
+		stroke-width: 1.5;
+		stroke-linejoin: round;
 	}
 	.clicks {
 		color: var(--color-ink, #101828);
