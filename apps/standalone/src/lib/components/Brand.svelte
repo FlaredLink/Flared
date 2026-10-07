@@ -29,9 +29,9 @@
 	}
 	.brand-mark {
 		align-self: center;
-		width: 0.85em;
-		height: 0.85em;
-		margin-right: 0.28em;
+		width: 1em;
+		height: 1em;
+		margin-right: 0.3em;
 		color: var(--color-button-primary);
 	}
 	.brand-dot {
