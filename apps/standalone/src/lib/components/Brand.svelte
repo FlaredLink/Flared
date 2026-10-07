@@ -4,6 +4,15 @@
 </script>
 
 <span class:small class="brand" role="img" aria-label="Flared"
+	><svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true"
+		><g
+			fill="none"
+			stroke="currentColor"
+			stroke-width="8"
+			stroke-linecap="square"
+			stroke-linejoin="round"
+			><path d="M28 19H20L8 31V45H22L34 33V27" /><path d="M36 45H44L56 33V19H42L30 31V37" /></g
+		></svg
 	>flared<span class="brand-dot"></span></span
 >
 
@@ -17,6 +26,13 @@
 		font-family: var(--font-wordmark);
 		font-weight: 700;
 		letter-spacing: -0.03em;
+	}
+	.brand-mark {
+		align-self: center;
+		width: 0.85em;
+		height: 0.85em;
+		margin-right: 0.28em;
+		color: var(--color-button-primary);
 	}
 	.brand-dot {
 		width: 0.2em;
