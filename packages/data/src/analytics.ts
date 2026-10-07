@@ -232,22 +232,30 @@ export async function readDimensions(
 	}));
 }
 
-// Clicks since a day for each of up to 100 links of one tenant.
-export async function readLinkClickTotals(
+// Clicks on each day since `from` for each of up to 100 links of one tenant: at most one row
+// per link and day.
+export async function readLinkDailyClicks(
 	db: D1Database,
 	tenantId: string,
 	linkIds: string[],
 	from: string
-): Promise<Map<string, number>> {
+): Promise<Map<string, Map<string, number>>> {
 	if (linkIds.length === 0) return new Map();
 	if (linkIds.length > 100) throw new Error('Too many links');
 	const { results } = await db
 		.prepare(
-			`SELECT link_id, SUM(clicks) AS clicks FROM daily_totals WHERE tenant_id = ? AND day >= ? AND link_id IN (${linkIds.map(() => '?').join(', ')}) GROUP BY link_id`
+			`SELECT link_id, day, clicks FROM daily_totals WHERE tenant_id = ? AND day >= ? AND link_id IN (${linkIds.map(() => '?').join(', ')}) LIMIT 4000`
 		)
 		.bind(tenantId, from, ...linkIds)
 		.all<Record<string, unknown>>();
-	return new Map(results.map((row) => [text(row.link_id, 'link'), count(row.clicks, 'clicks')]));
+	const links = new Map<string, Map<string, number>>();
+	for (const row of results) {
+		const linkId = text(row.link_id, 'link');
+		const days = links.get(linkId) ?? new Map<string, number>();
+		days.set(text(row.day, 'day'), count(row.clicks, 'clicks'));
+		links.set(linkId, days);
+	}
+	return links;
 }
 
 // One export page of a tenant's daily totals from a day on, in primary key order. after is the

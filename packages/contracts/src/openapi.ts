@@ -10,7 +10,8 @@ import {
 	blockReasons,
 	maxDestinationLength,
 	maxIdempotencyKeyLength,
-	maxTitleLength
+	maxTitleLength,
+	recentClickDays
 } from './links';
 import { tokenScopes, type TokenScope } from './tokens';
 
@@ -67,6 +68,16 @@ const schemas = {
 				clicksLast30Days: {
 					...nullable(count),
 					description: 'Clicks in the last 30 UTC days; null when analytics are unavailable.'
+				},
+				dailyClicksLast30Days: {
+					...nullable({
+						type: 'array',
+						items: count,
+						minItems: recentClickDays,
+						maxItems: recentClickDays
+					}),
+					description:
+						'Clicks on each of the last 30 UTC days, oldest first, ending today; null when analytics are unavailable.'
 				}
 			})
 		]

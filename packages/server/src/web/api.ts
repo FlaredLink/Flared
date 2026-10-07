@@ -6,7 +6,12 @@ import {
 	type LinkAnalytics,
 	type Usage
 } from '@flared/contracts/analytics';
-import type { Link, LinkPage, ListedLink } from '@flared/contracts/links';
+import {
+	recentClickDays,
+	type Link,
+	type LinkPage,
+	type ListedLink
+} from '@flared/contracts/links';
 import { isApiTokenPage, type ApiTokenPage } from '@flared/contracts/tokens';
 import { isConnectedAppPage, type ConnectedAppPage } from '@flared/contracts/oauth';
 import { isDomainPage, type DomainPage } from '@flared/contracts/domains';
@@ -78,7 +83,15 @@ export async function fetchLinks(
 	const links: ListedLink[] = Array.isArray(page.links)
 		? page.links.filter(isLink).map((link) => {
 				const clicks: unknown = Reflect.get(link, 'clicksLast30Days');
-				return { ...link, clicksLast30Days: count(clicks) ? clicks : null };
+				const daily: unknown = Reflect.get(link, 'dailyClicksLast30Days');
+				return {
+					...link,
+					clicksLast30Days: count(clicks) ? clicks : null,
+					dailyClicksLast30Days:
+						Array.isArray(daily) && daily.length === recentClickDays && daily.every(count)
+							? daily
+							: null
+				};
 			})
 		: [];
 	return {

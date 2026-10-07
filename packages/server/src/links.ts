@@ -204,7 +204,9 @@ export async function listLinks(
 	routing: D1Database,
 	tenantId: string,
 	query: { limit: number; cursor: string | null; search: string | null },
-	recentClicks: (linkIds: string[]) => Promise<Map<string, number> | null> = async () => null
+	recentClicks: (
+		linkIds: string[]
+	) => Promise<Map<string, { total: number; daily: number[] }> | null> = async () => null
 ): Promise<LinkPage> {
 	const rows = await listLinkRows(routing, tenantId, {
 		limit: query.limit + 1,
@@ -217,7 +219,8 @@ export async function listLinks(
 	return {
 		links: page.map((row) => ({
 			...toApiLink(row),
-			clicksLast30Days: clicks ? (clicks.get(row.id) ?? 0) : null
+			clicksLast30Days: clicks ? (clicks.get(row.id)?.total ?? 0) : null,
+			dailyClicksLast30Days: clicks ? (clicks.get(row.id)?.daily ?? null) : null
 		})),
 		nextCursor: rows.length > query.limit && last ? encodeCursor(last) : null
 	};

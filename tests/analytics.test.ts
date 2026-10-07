@@ -652,13 +652,16 @@ describe('analytics API', () => {
 
 	it('lists links with clicks in the last 30 days', async () => {
 		const { links } = (await (await get('user-a', '/v1/links')).json()) as {
-			links: { id: string; clicksLast30Days: number | null }[];
+			links: { id: string; clicksLast30Days: number | null; dailyClicksLast30Days: number[] }[];
 		};
 		expect(links).toEqual([expect.objectContaining({ id: 'link-a', clicksLast30Days: 3 })]);
+		// 30 days ending today (2026-10-02): one click yesterday and two today.
+		expect(links[0].dailyClicksLast30Days).toEqual([...Array(28).fill(0), 1, 2]);
 		const without = (await (await get('user-a', '/v1/links', api(null))).json()) as {
-			links: { clicksLast30Days: number | null }[];
+			links: { clicksLast30Days: number | null; dailyClicksLast30Days: number[] | null }[];
 		};
 		expect(without.links[0].clicksLast30Days).toBeNull();
+		expect(without.links[0].dailyClicksLast30Days).toBeNull();
 	});
 
 	it('reports monthly usage against the allowance', async () => {

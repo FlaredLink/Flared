@@ -31,10 +31,14 @@ export interface Link {
 }
 
 // A listed link also carries its clicks in the last 30 UTC days, or null when analytics are
-// not available at the moment.
+// not available at the moment. dailyClicksLast30Days has one count for each of those days,
+// oldest first, ending today; servers before it was added leave it out.
 export interface ListedLink extends Link {
 	clicksLast30Days: number | null;
+	dailyClicksLast30Days?: number[] | null;
 }
+
+export const recentClickDays = 30;
 
 export interface LinkPage {
 	links: ListedLink[];
@@ -180,8 +184,15 @@ export function isLink(value: unknown): value is Link {
 
 function isListedLink(value: unknown): value is ListedLink {
 	if (!isRecord(value) || !isLink(value)) return false;
+	const isCount = (item: unknown) => Number.isSafeInteger(item) && (item as number) >= 0;
 	const clicks: unknown = value.clicksLast30Days;
-	return clicks === null || (Number.isSafeInteger(clicks) && (clicks as number) >= 0);
+	const daily: unknown = value.dailyClicksLast30Days;
+	return (
+		(clicks === null || isCount(clicks)) &&
+		(daily === undefined ||
+			daily === null ||
+			(Array.isArray(daily) && daily.length === recentClickDays && daily.every(isCount)))
+	);
 }
 
 export function isLinkPage(value: unknown): value is LinkPage {

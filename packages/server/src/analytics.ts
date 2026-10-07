@@ -27,13 +27,14 @@ import {
 	readExportDimensions,
 	readExportTotals,
 	readDimensions,
-	readLinkClickTotals,
+	readLinkDailyClicks,
 	readMonthlyUsage,
 	readShardPolicy,
 	recordIngestionMinutes,
 	type IngestionMinute,
 	type ShardPolicy
 } from '@flared/data/analytics';
+import { recentClickDays } from '@flared/contracts/links';
 import { isTombstoned } from '@flared/data/deletions';
 import { readLimitUsage } from '@flared/data/routing-policy';
 import { readTenantShard } from '@flared/data/tenancy';
@@ -296,6 +297,12 @@ export async function getUsage(
 	};
 }
 
+export interface RecentClicks {
+	total: number;
+	// One count for each of the last 30 UTC days, oldest first, ending today.
+	daily: number[];
+}
+
 // Clicks in the last 30 days for each link, or null when analytics cannot be read. A list of
 // links stays available while analytics are not.
 export async function getRecentClicks(
@@ -304,11 +311,20 @@ export async function getRecentClicks(
 	tenantId: string,
 	linkIds: string[],
 	now: number
-): Promise<Map<string, number> | null> {
+): Promise<Map<string, RecentClicks> | null> {
 	if (!shards) return null;
 	try {
 		const { db } = await tenantShard(identity, shards, tenantId);
-		return await readLinkClickTotals(db, tenantId, linkIds, oldestRetainedDay(now, 30));
+		const from = oldestRetainedDay(now, recentClickDays);
+		const links = await readLinkDailyClicks(db, tenantId, linkIds, from);
+		const days = daysBetween(from, utcDay(now));
+		return new Map(
+			linkIds.map((linkId) => {
+				const stored = links.get(linkId);
+				const daily = days.map((day) => stored?.get(day) ?? 0);
+				return [linkId, { total: daily.reduce((sum, clicks) => sum + clicks, 0), daily }];
+			})
+		);
 	} catch {
 		console.error(JSON.stringify({ event: 'recent_clicks_unavailable' }));
 		return null;
