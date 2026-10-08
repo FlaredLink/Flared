@@ -20,7 +20,8 @@
 	let error = $state('');
 
 	const setupMessages: Record<string, string> = {
-		SETUP_SECRET_INVALID: 'The setup secret is not correct.',
+		SETUP_SECRET_INVALID:
+			'The setup secret is not correct. If you lost it, set a new SETUP_SECRET in the Cloudflare dashboard (steps above) and enter the new value.',
 		RATE_LIMITED: 'Too many attempts. Wait 15 minutes and try again.',
 		SETUP_CLAIMED:
 			'Setup has already started with another username or password. Use the ones you entered first.',
@@ -224,6 +225,12 @@
 				yours.
 				{#if data.state === 'initializing'}Setup started before; enter the same username and
 					password to finish it.{/if}
+			</p>
+			<p>
+				Lost it? Cloudflare never shows a secret again, so set a new one: in the Cloudflare
+				dashboard, open <strong>Workers &amp; Pages</strong>, select this Flared Worker, then
+				<strong>Settings → Variables and Secrets</strong>. Edit <code>SETUP_SECRET</code>, save and
+				deploy, then enter the new value here.
 			</p>
 			<form
 				onsubmit={(event) => {

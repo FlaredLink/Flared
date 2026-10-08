@@ -2,7 +2,8 @@
 # Generate each secret with: openssl rand -base64 48
 
 # The address of the app, with https:// and no path, such as
-# https://flared.<your-account-subdomain>.workers.dev
+# https://flared.YOUR-SUBDOMAIN.workers.dev, where YOUR-SUBDOMAIN is the workers.dev
+# subdomain of your Cloudflare account.
 APP_ORIGIN=
 # Signs sessions. 32 to 256 characters. Never reuse SETUP_SECRET.
 AUTH_SECRET=

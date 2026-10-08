@@ -13,7 +13,7 @@ This guide deploys one standalone Flared installation: one owner, one workspace,
 1. Open [Deploy on Cloudflare](https://deploy.workers.cloudflare.com/?url=https://github.com/FlaredLink/Flared).
 2. Keep the Worker name `flared`, or note the name you choose.
 3. Enter the secrets:
-   - `APP_ORIGIN`: `https://flared.<your-account-subdomain>.workers.dev`. Use your Worker name if you changed it. Use `https://` and no path. You can also leave it empty and set it after the first deploy.
+   - `APP_ORIGIN`: `https://flared.YOUR-SUBDOMAIN.workers.dev`, where `YOUR-SUBDOMAIN` is the workers.dev subdomain of your Cloudflare account. Use your Worker name if you changed it. Use `https://` and no path. You can also leave it empty and set it after the first deploy.
    - `AUTH_SECRET`: the first random secret.
    - `SETUP_SECRET`: the second random secret.
 4. Start the deploy. Cloudflare creates the three D1 databases and the two Queues, applies the migrations, and deploys the Worker.
@@ -26,6 +26,8 @@ If you left `APP_ORIGIN` empty, open the Worker's address. The page tells you th
 2. Enter `SETUP_SECRET`, a username, a password of at least 12 characters, and a workspace name.
 3. The wizard confirms the address, creates your first link, and waits until a click on it counts.
 4. Delete the `SETUP_SECRET` secret from the Worker. Setup never opens again, with or without it.
+
+If you lost `SETUP_SECRET` before setup, set a new value: **Workers & Pages → flared → Settings → Variables and Secrets**, edit `SETUP_SECRET`, save and deploy, then enter the new value at `/setup`. Cloudflare never shows a secret again after you save it.
 
 Without email, only the Cloudflare account can reset a forgotten password. See [recovery.md](recovery.md).
 

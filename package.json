@@ -45,7 +45,7 @@
 	"cloudflare": {
 		"bindings": {
 			"APP_ORIGIN": {
-				"description": "The app address with https:// and no path, such as https://flared.<your-account-subdomain>.workers.dev. You can set it after the first deploy."
+				"description": "The app address with no path or trailing slash: https://flared.YOUR-SUBDOMAIN.workers.dev, where YOUR-SUBDOMAIN is the workers.dev subdomain of your Cloudflare account. Use the Worker name in place of flared if you change it. Not sure? Leave it empty: after the deploy, the Worker address shows the exact value to set."
 			},
 			"AUTH_SECRET": {
 				"description": "A random value of 32 to 256 characters that signs sessions. Generate one at https://flared.page/secrets or with: openssl rand -base64 48"
