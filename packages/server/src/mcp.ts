@@ -257,7 +257,12 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 				links: z.array(linkOutput.extend({ clicksLast30Days: z.number().nullable() })),
 				nextCursor: z.string().nullable()
 			}),
-			annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+			annotations: {
+				title: 'List links',
+				readOnlyHint: true,
+				destructiveHint: false,
+				openWorldHint: false
+			}
 		},
 		({ search, limit, cursor }) =>
 			attempt(async () => {
@@ -279,7 +284,12 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 			description: 'Gets one short link by its ID or slug.',
 			inputSchema: z.object({ link: z.string().min(1).max(100).describe('The link ID or slug.') }),
 			outputSchema: z.object({ link: linkOutput }),
-			annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+			annotations: {
+				title: 'Get a link',
+				readOnlyHint: true,
+				destructiveHint: false,
+				openWorldHint: false
+			}
 		},
 		({ link }) => attempt(async () => ({ link: linkResult(await findLink(link)) }))
 	);
@@ -295,7 +305,12 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 				mimeType: z.literal('image/png'),
 				size: z.number()
 			}),
-			annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+			annotations: {
+				title: 'Get a link QR code',
+				readOnlyHint: true,
+				destructiveHint: false,
+				openWorldHint: false
+			}
 		},
 		({ link }) =>
 			attempt(
@@ -344,7 +359,12 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 					asOf: z.string()
 				})
 			}),
-			annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+			annotations: {
+				title: 'Get link analytics',
+				readOnlyHint: true,
+				destructiveHint: false,
+				openWorldHint: false
+			}
 		},
 		({ link, from, to }) =>
 			attempt(async () => {
@@ -379,7 +399,12 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 					asOf: z.string()
 				})
 			}),
-			annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+			annotations: {
+				title: 'Get usage',
+				readOnlyHint: true,
+				destructiveHint: false,
+				openWorldHint: false
+			}
 		},
 		() => attempt(async () => ({ usage: await client.getUsage() }))
 	);
@@ -396,7 +421,12 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 				used: z.number(),
 				limit: z.number()
 			}),
-			annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+			annotations: {
+				title: 'List domains',
+				readOnlyHint: true,
+				destructiveHint: false,
+				openWorldHint: false
+			}
 		},
 		() =>
 			attempt(async () => {
@@ -424,6 +454,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 			}),
 			outputSchema: z.object({ link: linkOutput, replayed: z.boolean() }),
 			annotations: {
+				title: 'Create a link',
 				readOnlyHint: false,
 				destructiveHint: false,
 				idempotentHint: true,
@@ -460,6 +491,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 			}),
 			outputSchema: z.object({ link: linkOutput }),
 			annotations: {
+				title: 'Update a link',
 				readOnlyHint: false,
 				destructiveHint: true,
 				idempotentHint: true,
@@ -489,6 +521,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 				}),
 				outputSchema: z.object({ link: linkOutput }),
 				annotations: {
+					title: enabled ? 'Turn on a link' : 'Turn off a link',
 					readOnlyHint: false,
 					destructiveHint: !enabled,
 					idempotentHint: true,

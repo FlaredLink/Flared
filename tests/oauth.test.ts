@@ -793,7 +793,9 @@ describe('MCP endpoint', () => {
 		for (const tool of listed.result.tools) {
 			expect(tool.title).toEqual(expect.any(String));
 			expect(tool.outputSchema).toEqual(expect.any(Object));
+			// The Claude directory reads the listing name from annotations.title.
 			expect(tool.annotations).toMatchObject({
+				title: tool.title,
 				readOnlyHint: expect.any(Boolean),
 				destructiveHint: expect.any(Boolean),
 				openWorldHint: expect.any(Boolean)
