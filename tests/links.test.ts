@@ -2,6 +2,7 @@
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { listReservedSlugs, setSlugReserved } from '../packages/data/src/links';
 import { createTenant } from '../packages/data/src/tenancy';
 import { createApi } from '../packages/server/src/api';
 import { createLink, createKeyLifetimeMs, generateSlug } from '../packages/server/src/links';
@@ -255,6 +256,56 @@ describe('link creation', () => {
 		});
 		expect(result.status).toBe(201);
 		expect(JSON.parse(result.body).link.slug).toBe('fresh01');
+	});
+
+	it('keeps an operator-reserved slug off the platform domain only, until it is removed', async () => {
+		const existing = await create('user-a', {
+			destination: 'https://example.com/in-use',
+			slug: 'in-use'
+		});
+		expect(existing.status).toBe(201);
+		expect(await setSlugReserved(routing(), 'brandword', true, clock)).toBe(true);
+		expect(await setSlugReserved(routing(), 'brandword', true, clock)).toBe(false);
+		expect(await setSlugReserved(routing(), 'in-use', true, clock)).toBe(true);
+		const refused = await create('user-a', {
+			destination: 'https://example.com/b',
+			slug: 'brandword'
+		});
+		expect(refused.status).toBe(409);
+		expect((await json(refused)).error.code).toBe('SLUG_TAKEN');
+		const own = await create('user-b', {
+			destination: 'https://example.com/b',
+			slug: 'brandword',
+			domainId: 'dom-other'
+		});
+		expect(own.status).toBe(201);
+		const generated = ['brandword', 'fresh02'];
+		const result = await createLink(routing(), {
+			tenantId: 'tenant-a',
+			key: nextKey(),
+			input: { destination: 'https://example.com/g', slug: null, title: null, domainId: null },
+			requestId: 'request-2',
+			now: clock,
+			newSlug: () => generated.shift() ?? 'unused',
+			newId: () => crypto.randomUUID()
+		});
+		expect(JSON.parse(result.body).link.slug).toBe('fresh02');
+		expect(await listReservedSlugs(routing())).toEqual([
+			{ slug: 'brandword', createdAt: clock, taken: false },
+			{ slug: 'in-use', createdAt: clock, taken: true }
+		]);
+		const redirect = await routing()
+			.prepare("SELECT status FROM links WHERE slug = 'in-use'")
+			.first<{ status: string }>();
+		expect(redirect?.status).toBe('active');
+		expect(await setSlugReserved(routing(), 'brandword', false, clock)).toBe(true);
+		expect(await setSlugReserved(routing(), 'in-use', false, clock)).toBe(true);
+		expect(
+			(await create('user-a', { destination: 'https://example.com/b', slug: 'brandword' })).status
+		).toBe(201);
+		expect(
+			(await create('user-b', { destination: 'https://example.com/b', slug: 'in-use' })).status
+		).toBe(409);
 	});
 
 	it('generates seven characters from the slug alphabet', () => {

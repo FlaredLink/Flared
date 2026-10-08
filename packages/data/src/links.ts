@@ -179,6 +179,7 @@ export async function createLinkRecord(
 						WHEN NOT EXISTS (SELECT 1 FROM domains WHERE id = ?3 AND state = 'active' AND (tenant_id IS NULL OR tenant_id = ?1)) THEN 'unavailable'
 						WHEN (SELECT COUNT(*) FROM links WHERE tenant_id = ?1 AND status = 'active') >= (SELECT active_link_limit FROM tenant_policy WHERE tenant_id = ?1) THEN 'limit_reached'
 						WHEN EXISTS (SELECT 1 FROM slug_reservations WHERE domain_id = ?3 AND slug = ?4) THEN ?5
+						WHEN EXISTS (SELECT 1 FROM reserved_slugs WHERE slug = ?4) AND EXISTS (SELECT 1 FROM domains WHERE id = ?3 AND tenant_id IS NULL) THEN ?5
 						ELSE 'created' END
 					WHERE tenant_id = ?1 AND key = ?2`
 				)
@@ -445,4 +446,45 @@ export async function setLinkBlock(
 		.bind(linkId)
 		.first<{ tenant_id: unknown }>();
 	return existing ? { tenantId: text(existing.tenant_id, 'tenant'), changed: false } : null;
+}
+
+// The operator's list of slugs kept off the platform domains, in slug order, at most 1,000.
+// taken: a link on a platform domain has used the slug, so removing it from the list frees
+// nothing.
+export async function listReservedSlugs(
+	db: D1Database
+): Promise<{ slug: string; createdAt: number; taken: boolean }[]> {
+	const { results } = await db
+		.prepare(
+			`SELECT r.slug, r.created_at, EXISTS (
+				SELECT 1 FROM slug_reservations s JOIN domains d ON d.id = s.domain_id
+				WHERE s.slug = r.slug AND d.tenant_id IS NULL
+			) AS taken
+			FROM reserved_slugs r ORDER BY r.slug LIMIT 1000`
+		)
+		.all<{ slug: unknown; created_at: unknown; taken: unknown }>();
+	return results.map((row) => ({
+		slug: text(row.slug, 'slug'),
+		createdAt: time(row.created_at, 'creation time'),
+		taken: row.taken === 1
+	}));
+}
+
+// Adds or removes one slug; returns whether the list changed. The caller validates the slug.
+export async function setSlugReserved(
+	db: D1Database,
+	slug: string,
+	reserved: boolean,
+	now: number
+): Promise<boolean> {
+	const result = await (
+		reserved
+			? db
+					.prepare(
+						'INSERT INTO reserved_slugs (slug, created_at) VALUES (?, ?) ON CONFLICT DO NOTHING'
+					)
+					.bind(slug, now)
+			: db.prepare('DELETE FROM reserved_slugs WHERE slug = ?').bind(slug)
+	).run();
+	return result.meta.changes > 0;
 }
