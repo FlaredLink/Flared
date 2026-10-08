@@ -22,4 +22,6 @@ A domain that is not active within 7 days shows **Failed**. Remove it and add it
 
 Removing a domain in Flared stops its links at once. Then remove the Custom Domain in the Cloudflare dashboard.
 
+An upgrade keeps your Custom Domains: a deploy from the Wrangler configuration, which lists no routes, leaves the Custom Domains added in the dashboard in place.
+
 To move the app itself to your own address, see [origin.md](origin.md).

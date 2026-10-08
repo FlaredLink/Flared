@@ -11,7 +11,7 @@ Flared has no automatic upgrades. You choose when to upgrade.
    git merge v0.2.0
    ```
 
-   Deploy on Cloudflare creates your copy as one new commit with no Flared history, so the first merge stops with "refusing to merge unrelated histories". Once, before that first merge, record the Flared version your copy came from, such as `v0.1.0`. This keeps your files, including the database IDs that Cloudflare wrote into `wrangler.jsonc`:
+   Deploy on Cloudflare creates your copy as one new commit with no Flared history, so the first merge stops with "refusing to merge unrelated histories". Once, before that first merge, record the Flared version your copy came from, such as `v0.1.0`: the `version` in your copy's `package.json`, also shown in the app's footer. This keeps your files, including the database IDs that Cloudflare wrote into `wrangler.jsonc`:
 
    ```sh
    git merge --allow-unrelated-histories -s ours -m "Record the Flared version this copy came from" v0.1.0
