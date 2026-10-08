@@ -367,9 +367,9 @@
 		</form>
 		{#if limitsView.analyticsBytes !== null}
 			<p>
-				The analytics database uses {megabytes(limitsView.analyticsBytes)}. On Workers Paid, one D1
-				database holds up to 10 GB, and the plan includes monthly D1 reads, D1 writes, and Queue
-				operations before any usage charge.
+				The analytics database uses {megabytes(limitsView.analyticsBytes)}. One D1 database holds up
+				to 500 MB on Workers Free and 10 GB on Workers Paid. Workers Free also limits D1 reads, D1
+				writes, and Queue operations each day.
 			</p>
 		{/if}
 	{:else}

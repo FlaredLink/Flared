@@ -1,6 +1,6 @@
 # Backups
 
-D1 keeps a point-in-time history of each database for 30 days on Workers Paid (Time Travel).
+D1 keeps a point-in-time history of each database (Time Travel): 7 days on Workers Free and 30 days on Workers Paid.
 
 ## Restore a database
 

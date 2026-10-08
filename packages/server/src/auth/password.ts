@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The owner's password hash: PBKDF2-SHA256 through Web Crypto. It runs natively in the Worker,
-// so one hash fits the CPU limit of Workers Free; Better Auth's default scrypt takes about 50 ms.
-// 100,000 iterations is the most Workers accepts. The stored form is
+// The owner's password hash: PBKDF2-SHA256 through Web Crypto, which runs natively in the
+// Worker. 100,000 iterations is the most Workers accepts. On Cloudflare one hash takes about 20 to
+// 30 ms of CPU (measured 2026-10-08), above the documented 10 ms of Workers Free, which still
+// served it; the self-hosting docs name error 1102 and Workers Paid as the way out. The stored form is
 // pbkdf2-sha256$<iterations>$<16-byte salt, hex>$<32-byte key, hex>.
 const iterations = 100000;
 const saltBytes = 16;
