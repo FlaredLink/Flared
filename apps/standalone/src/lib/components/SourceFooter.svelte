@@ -3,11 +3,13 @@
 	import { page } from '$app/state';
 	import { sourceLink } from '$lib/source';
 
-	const href = $derived(sourceLink(page.data.sourceUrl, __FLARED_COMMIT__));
+	const href = $derived(sourceLink(page.data.sourceUrl, __FLARED_COMMIT__, __FLARED_VERSION__));
 </script>
 
 <footer class="source-footer">
-	<span>Flared is open source under the AGPL.</span>
+	<span
+		>Flared{__FLARED_VERSION__ ? ` ${__FLARED_VERSION__}` : ''} is open source under the AGPL.</span
+	>
 	<a {href} rel="noopener">Source code</a>
 </footer>
 

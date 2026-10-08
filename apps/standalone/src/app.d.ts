@@ -5,6 +5,7 @@ import type { AuthService } from '@flared/server/web';
 declare global {
 	// The commit of this build, or '' (vite.config.ts).
 	const __FLARED_COMMIT__: string;
+	const __FLARED_VERSION__: string;
 	namespace App {
 		interface Platform {
 			// Set by worker/index.ts for every page.
