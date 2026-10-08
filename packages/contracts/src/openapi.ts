@@ -3,7 +3,7 @@
 // in this package; tests check it against the API's routes and real responses. The session-only
 // token management routes for the dashboard are not part of the public API.
 import { browserFamilies, deviceCategories, osFamilies } from './analytics';
-import { domainFailures, domainStates } from './domains';
+import { domainFailures, domainSetups, domainStates } from './domains';
 import { exportAnalyticsPageSize, exportDimensions, exportLinkPageSize } from './export';
 import { errorStatus } from './errors';
 import {
@@ -221,6 +221,11 @@ const schemas = {
 			description: 'Only an active domain serves links.'
 		},
 		isDefault: { type: 'boolean', description: 'Used for links created without a domain.' },
+		setup: {
+			...nullable({ type: 'string', enum: [...domainSetups] }),
+			description:
+				'How to connect the hostname. dns: create the records below. worker_custom_domain: add the hostname as a Custom Domain of this installation’s Worker in the Cloudflare dashboard. Null for platform domains.'
+		},
 		records: {
 			type: 'array',
 			items: object({
@@ -228,7 +233,7 @@ const schemas = {
 				name: { type: 'string' },
 				value: { type: 'string' }
 			}),
-			description: 'The DNS records to create. Empty for platform domains.'
+			description: 'The DNS records to create when setup is dns. Otherwise empty.'
 		},
 		error: nullable(
 			object({ code: { type: 'string', enum: [...domainFailures] }, message: { type: 'string' } })
@@ -449,7 +454,7 @@ export function openApiDocument(serverUrl: string) {
 					'Add a custom domain',
 					'domains:write',
 					{
-						'201': domainResponse('The domain. Create its DNS records next.'),
+						'201': domainResponse('The domain. Follow its setup next.'),
 						'200': domainResponse('Your workspace already has this domain.')
 					},
 					{

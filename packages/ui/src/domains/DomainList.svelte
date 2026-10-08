@@ -101,7 +101,10 @@
 			}
 			hostname = '';
 			await onChanged();
-			status = `Added ${result.value.hostname}. Add the DNS record shown below.`;
+			status =
+				result.value.setup === 'worker_custom_domain'
+					? `Added ${result.value.hostname}. Follow the steps shown below.`
+					: `Added ${result.value.hostname}. Add the DNS record shown below.`;
 		} finally {
 			pending = null;
 		}
@@ -191,7 +194,11 @@
 							></span
 						>
 						<span class="name">{domain.hostname}</span>
-						<span class="badge {domain.state}">{stateLabels[domain.state]}</span>
+						<span class="badge {domain.state}"
+							>{domain.state === 'pending' && domain.setup === 'worker_custom_domain'
+								? 'Waiting for setup'
+								: stateLabels[domain.state]}</span
+						>
 					</div>
 					{#if domain.error}<p class="error">{domain.error.message}</p>{/if}
 					{#if domain.state === 'active'}
@@ -199,7 +206,37 @@
 							{#if domain.activatedAt}Active since <time datetime={domain.activatedAt}
 									>{dates.format(new Date(domain.activatedAt))}</time
 								>.
-							{/if}Keep the DNS record in place so your links keep working.
+							{/if}{domain.setup === 'worker_custom_domain'
+								? 'Keep the Custom Domain in place so your links keep working.'
+								: 'Keep the DNS record in place so your links keep working.'}
+						</p>
+					{:else if domain.setup === 'worker_custom_domain'}
+						<ol class="meta steps">
+							<li>
+								In the Cloudflare dashboard, open <strong>Workers &amp; Pages</strong> and select this
+								Flared Worker.
+							</li>
+							<li>
+								Open <strong>Settings → Domains &amp; Routes</strong>, choose <strong>Add</strong>,
+								then
+								<strong>Custom domain</strong>.
+							</li>
+							<li>
+								<span class="cell"
+									>Enter <code>{domain.hostname}</code>
+									<button
+										type="button"
+										class="copy"
+										aria-label={`Copy ${domain.hostname}`}
+										onclick={() => void copy(domain.hostname, 'Hostname')}>Copy</button
+									></span
+								>
+							</li>
+						</ol>
+						<p class="meta">
+							The domain must be on Cloudflare in the same account as this Worker. Checks run
+							automatically every 10 minutes; Cloudflare usually issues the certificate within a few
+							minutes.
 						</p>
 					{:else}
 						<p class="meta">
@@ -385,6 +422,12 @@
 	}
 	.usage {
 		font-variant-numeric: tabular-nums;
+	}
+	.steps {
+		display: grid;
+		gap: 0.35rem;
+		margin: 0;
+		padding-left: 1.25rem;
 	}
 	.usage.warn {
 		color: var(--color-strong, #101828);

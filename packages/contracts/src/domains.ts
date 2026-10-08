@@ -27,7 +27,7 @@ export const domainFailureMessages: Record<DomainFailure, string> = {
 	certificate_failed:
 		'The HTTPS certificate could not be issued. Check for CAA records that block it.',
 	blocked: 'This hostname cannot be used.',
-	expired: 'The DNS record was not found within 7 days. Remove the domain and add it again.',
+	expired: 'The domain was not set up within 7 days. Remove the domain and add it again.',
 	provider_error: 'We could not set up this domain. Check it again in a few minutes.'
 };
 
@@ -38,6 +38,12 @@ export function isDomainFailure(value: unknown): value is DomainFailure {
 // An unverified claim keeps the hostname for this long, as Cloudflare keeps retrying.
 export const domainClaimLifetimeMs = 7 * 24 * 60 * 60 * 1000;
 export const domainCheckIntervalMs = 60 * 1000;
+
+// How a workspace connects a hostname. dns: create the records in Domain.records.
+// worker_custom_domain: add the hostname as a Custom Domain of this installation's Worker in the
+// Cloudflare dashboard.
+export const domainSetups = ['dns', 'worker_custom_domain'] as const;
+export type DomainSetup = (typeof domainSetups)[number];
 
 export interface DnsRecord {
 	type: 'CNAME';
@@ -52,6 +58,8 @@ export interface Domain {
 	state: DomainState;
 	// The installation default for links created without a domain.
 	isDefault: boolean;
+	// Null for platform domains and when the installation cannot add domains.
+	setup: DomainSetup | null;
 	// The records to create; empty for platform domains.
 	records: DnsRecord[];
 	error: { code: DomainFailure; message: string } | null;
@@ -132,6 +140,7 @@ export function isDomain(value: unknown): value is Domain {
 		(value.kind === 'platform' || value.kind === 'workspace') &&
 		(domainStates as readonly unknown[]).includes(value.state) &&
 		typeof value.isDefault === 'boolean' &&
+		(value.setup === null || (domainSetups as readonly unknown[]).includes(value.setup)) &&
 		Array.isArray(value.records) &&
 		value.records.every(
 			(record) =>

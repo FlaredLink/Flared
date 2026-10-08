@@ -42,6 +42,7 @@ function deps(now: number, change: Partial<DeletionDependencies> = {}): Deletion
 		domains: {
 			reservedHostnames: [],
 			provider: {
+				setup: 'dns',
 				records: () => [],
 				start: async () => ({ status: 'waiting' }),
 				check: async () => ({ status: 'ready' }),

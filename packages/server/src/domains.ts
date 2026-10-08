@@ -9,6 +9,7 @@ import {
 	isWithinHostnames,
 	type DnsRecord,
 	type Domain,
+	type DomainSetup,
 	type DomainFailure,
 	type DomainPage
 } from '@flared/contracts/domains';
@@ -35,6 +36,7 @@ export interface ProviderDomain {
 }
 
 export interface DomainProvider {
+	setup: DomainSetup;
 	// The DNS records a workspace creates for the hostname.
 	records(hostname: string): DnsRecord[];
 	// Attaches the hostname. Must be safe to repeat for the same claim.
@@ -75,6 +77,7 @@ export function toApiDomain(
 		kind: workspace ? 'workspace' : 'platform',
 		state: expired ? 'failed' : record.state,
 		isDefault: record.isDefault,
+		setup: workspace && provider ? provider.setup : null,
 		records: workspace && provider ? provider.records(record.hostname) : [],
 		error: failure ? { code: failure, message: domainFailureMessages[failure] } : null,
 		activeLinks: workspace ? record.activeLinks : null,

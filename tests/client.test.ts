@@ -48,6 +48,7 @@ function api() {
 		publicApiUrl: baseUrl,
 		domains: {
 			provider: {
+				setup: 'dns',
 				records: (hostname) => [{ type: 'CNAME', name: hostname, value: 'customers.example' }],
 				start: async () => ({ status: 'waiting' }),
 				check: async () => ({ status: 'ready' }),

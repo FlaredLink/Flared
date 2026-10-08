@@ -181,6 +181,32 @@ describe('the app host after setup', () => {
 		expect(sent).toHaveLength(1);
 	});
 
+	it('adds an own domain as a Worker Custom Domain and serves its challenge only there', async () => {
+		const added = await call(`${origin}/api/v1/domains`, {
+			method: 'POST',
+			headers: browser(owner),
+			body: JSON.stringify({ hostname: 'go.own.example.com' })
+		});
+		expect(added.status).toBe(201);
+		const { domain } = (await added.json()) as {
+			domain: { id: string; setup: string; records: unknown[] };
+		};
+		expect(domain).toMatchObject({ setup: 'worker_custom_domain', records: [] });
+		const path = '/.well-known/flared-domain-challenge';
+		const own = await call(`https://go.own.example.com${path}`);
+		expect(own.status).toBe(200);
+		expect(await own.text()).toMatch(/^[0-9a-f]{64}$/);
+		expect((await call(`${origin}${path}`)).status).toBe(404);
+		expect((await call(`https://go.other.example.com${path}`)).status).toBe(404);
+		// Removed, so the frequent job below has no hostname to fetch over the network.
+		const removed = await call(`${origin}/api/v1/domains/${domain.id}`, {
+			method: 'DELETE',
+			headers: browser(owner)
+		});
+		expect(removed.status).toBe(204);
+		expect((await call(`https://go.own.example.com${path}`)).status).toBe(404);
+	});
+
 	it('keeps cookies and tokens apart: /api/v1 sessions, /v1 tokens, MCP OAuth', async () => {
 		const created = await call(`${origin}/api/v1/tokens`, {
 			method: 'POST',
@@ -318,12 +344,12 @@ describe('jobs, the click Queue, and deletion', () => {
 		});
 		await worker.scheduled(controller, baseEnv(moved));
 		expect(await count("SELECT COUNT(*) AS n FROM job_runs WHERE last_outcome = 'succeeded'")).toBe(
-			4
+			5
 		);
 		const daily = createScheduledController({ cron: '17 3 * * *', scheduledTime: Date.now() });
 		await worker.scheduled(daily, baseEnv(moved));
 		expect(await count("SELECT COUNT(*) AS n FROM job_runs WHERE last_outcome = 'succeeded'")).toBe(
-			10
+			11
 		);
 		expect((await call(`${movedOrigin}/healthz`, {}, moved)).status).toBe(200);
 	});

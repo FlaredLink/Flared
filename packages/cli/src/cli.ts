@@ -331,7 +331,7 @@ const commands: Record<string, Command> = {
 	},
 	'domain list': {
 		usage: 'flared domain list',
-		summary: 'List the domains for links, their status, and the DNS records to create.',
+		summary: 'List the domains for links, their status, and how to connect each one.',
 		options: [],
 		args: 0,
 		async run({ client, print }) {
@@ -341,7 +341,7 @@ const commands: Record<string, Command> = {
 	},
 	'domain add': {
 		usage: 'flared domain add HOSTNAME',
-		summary: 'Add a subdomain you own, such as go.example.com, and print the DNS record to create.',
+		summary: 'Add a subdomain you own, such as go.example.com, and print how to connect it.',
 		options: [],
 		args: 1,
 		async run({ args, client, print }) {
@@ -354,7 +354,7 @@ const commands: Record<string, Command> = {
 	},
 	'domain check': {
 		usage: 'flared domain check HOSTNAME_OR_ID',
-		summary: 'Check the DNS record and the HTTPS certificate now.',
+		summary: 'Check now whether the domain is connected.',
 		options: [],
 		args: 1,
 		async run({ args, client, print }) {

@@ -71,6 +71,7 @@ const oauth = () =>
 
 // Only the records matter here: no MCP tool adds, checks, or removes a domain.
 const domainProvider: DomainProvider = {
+	setup: 'dns',
 	records: (hostname) => [{ type: 'CNAME', name: hostname, value: 'customers.short.example' }],
 	start: async () => ({ status: 'waiting' }),
 	check: async () => ({ status: 'waiting' }),
@@ -921,6 +922,7 @@ describe('MCP endpoint', () => {
 					state: 'active',
 					kind: 'platform',
 					isDefault: true,
+					setup: null,
 					records: [],
 					error: null
 				},
@@ -929,6 +931,7 @@ describe('MCP endpoint', () => {
 					state: 'active',
 					kind: 'workspace',
 					isDefault: false,
+					setup: 'dns',
 					records: [{ type: 'CNAME', name: 'go.brand.com', value: 'customers.short.example' }],
 					error: null
 				},
@@ -937,6 +940,7 @@ describe('MCP endpoint', () => {
 					state: 'pending',
 					kind: 'workspace',
 					isDefault: false,
+					setup: 'dns',
 					records: [{ type: 'CNAME', name: 'links.shop.com', value: 'customers.short.example' }],
 					error: null
 				}

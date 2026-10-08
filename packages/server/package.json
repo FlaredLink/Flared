@@ -30,6 +30,7 @@
 		"./oauth/handler": "./src/oauth/handler.ts",
 		"./mcp": "./src/mcp.ts",
 		"./domains": "./src/domains.ts",
+		"./worker-domains": "./src/worker-domains.ts",
 		"./notices": "./src/notices.ts",
 		"./deletion": "./src/deletion.ts",
 		"./account": "./src/account.ts",

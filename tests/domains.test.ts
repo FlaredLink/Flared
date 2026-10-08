@@ -12,6 +12,13 @@ import {
 	type DomainProvider
 } from '../packages/server/src/domains';
 import { createRedirectHandler, snapshotLifetimeMs } from '../packages/server/src/redirect';
+import {
+	checkWaitingDomains,
+	createWorkerDomainProvider,
+	domainChallengePath,
+	serveDomainChallenge,
+	type ChallengeFetch
+} from '../packages/server/src/worker-domains';
 import { projectPolicy } from '../packages/server/src/tenancy';
 import { qrMatrix, qrSvg } from '../packages/client/src/qr';
 
@@ -25,6 +32,7 @@ let clock = start;
 let next: DomainEvidence | Error = { status: 'waiting' };
 const calls: string[] = [];
 const provider: DomainProvider = {
+	setup: 'dns',
 	records: (hostname) => [{ type: 'CNAME', name: hostname, value: 'customers.example' }],
 	start: async (domain) => {
 		calls.push(`start ${domain.hostname}`);
@@ -41,13 +49,13 @@ const provider: DomainProvider = {
 	}
 };
 
-function api(options: { withProvider?: boolean } = {}) {
+function api(options: { withProvider?: boolean; provider?: DomainProvider } = {}) {
 	return createApi({
 		identity: identity(),
 		routing: routing(),
 		appOrigin: origin,
 		domains: {
-			provider: options.withProvider === false ? undefined : provider,
+			provider: options.withProvider === false ? undefined : (options.provider ?? provider),
 			reservedHostnames: ['short.example', 'brand.dev']
 		},
 		// Test-only principals: a session, or a token with the scopes in x-test-scopes.
@@ -160,7 +168,8 @@ beforeAll(async () => {
 		['user-d', 'tenant-d', 3],
 		['user-e', 'tenant-e', 1],
 		['user-f', 'tenant-f', 1],
-		['user-g', 'tenant-g', 3]
+		['user-g', 'tenant-g', 3],
+		['user-w', 'tenant-w', 20]
 	] as const)
 		await addTenant(user, tenant, limit);
 });
@@ -184,6 +193,7 @@ describe('listing', () => {
 					kind: 'platform',
 					state: 'active',
 					isDefault: true,
+					setup: null,
 					records: [],
 					error: null,
 					activeLinks: null,
@@ -251,6 +261,7 @@ describe('adding a domain', () => {
 			kind: 'workspace',
 			state: 'pending',
 			isDefault: false,
+			setup: 'dns',
 			records: [
 				{ type: 'CNAME', name: 'go.xn--bcher-kva.example.com', value: 'customers.example' }
 			],
@@ -493,6 +504,169 @@ describe('removal and claims', () => {
 		await call('user-g', 'DELETE', `/v1/domains/${domain.id}`);
 		clock += snapshotLifetimeMs;
 		expect((await open()).status).toBe(404);
+	});
+});
+
+describe('own domains of a standalone Worker', () => {
+	// The network: each hostname answers with what the test says. 'worker' serves the Worker's
+	// own challenge response for that host, as a Custom Domain of the Worker would.
+	type Answer = 'worker' | Response | Error;
+	const answers = new Map<string, Answer>();
+	const fetched: { url: string; redirect: RequestInit['redirect'] }[] = [];
+	const network: ChallengeFetch = async (input, init) => {
+		fetched.push({ url: input, redirect: init.redirect });
+		const url = new URL(input);
+		const answer = answers.get(url.hostname);
+		if (answer === undefined) throw new TypeError('Network connection lost');
+		if (answer instanceof Error) throw answer;
+		if (answer === 'worker') return serveDomainChallenge(new Request(input), routing(), clock);
+		return answer;
+	};
+	const worker = () =>
+		createWorkerDomainProvider({ routing: routing(), fetch: network, now: () => clock });
+	const workerApi = () => api({ provider: worker() });
+	const addOwn = async (hostname: string) => {
+		const response = await call('user-w', 'POST', '/v1/domains', { hostname }, {}, workerApi());
+		expect(response.status).toBe(201);
+		return (await json(response)).domain;
+	};
+	const checkOwn = async (id: string) =>
+		(
+			await json(
+				await call('user-w', 'POST', `/v1/domains/${id}/check`, undefined, {}, workerApi())
+			)
+		).domain;
+	const served = (hostname: string, method = 'GET') =>
+		serveDomainChallenge(
+			new Request(`https://${hostname}${domainChallengePath}`, { method }),
+			routing(),
+			clock
+		);
+
+	beforeEach(() => {
+		answers.clear();
+		fetched.length = 0;
+	});
+
+	it('asks for a Custom Domain and serves the challenge only on that hostname', async () => {
+		const domain = await addOwn('go.own.example.com');
+		expect(domain).toMatchObject({ state: 'pending', setup: 'worker_custom_domain', records: [] });
+		const response = await served('go.own.example.com');
+		expect(response.status).toBe(200);
+		expect(response.headers.get('cache-control')).toBe('no-store');
+		expect(await response.text()).toMatch(/^[0-9a-f]{64}$/);
+		expect((await served('other.own.example.com')).status).toBe(404);
+		expect((await served('short.example')).status).toBe(404);
+		expect((await served('go.own.example.com', 'POST')).status).toBe(405);
+	});
+
+	it('activates when the hostname serves the challenge back over HTTPS, then stops serving it', async () => {
+		const domain = await addOwn('go.ready.example.com');
+		answers.set('go.ready.example.com', 'worker');
+		const checked = await checkOwn(domain.id);
+		expect(checked).toMatchObject({ state: 'active', error: null });
+		expect(fetched).toEqual([
+			{ url: `https://go.ready.example.com${domainChallengePath}`, redirect: 'manual' }
+		]);
+		// A used challenge is never served again, and a later check keeps the domain active.
+		expect((await served('go.ready.example.com')).status).toBe(404);
+		clock += 60000;
+		expect((await checkOwn(domain.id)).state).toBe('active');
+	});
+
+	it('keeps waiting for a wrong value, a redirect, another status, a long body, or no answer', async () => {
+		const domain = await addOwn('go.wrong.example.com');
+		const challenge = await (await served('go.wrong.example.com')).text();
+		const cases: Answer[] = [
+			new Response('not-the-challenge'),
+			new Response(`${challenge}\n`),
+			new Response(null, {
+				status: 302,
+				headers: { location: `https://elsewhere.example.com${domainChallengePath}` }
+			}),
+			new Response(challenge, { status: 201 }),
+			new Response(challenge + 'x'.repeat(2048)),
+			new DOMException('The operation timed out.', 'TimeoutError'),
+			new TypeError('Network connection lost')
+		];
+		for (const answer of cases) {
+			answers.set('go.wrong.example.com', answer);
+			clock += 60000;
+			expect((await checkOwn(domain.id)).state).toBe('pending');
+		}
+		// Only the HTTPS URL on the exact hostname is fetched, never by following a redirect.
+		expect(new Set(fetched.map((entry) => entry.url))).toEqual(
+			new Set([`https://go.wrong.example.com${domainChallengePath}`])
+		);
+		expect(fetched.every((entry) => entry.redirect === 'manual')).toBe(true);
+		expect((await served('go.wrong.example.com')).status).toBe(200);
+	});
+
+	it('does not accept the challenge of one claim for another', async () => {
+		const first = await addOwn('go.first.example.com');
+		await addOwn('go.second.example.com');
+		const firstChallenge = await (await served('go.first.example.com')).text();
+		answers.set('go.second.example.com', new Response(firstChallenge));
+		const checked = await json(
+			await call('user-w', 'GET', '/v1/domains', undefined, {}, workerApi())
+		);
+		const second = checked.domains.find(
+			(entry: { hostname: string }) => entry.hostname === 'go.second.example.com'
+		);
+		expect((await checkOwn(second.id)).state).toBe('pending');
+		expect((await checkOwn(first.id)).state).toBe('pending');
+	});
+
+	it('stops serving the challenge when the claim expires or the domain is removed', async () => {
+		const expiring = await addOwn('go.late.example.com');
+		const removed = await addOwn('go.removed.example.com');
+		await call('user-w', 'DELETE', `/v1/domains/${removed.id}`, undefined, {}, workerApi());
+		expect((await served('go.removed.example.com')).status).toBe(404);
+		const left = await routing()
+			.prepare('SELECT COUNT(*) AS n FROM domain_challenges WHERE domain_id = ?')
+			.bind(removed.id)
+			.first<{ n: number }>();
+		expect(left?.n).toBe(0);
+
+		clock += domainClaimLifetimeMs;
+		expect((await served('go.late.example.com')).status).toBe(404);
+		answers.set('go.late.example.com', 'worker');
+		const result = await checkWaitingDomains({
+			routing: routing(),
+			provider: worker(),
+			limit: 50,
+			now: () => clock
+		});
+		expect(fetched.map((entry) => entry.url)).not.toContain(
+			`https://go.late.example.com${domainChallengePath}`
+		);
+		expect(result.failed).toBe(0);
+		const shown = await json(
+			await call('user-w', 'GET', `/v1/domains/${expiring.id}`, undefined, {}, workerApi())
+		);
+		expect(shown.domain).toMatchObject({ state: 'failed', error: { code: 'expired' } });
+	});
+
+	it('checks waiting domains on a schedule, a bounded number per run, taking turns', async () => {
+		const hostnames = ['go.job1.example.com', 'go.job2.example.com', 'go.job3.example.com'];
+		const domains = [];
+		for (const hostname of hostnames) domains.push(await addOwn(hostname));
+		const run = () =>
+			checkWaitingDomains({ routing: routing(), provider: worker(), limit: 2, now: () => clock });
+
+		expect(await run()).toEqual({ checked: 2, failed: 0 });
+		const firstRun = fetched.map((entry) => new URL(entry.url).hostname);
+		fetched.length = 0;
+		clock += 600000;
+		answers.set('go.job3.example.com', 'worker');
+		await run();
+		const secondRun = fetched.map((entry) => new URL(entry.url).hostname);
+		// The domain the first run skipped goes first in the next one.
+		expect(secondRun[0]).toBe(hostnames.find((hostname) => !firstRun.includes(hostname)));
+		const third = await json(
+			await call('user-w', 'GET', `/v1/domains/${domains[2].id}`, undefined, {}, workerApi())
+		);
+		expect(third.domain.state).toBe('active');
 	});
 });
 

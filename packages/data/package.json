@@ -15,6 +15,7 @@
 		"./tokens": "./src/tokens.ts",
 		"./oauth": "./src/oauth.ts",
 		"./domains": "./src/domains.ts",
+		"./domain-challenges": "./src/domain-challenges.ts",
 		"./notices": "./src/notices.ts",
 		"./deletions": "./src/deletions.ts",
 		"./operations": "./src/operations.ts"

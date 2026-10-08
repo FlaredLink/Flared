@@ -124,14 +124,16 @@ function domainKind(domain: Domain): string {
 
 export function domainTable(page: DomainPage): string {
 	const rows = [
-		['HOSTNAME', 'STATUS', 'KIND', 'DNS RECORD'],
+		['HOSTNAME', 'STATUS', 'KIND', 'SETUP'],
 		...page.domains.map((domain) => [
 			domain.hostname,
 			domain.state,
 			domainKind(domain),
-			domain.records
-				.map((record) => `${record.type} ${record.name} -> ${record.value}`)
-				.join(', ') || '-'
+			domain.setup === 'worker_custom_domain'
+				? 'Worker Custom Domain'
+				: domain.records
+						.map((record) => `${record.type} ${record.name} -> ${record.value}`)
+						.join(', ') || '-'
 		])
 	];
 	const problems = page.domains.flatMap((domain) =>
@@ -155,7 +157,12 @@ export function domainDetails(domain: Domain): string {
 			['ID', domain.id]
 		])
 	];
-	if (domain.state !== 'active' && domain.records.length > 0)
+	if (domain.state !== 'active' && domain.setup === 'worker_custom_domain')
+		lines.push(
+			'',
+			`In the Cloudflare dashboard, add ${domain.hostname} as a Custom Domain of this Flared Worker: Workers & Pages, the Worker, Settings, Domains & Routes, Add, Custom domain. The domain must be on Cloudflare in the same account. Then run flared domain check.`
+		);
+	else if (domain.state !== 'active' && domain.records.length > 0)
 		lines.push(
 			'',
 			`Create ${domain.records.length === 1 ? 'this DNS record' : 'these DNS records'} where you manage the domain, then run flared domain check:`,

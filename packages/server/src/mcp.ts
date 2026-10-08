@@ -8,7 +8,12 @@ import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod';
 import { createClient, FlaredApiError, type FlaredClient } from '@flared/client';
 import { defaultQrSize, qrPng } from '@flared/client/qr';
-import { domainStates, normalizeHostname, type Domain } from '@flared/contracts/domains';
+import {
+	domainSetups,
+	domainStates,
+	normalizeHostname,
+	type Domain
+} from '@flared/contracts/domains';
 import { blockReasons, type Link } from '@flared/contracts/links';
 import { tokenScopes, type TokenScope } from '@flared/contracts/tokens';
 import { countMcpCall, findAccessToken } from '@flared/data/oauth';
@@ -101,6 +106,7 @@ const domainOutput = z.object({
 	state: z.enum(domainStates),
 	kind: z.enum(['platform', 'workspace']),
 	isDefault: z.boolean(),
+	setup: z.enum(domainSetups).nullable(),
 	records: z.array(z.object({ type: z.literal('CNAME'), name: z.string(), value: z.string() })),
 	error: z.object({ code: z.string(), message: z.string() }).nullable()
 });
@@ -112,6 +118,7 @@ function domainResult(domain: Domain): DomainOutput {
 		state: domain.state,
 		kind: domain.kind,
 		isDefault: domain.isDefault,
+		setup: domain.setup,
 		records: domain.records,
 		error: domain.error
 	};
@@ -414,7 +421,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 		{
 			title: 'List domains',
 			description:
-				'Lists the domains links can use, with their status and the DNS records to create. Only active domains serve links.',
+				'Lists the domains links can use, with their status and how to connect each one. Only active domains serve links.',
 			inputSchema: z.object({}),
 			outputSchema: z.object({
 				domains: z.array(domainOutput),

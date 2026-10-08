@@ -28,6 +28,11 @@ import {
 import { isOAuthPath } from '@flared/server/oauth';
 import { createDeadLetterConsumer } from '@flared/server/operations';
 import { createRedirectHandler } from '@flared/server/redirect';
+import {
+	createWorkerDomainProvider,
+	domainChallengePath,
+	serveDomainChallenge
+} from '@flared/server/worker-domains';
 import { handleSetup } from '@flared/server/setup';
 import type { AuthService } from '@flared/server/web';
 import { forwardAuthRoute, sharedAuthMethods } from '@flared/server/web/auth';
@@ -154,7 +159,10 @@ class Installation {
 			appOrigin: config.origin,
 			tokenAuth: this.tokenAuth,
 			publicApiUrl: `${config.origin}/v1`,
-			domains: { reservedHostnames: [config.host] },
+			domains: {
+				provider: createWorkerDomainProvider({ routing: config.routing }),
+				reservedHostnames: [config.host]
+			},
 			authenticate,
 			fixedTenantId: this.fixedTenantId,
 			icons: { store: workersCacheIconStore() }
@@ -220,7 +228,7 @@ async function appHost(
 	if (status.state === 'misconfigured') return misconfiguredPage();
 	// Short links on the app host; reserved paths never reach the redirect handler.
 	if (!isReservedPath(path)) return site.redirects().fetch(request, ctx);
-	if (path === '/.well-known/flared-domain-challenge') return notFound();
+	if (path === domainChallengePath) return notFound();
 
 	if (path === '/api/setup')
 		return handleSetup(rebuilt(request, ['origin', 'content-type']), {
@@ -382,7 +390,10 @@ export default {
 		}
 		const site = new Installation(config, status);
 		if (url.host === config.host) return appHost(request, url, env, ctx, site);
-		// Every other host serves short links only: no auth route, cookie, or app page.
+		// Every other host serves short links only: no auth route, cookie, or app page. The one
+		// exception is the challenge that proves a waiting own domain reaches this Worker.
+		if (url.pathname === domainChallengePath)
+			return serveDomainChallenge(request, config.routing, Date.now());
 		return site.redirects().fetch(request, ctx);
 	},
 

@@ -2,6 +2,7 @@
 // The scheduled jobs of a standalone Worker. Each job does bounded work per run and records its
 // outcome in job_runs; /healthz reports whether the frequent run keeps going.
 import { purgeExpired } from '@flared/data/analytics';
+import { deleteExpiredDomainChallenges } from '@flared/data/domain-challenges';
 import { deleteExpiredCreationRecords } from '@flared/data/links';
 import { deleteExpiredOAuthRecords } from '@flared/data/oauth';
 import { purgeOperations } from '@flared/data/operations';
@@ -16,6 +17,7 @@ import {
 } from '@flared/server/notices';
 import { measureShards } from '@flared/server/operations';
 import { retryProjections } from '@flared/server/tenancy';
+import { checkWaitingDomains, createWorkerDomainProvider } from '@flared/server/worker-domains';
 import type { StandaloneConfig } from './config';
 
 // See triggers.crons in the root wrangler.jsonc.
@@ -25,7 +27,8 @@ const frequentJobs = [
 	'policy_projections',
 	'account_deletions',
 	'click_notices',
-	'shard_samples'
+	'shard_samples',
+	'domain_checks'
 ] as const;
 const dailyJobs = [
 	'auth_cleanup',
@@ -52,7 +55,10 @@ export function deletionDependencies(config: StandaloneConfig): DeletionDependen
 		identity: config.identity,
 		routing: config.routing,
 		shards: config.shards,
-		domains: { reservedHostnames: [config.host] }
+		domains: {
+			provider: createWorkerDomainProvider({ routing: config.routing }),
+			reservedHostnames: [config.host]
+		}
 	};
 }
 
@@ -79,6 +85,18 @@ async function sampleShards(config: StandaloneConfig, scheduledTime: number): Pr
 	if (measured.some((shard) => shard.sample === null)) throw new Error('Shard sampling failed');
 }
 
+// Each check is one fetch and a few queries; the bound keeps the run inside the Free plan's
+// per-invocation limits together with the other frequent jobs.
+async function checkDomains(config: StandaloneConfig, now: number): Promise<void> {
+	const result = await checkWaitingDomains({
+		routing: config.routing,
+		provider: createWorkerDomainProvider({ routing: config.routing, now: () => now }),
+		limit: 5,
+		now: () => now
+	});
+	if (result.failed > 0) throw new Error('Domain checks failed');
+}
+
 async function cleanupAuth(config: StandaloneConfig, now: number): Promise<void> {
 	await cleanupOwnerAuthRecords(config.identity, now, 1000);
 	await deleteExpiredOAuthRecords(config.identity, now, 1000);
@@ -87,6 +105,7 @@ async function cleanupAuth(config: StandaloneConfig, now: number): Promise<void>
 
 async function maintainRouting(config: StandaloneConfig, now: number): Promise<void> {
 	await deleteExpiredCreationRecords(config.routing, now, 1000);
+	await deleteExpiredDomainChallenges(config.routing, now, 1000);
 }
 
 // Removes aggregates past the retention and receipts past the replay window, in bounded rounds.
@@ -120,7 +139,8 @@ export async function runScheduled(
 					['policy_projections', () => retryPolicyProjections(config, now)],
 					['account_deletions', () => runAccountDeletions(config)],
 					['click_notices', () => recordClickNotices(config, now)],
-					['shard_samples', () => sampleShards(config, scheduledTime)]
+					['shard_samples', () => sampleShards(config, scheduledTime)],
+					['domain_checks', () => checkDomains(config, now)]
 				])
 			: await run([
 					['auth_cleanup', () => cleanupAuth(config, now)],

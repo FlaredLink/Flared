@@ -41,6 +41,7 @@ const domain = (
 	kind: 'workspace',
 	state,
 	isDefault: false,
+	setup: 'dns',
 	records: [{ type: 'CNAME', name: hostname, value: 'customers.flared.link' }],
 	error: null,
 	activeLinks: 0,
@@ -52,6 +53,7 @@ const platform = {
 	...domain('flared-link', 'flared.link', 'active'),
 	kind: 'platform',
 	isDefault: true,
+	setup: null,
 	records: [],
 	activeLinks: null
 };
