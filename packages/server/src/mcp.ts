@@ -456,7 +456,8 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 			annotations: {
 				title: 'Create a link',
 				readOnlyHint: false,
-				destructiveHint: false,
+				// The Claude directory asks for this hint on every tool that changes data.
+				destructiveHint: true,
 				idempotentHint: true,
 				openWorldHint: true
 			}
@@ -523,7 +524,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 				annotations: {
 					title: enabled ? 'Turn on a link' : 'Turn off a link',
 					readOnlyHint: false,
-					destructiveHint: !enabled,
+					destructiveHint: true,
 					idempotentHint: true,
 					openWorldHint: true
 				}

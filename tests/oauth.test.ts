@@ -776,7 +776,9 @@ describe('MCP endpoint', () => {
 		const { tokens } = await connect('user-4');
 		const modern = await mcp()(rpc(tokens.access_token, 'tools/list'));
 		expect(modern.status).toBe(200);
-		const listed = (await modern.json()) as { result: { tools: Record<string, unknown>[] } };
+		const listed = (await modern.json()) as {
+			result: { tools: (Record<string, unknown> & { annotations: { readOnlyHint: boolean } })[] };
+		};
 		const names = listed.result.tools.map((tool) => tool.name);
 		expect(names).toEqual([
 			'list_links',
@@ -793,11 +795,12 @@ describe('MCP endpoint', () => {
 		for (const tool of listed.result.tools) {
 			expect(tool.title).toEqual(expect.any(String));
 			expect(tool.outputSchema).toEqual(expect.any(Object));
-			// The Claude directory reads the listing name from annotations.title.
+			// The Claude directory reads the listing name from annotations.title and needs one
+			// of the two hints set on every tool.
 			expect(tool.annotations).toMatchObject({
 				title: tool.title,
 				readOnlyHint: expect.any(Boolean),
-				destructiveHint: expect.any(Boolean),
+				destructiveHint: !tool.annotations.readOnlyHint,
 				openWorldHint: expect.any(Boolean)
 			});
 		}
