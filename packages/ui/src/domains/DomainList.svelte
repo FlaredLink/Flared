@@ -1,7 +1,10 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
-	import EmptyState from '../empty/EmptyState.svelte';
+	import type { Snippet } from 'svelte';
 	import type { Action } from 'svelte/action';
+	import Glyph from '../icons/Glyph.svelte';
+	import Panel from '../layout/Panel.svelte';
+	import Tile from '../layout/Tile.svelte';
 	import {
 		domainCheckIntervalMs,
 		normalizeHostname,
@@ -17,9 +20,21 @@
 		apiBase: string;
 		// Called after a change succeeds, so the app reloads the list.
 		onChanged: () => void | Promise<void>;
+		// The page title, shown left of the usage and the Add domain button.
+		heading?: Snippet;
+		// Where the full setup steps are, such as the edition's docs page.
+		guideHref?: string;
 	}
 
-	let { page, apiBase, onChanged }: Props = $props();
+	let { page, apiBase, onChanged, heading, guideHref }: Props = $props();
+	let adding = $state(false);
+	let hostnameInput = $state<HTMLInputElement>();
+
+	async function openAdd() {
+		adding = true;
+		await Promise.resolve();
+		hostnameInput?.focus();
+	}
 
 	let hostname = $state('');
 	let fieldError = $state('');
@@ -59,6 +74,8 @@
 	const nearLimit = $derived(!atLimit && page.limit > 0 && page.used / page.limit >= 0.8);
 	const workspaceDomains = $derived(page.domains.filter((domain) => domain.kind === 'workspace'));
 	const platformDomains = $derived(page.domains.filter((domain) => domain.kind === 'platform'));
+	// The add form opens from the button at the top; with no custom domain it is always open.
+	const showAdd = $derived(!atLimit && (adding || workspaceDomains.length === 0));
 
 	const stateLabels: Record<Domain['state'], string> = {
 		pending: 'Waiting for DNS',
@@ -100,6 +117,7 @@
 				return;
 			}
 			hostname = '';
+			adding = false;
 			await onChanged();
 			status =
 				result.value.setup === 'worker_custom_domain'
@@ -156,6 +174,12 @@
 		}
 	}
 
+	function stateLabel(domain: Domain): string {
+		return domain.state === 'pending' && domain.setup === 'worker_custom_domain'
+			? 'Waiting for setup'
+			: stateLabels[domain.state];
+	}
+
 	function stopping(count: number | null): string {
 		if (!count) return 'No active links use this domain.';
 		return count === 1
@@ -164,128 +188,120 @@
 	}
 </script>
 
-<section class="domains" aria-labelledby="domains-heading" aria-busy={pending !== null}>
-	<h2 id="domains-heading">Custom domains</h2>
-	<p class="lead">
-		Use your own subdomain for short links. Links on a custom domain work after the domain is
-		active.
-	</p>
-	<p class="usage" class:warn={atLimit || nearLimit}>
-		{#if page.limit === 0}Custom domains are not available in this workspace.{:else}{numbers.format(
-				page.used
-			)} of {numbers.format(page.limit)} custom domains used{#if atLimit}. You have used all your
-				custom domains.{:else if nearLimit}. You are close to your custom domain limit.{/if}{/if}
-	</p>
+<section class="domains" aria-label="Domains" aria-busy={pending !== null}>
+	<div class="top">
+		{#if heading}<div class="heading">{@render heading()}</div>{/if}
+		<div class="limit">
+			{#if !showAdd}
+				<button
+					type="button"
+					class="primary"
+					disabled={atLimit || pending !== null}
+					onclick={() => void openAdd()}><Glyph name="plus" size={18} />Add domain</button
+				>
+			{/if}
+			<p class="usage" class:warn={atLimit || nearLimit}>
+				{#if page.limit === 0}Custom domains are not available in this workspace.{:else}{numbers.format(
+						page.used
+					)} of {numbers.format(page.limit)} custom domains used{/if}
+			</p>
+		</div>
+	</div>
 	<p class="status" role="status" aria-live="polite">{status}</p>
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
 
-	{#if workspaceDomains.length === 0}
-		<EmptyState>No custom domains yet.</EmptyState>
-	{:else}
-		<ul aria-label="Your custom domains">
+	{#if showAdd}
+		<Panel
+			id="domain-add-heading"
+			title="Add a custom domain"
+			lead="Use your own subdomain for short links. Links on it work after the domain is active."
+			icon="globe"
+			tone="teal"
+		>
+			<form
+				class="add"
+				novalidate
+				onsubmit={(event) => {
+					event.preventDefault();
+					void add();
+				}}
+			>
+				<label for="domain-hostname">Hostname</label>
+				<div class="add-row">
+					<input
+						id="domain-hostname"
+						bind:this={hostnameInput}
+						bind:value={hostname}
+						type="text"
+						inputmode="url"
+						autocomplete="off"
+						autocapitalize="none"
+						spellcheck="false"
+						maxlength="253"
+						placeholder="go.example.com"
+						required
+						aria-invalid={fieldError ? true : undefined}
+						aria-describedby={fieldError
+							? 'domain-hostname-error domain-hostname-hint'
+							: 'domain-hostname-hint'}
+					/>
+					<button type="submit" class="primary" disabled={pending !== null}
+						>{pending === 'add' ? 'Adding…' : 'Add domain'}</button
+					>
+					{#if workspaceDomains.length > 0}
+						<button type="button" disabled={pending !== null} onclick={() => (adding = false)}
+							>Cancel</button
+						>
+					{/if}
+				</div>
+				<p id="domain-hostname-hint" class="hint">
+					A subdomain such as go.example.com. Root domains such as example.com are not supported.
+				</p>
+				{#if fieldError}<p id="domain-hostname-error" class="error" role="alert">
+						{fieldError}
+					</p>{/if}
+			</form>
+		</Panel>
+	{/if}
+
+	<Panel id="domains-heading" title="Your domains">
+		<ul>
+			{#each platformDomains as domain (domain.id)}
+				<li>
+					<Tile icon="globe" tone="teal" large />
+					<div class="main">
+						<span class="head">
+							<span class="name">{domain.hostname}</span>
+							<span class="tag">Included</span>
+							<span class="badge active">{domain.isDefault ? 'Default' : 'Active'}</span>
+						</span>
+						<span class="meta">Ready to use. No setup needed.</span>
+					</div>
+				</li>
+			{/each}
 			{#each workspaceDomains as domain (domain.id)}
 				<li>
-					<div class="head">
-						<span class="tile" aria-hidden="true"
-							><svg viewBox="0 0 24 24"
-								><circle cx="12" cy="12" r="9" /><path
-									d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3Z"
-								/></svg
-							></span
-						>
-						<span class="name">{domain.hostname}</span>
-						<span class="badge {domain.state}"
-							>{domain.state === 'pending' && domain.setup === 'worker_custom_domain'
-								? 'Waiting for setup'
-								: stateLabels[domain.state]}</span
-						>
+					<Tile icon="globe" tone="teal" large />
+					<div class="main">
+						<span class="head">
+							<span class="name">{domain.hostname}</span>
+							<span class="badge {domain.state}">{stateLabel(domain)}</span>
+						</span>
+						<span class="meta">
+							{#if domain.state === 'active'}
+								{#if domain.activatedAt}Active since <time datetime={domain.activatedAt}
+										>{dates.format(new Date(domain.activatedAt))}</time
+									>.
+								{/if}{domain.setup === 'worker_custom_domain'
+									? 'Keep the Custom Domain in place so your links keep working.'
+									: 'Keep the DNS record in place so your links keep working.'}
+							{:else if domain.state === 'failed'}
+								{domain.error?.message ?? 'The last check failed.'} See the steps below.
+							{:else}
+								Finish the setup below.
+							{/if}
+						</span>
 					</div>
-					{#if domain.error}<p class="error">{domain.error.message}</p>{/if}
-					{#if domain.state === 'active'}
-						<p class="meta">
-							{#if domain.activatedAt}Active since <time datetime={domain.activatedAt}
-									>{dates.format(new Date(domain.activatedAt))}</time
-								>.
-							{/if}{domain.setup === 'worker_custom_domain'
-								? 'Keep the Custom Domain in place so your links keep working.'
-								: 'Keep the DNS record in place so your links keep working.'}
-						</p>
-					{:else if domain.setup === 'worker_custom_domain'}
-						<ol class="meta steps">
-							<li>
-								In the Cloudflare dashboard, open <strong>Workers &amp; Pages</strong> and select this
-								Flared Worker.
-							</li>
-							<li>
-								Open <strong>Settings → Domains &amp; Routes</strong>, choose <strong>Add</strong>,
-								then
-								<strong>Custom domain</strong>.
-							</li>
-							<li>
-								<span class="cell"
-									>Enter <code>{domain.hostname}</code>
-									<button
-										type="button"
-										class="copy"
-										aria-label={`Copy ${domain.hostname}`}
-										onclick={() => void copy(domain.hostname, 'Hostname')}>Copy</button
-									></span
-								>
-							</li>
-						</ol>
-						<p class="meta">
-							The domain must be on Cloudflare in the same account as this Worker. Checks run
-							automatically every 10 minutes; Cloudflare usually issues the certificate within a few
-							minutes.
-						</p>
-					{:else}
-						<p class="meta">
-							At your DNS provider, add the CNAME record below. If your DNS is on Cloudflare, set
-							the proxy status to DNS only.
-						</p>
-						<p class="meta">
-							Checks run automatically; the certificate is usually ready within an hour.
-						</p>
-					{/if}
-					{#if domain.records.length > 0}
-						<table>
-							<caption class="visually-hidden">DNS record for {domain.hostname}</caption>
-							<thead>
-								<tr
-									><th scope="col">Type</th><th scope="col">Name</th><th scope="col">Target</th></tr
-								>
-							</thead>
-							<tbody>
-								{#each domain.records as dnsRecord (`${dnsRecord.type}:${dnsRecord.name}`)}
-									<tr>
-										<td data-label="Type"><code>{dnsRecord.type}</code></td>
-										<td data-label="Name">
-											<span class="cell">
-												<code>{dnsRecord.name}</code>
-												<button
-													type="button"
-													class="copy"
-													aria-label={`Copy name for ${domain.hostname}`}
-													onclick={() => void copy(dnsRecord.name, 'Name')}>Copy</button
-												>
-											</span>
-										</td>
-										<td data-label="Target">
-											<span class="cell">
-												<code>{dnsRecord.value}</code>
-												<button
-													type="button"
-													class="copy"
-													aria-label={`Copy target for ${domain.hostname}`}
-													onclick={() => void copy(dnsRecord.value, 'Target')}>Copy</button
-												>
-											</span>
-										</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					{/if}
 					<div class="actions">
 						{#if confirmingId === domain.id}
 							<p class="confirm">
@@ -305,22 +321,6 @@
 								onclick={() => (confirmingId = null)}>Keep</button
 							>
 						{:else}
-							{#if domain.state !== 'active'}
-								{@const wait = secondsLeft(domain.id)}
-								<button
-									type="button"
-									disabled={pending !== null || wait > 0}
-									aria-label={wait > 0
-										? `Check ${domain.hostname} again in ${wait} seconds`
-										: `Check ${domain.hostname} now`}
-									onclick={() => void check(domain)}
-									>{pending === `check:${domain.id}`
-										? 'Checking…'
-										: wait > 0
-											? `Check again in ${wait}s`
-											: 'Check now'}</button
-								>
-							{/if}
 							<button
 								type="button"
 								disabled={pending !== null}
@@ -332,102 +332,196 @@
 				</li>
 			{/each}
 		</ul>
-	{/if}
+		{#if atLimit && page.limit > 0}
+			<p class="meta">You have used all your custom domains. To add another, remove one first.</p>
+		{:else if nearLimit}
+			<p class="meta">You are close to your custom domain limit.</p>
+		{/if}
+	</Panel>
 
-	{#if atLimit && page.limit > 0}
-		<p class="empty">To add another domain, remove one first.</p>
-	{:else if !atLimit}
-		<form
-			class="add"
-			novalidate
-			onsubmit={(event) => {
-				event.preventDefault();
-				void add();
-			}}
+	{#each workspaceDomains.filter((domain) => domain.state !== 'active' && domain.state !== 'disabled') as domain (domain.id)}
+		{@const step = domain.state === 'verifying' ? 3 : 2}
+		{@const worker = domain.setup === 'worker_custom_domain'}
+		{@const wait = secondsLeft(domain.id)}
+		<Panel
+			id={`connect-${domain.id}`}
+			title={`Connect ${domain.hostname}`}
+			lead={worker
+				? 'Add it as a Custom Domain of this Worker in Cloudflare.'
+				: 'Add this record at your DNS provider.'}
 		>
-			<h3>Add a domain</h3>
-			<div class="field">
-				<label for="domain-hostname">Hostname</label>
-				<input
-					id="domain-hostname"
-					bind:value={hostname}
-					type="text"
-					inputmode="url"
-					autocomplete="off"
-					autocapitalize="none"
-					spellcheck="false"
-					maxlength="253"
-					placeholder="go.example.com"
-					required
-					aria-invalid={fieldError ? true : undefined}
-					aria-describedby={fieldError
-						? 'domain-hostname-error domain-hostname-hint'
-						: 'domain-hostname-hint'}
-				/>
-				<p id="domain-hostname-hint" class="hint">A subdomain such as go.example.com</p>
-				{#if fieldError}<p id="domain-hostname-error" class="error" role="alert">
-						{fieldError}
-					</p>{/if}
-			</div>
-			<button type="submit" class="primary" disabled={pending !== null}
-				>{pending === 'add' ? 'Adding…' : 'Add domain'}</button
-			>
-		</form>
-	{/if}
+			<ol class="progress" aria-label="Setup steps">
+				<li class="done">
+					<span class="dot"><Glyph name="check" size={16} /></span>
+					<span><strong>Add domain</strong><span>Domain added</span></span>
+				</li>
+				<li
+					class:done={step > 2}
+					class:current={step === 2}
+					aria-current={step === 2 ? 'step' : undefined}
+				>
+					<span class="dot"
+						>{#if step > 2}<Glyph name="check" size={16} />{:else}2{/if}</span
+					>
+					<span
+						><strong>{worker ? 'Add the Custom Domain' : 'Configure DNS'}</strong><span
+							>{worker ? 'In the Cloudflare dashboard' : 'Add the DNS record'}</span
+						></span
+					>
+				</li>
+				<li class:current={step === 3} aria-current={step === 3 ? 'step' : undefined}>
+					<span class="dot">3</span>
+					<span><strong>Verify</strong><span>Check the connection</span></span>
+				</li>
+			</ol>
 
-	{#if platformDomains.length > 0}
-		<h3>Included domains</h3>
-		<ul aria-label="Included domains">
-			{#each platformDomains as domain (domain.id)}
-				<li>
-					<div class="head">
-						<span class="tile" aria-hidden="true"
-							><svg viewBox="0 0 24 24"
-								><circle cx="12" cy="12" r="9" /><path
-									d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3Z"
-								/></svg
+			{#if worker}
+				<ol class="meta steps">
+					<li>
+						In the Cloudflare dashboard, open <strong>Workers &amp; Pages</strong> and select this Flared
+						Worker.
+					</li>
+					<li>
+						Open <strong>Settings → Domains &amp; Routes</strong>, choose <strong>Add</strong>, then
+						<strong>Custom domain</strong>.
+					</li>
+					<li>
+						<span class="cell"
+							>Enter <code>{domain.hostname}</code>
+							<button
+								type="button"
+								class="copy"
+								aria-label={`Copy ${domain.hostname}`}
+								onclick={() => void copy(domain.hostname, 'Hostname')}
+								><Glyph name="copy" size={16} /></button
 							></span
 						>
-						<span class="name">{domain.hostname}</span>
-						<span class="badge active">{domain.isDefault ? 'Default' : 'Active'}</span>
-					</div>
-					<p class="meta">Every workspace can use this domain. It needs no setup.</p>
-				</li>
-			{/each}
-		</ul>
-	{/if}
+					</li>
+				</ol>
+				<p class="meta">The domain must be on Cloudflare in the same account as this Worker.</p>
+			{/if}
+			{#if domain.records.length > 0}
+				<div class="record">
+					<table>
+						<caption>DNS record</caption>
+						<thead>
+							<tr><th scope="col">Type</th><th scope="col">Name</th><th scope="col">Target</th></tr>
+						</thead>
+						<tbody>
+							{#each domain.records as dnsRecord (`${dnsRecord.type}:${dnsRecord.name}`)}
+								<tr>
+									<td data-label="Type"><code>{dnsRecord.type}</code></td>
+									<td data-label="Name">
+										<span class="cell">
+											<code>{dnsRecord.name}</code>
+											<button
+												type="button"
+												class="copy"
+												aria-label={`Copy name for ${domain.hostname}`}
+												onclick={() => void copy(dnsRecord.name, 'Name')}
+												><Glyph name="copy" size={16} /></button
+											>
+										</span>
+									</td>
+									<td data-label="Target">
+										<span class="cell">
+											<code>{dnsRecord.value}</code>
+											<button
+												type="button"
+												class="copy"
+												aria-label={`Copy target for ${domain.hostname}`}
+												onclick={() => void copy(dnsRecord.value, 'Target')}
+												><Glyph name="copy" size={16} /></button
+											>
+										</span>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+				<p class="meta">If your DNS is on Cloudflare, set the proxy status to DNS only.</p>
+			{/if}
+
+			<div class="state {domain.state}">
+				<Glyph name={domain.state === 'failed' ? 'warning' : 'clock'} size={24} />
+				<p>
+					{#if domain.state === 'failed'}
+						<strong>The last check failed</strong>
+						<span>{domain.error?.message ?? 'Check the setup above, then check again.'}</span>
+					{:else if domain.state === 'verifying'}
+						<strong>Verifying</strong>
+						<span
+							>The record is in place. The HTTPS certificate is usually ready within an hour.</span
+						>
+					{:else}
+						<strong>{worker ? 'Waiting for setup' : 'Waiting for the DNS record'}</strong>
+						<span
+							>{worker
+								? 'Checks run automatically every 10 minutes.'
+								: 'Checks run automatically. Changes at your DNS provider can take some time to appear.'}</span
+						>
+					{/if}
+				</p>
+			</div>
+
+			<div class="actions">
+				<button
+					type="button"
+					class="primary"
+					disabled={pending !== null || wait > 0}
+					aria-label={wait > 0
+						? `Check ${domain.hostname} again in ${wait} seconds`
+						: `Check ${domain.hostname} now`}
+					onclick={() => void check(domain)}
+					>{pending === `check:${domain.id}`
+						? 'Checking…'
+						: wait > 0
+							? `Check again in ${wait}s`
+							: 'Check connection'}</button
+				>
+				{#if guideHref}
+					<a class="guide" href={guideHref}>View setup guide <Glyph name="arrow" size={16} /></a>
+				{/if}
+			</div>
+			<p class="foot">
+				<Glyph name="lock" size={18} />Links on this domain work when verification completes.
+			</p>
+		</Panel>
+	{/each}
 </section>
 
 <style>
 	.domains {
 		display: grid;
-		gap: 0.75rem;
-		max-width: 44rem;
+		gap: 1.25rem;
+		max-width: 64rem;
 	}
-	h2 {
-		font-size: 1.05rem;
+	.top {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 1rem;
 	}
-	h3 {
-		margin-top: 0.5rem;
-		font-size: 0.95rem;
+	.heading {
+		min-width: 0;
 	}
-	.lead,
+	.limit {
+		display: grid;
+		justify-items: end;
+		gap: 0.4rem;
+		margin-left: auto;
+	}
+	.usage,
 	.status,
-	.empty,
 	.meta,
-	.hint,
-	.usage {
+	.hint {
 		color: var(--color-muted, #667085);
 		font-size: 0.85rem;
 	}
 	.usage {
 		font-variant-numeric: tabular-nums;
-	}
-	.steps {
-		display: grid;
-		gap: 0.35rem;
-		margin: 0;
-		padding-left: 1.25rem;
 	}
 	.usage.warn {
 		color: var(--color-strong, #101828);
@@ -445,46 +539,45 @@
 		margin: 0;
 		padding: 0;
 		list-style: none;
-		border: 1px solid var(--color-rule, #d0d5dd);
-		border-radius: var(--radius-md, 8px);
-		background: var(--color-paper, #fff);
 	}
-	li {
+	ul > li {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.75rem 1rem;
+		padding: 1rem 0;
+	}
+	ul > li + li {
+		border-top: 1px solid var(--color-rule, #eaecf0);
+	}
+	ul > li:first-child {
+		padding-top: 0.25rem;
+	}
+	.main {
 		display: grid;
-		gap: 0.6rem;
+		flex: 1 1 14rem;
+		gap: 0.25rem;
 		min-width: 0;
-		padding: 1rem;
-	}
-	li + li {
-		border-top: 1px solid var(--color-rule, #d0d5dd);
 	}
 	.head {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 0.5rem 0.75rem;
+		gap: 0.4rem 0.6rem;
 	}
 	.name {
 		color: var(--color-strong, #101828);
+		font-size: 1.05rem;
 		font-weight: 650;
 		overflow-wrap: anywhere;
 	}
-	.tile {
-		display: grid;
-		flex: none;
-		place-items: center;
-		width: 2.25rem;
-		height: 2.25rem;
-		border-radius: var(--radius-md, 8px);
-		background: var(--color-tile-teal-soft, #f0fdfa);
-		color: var(--color-tile-teal, #0f766e);
-	}
-	.tile svg {
-		width: 1.25rem;
-		height: 1.25rem;
-		fill: none;
-		stroke: currentColor;
-		stroke-width: 1.6;
+	.tag {
+		padding: 0.1rem 0.5rem;
+		border-radius: var(--radius-sm, 6px);
+		color: var(--color-ink, #344054);
+		box-shadow: inset 0 0 0 1px var(--color-rule, #d0d5dd);
+		font-size: 0.75rem;
+		font-weight: 550;
 	}
 	/* Each state has a colour and its name, so colour is never the only signal. */
 	.badge {
@@ -522,25 +615,97 @@
 		color: var(--color-danger, #b42318);
 		box-shadow: none;
 	}
+	.progress {
+		display: grid;
+		gap: 0.75rem;
+		margin: 0.25rem 0;
+		padding: 0;
+		list-style: none;
+		counter-reset: none;
+	}
+	@media (min-width: 48rem) {
+		.progress {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+		}
+	}
+	.progress li {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+	.progress li > span:last-child {
+		display: grid;
+		gap: 0.1rem;
+	}
+	.progress strong {
+		color: var(--color-strong, #101828);
+		font-size: 0.95rem;
+		font-weight: 600;
+	}
+	.progress li > span:last-child > span {
+		color: var(--color-muted, #667085);
+		font-size: 0.85rem;
+	}
+	.dot {
+		display: grid;
+		flex: none;
+		place-items: center;
+		width: 2.25rem;
+		height: 2.25rem;
+		border-radius: 50%;
+		color: var(--color-ink, #344054);
+		box-shadow: inset 0 0 0 1px var(--color-rule, #d0d5dd);
+		font-weight: 650;
+	}
+	.done .dot {
+		background: var(--color-positive, #067647);
+		color: var(--color-on-primary, #fff);
+		box-shadow: none;
+	}
+	.current .dot {
+		background: var(--color-button-primary, #c94b00);
+		color: var(--color-on-primary, #fff);
+		box-shadow: none;
+	}
+	.steps {
+		display: grid;
+		gap: 0.35rem;
+		margin: 0;
+		padding-left: 1.25rem;
+	}
+	.record {
+		overflow: hidden;
+		border: 1px solid var(--color-rule, #eaecf0);
+		border-radius: var(--radius-md, 8px);
+	}
 	table {
 		width: 100%;
 		border-collapse: collapse;
 		table-layout: fixed;
-		font-size: 0.85rem;
+		font-size: 0.9rem;
+	}
+	caption {
+		padding: 0.75rem 1rem;
+		background: var(--color-disabled, #f9fafb);
+		color: var(--color-strong, #101828);
+		font-weight: 650;
+		text-align: left;
 	}
 	th {
-		padding: 0.4rem 0.5rem;
+		padding: 0.5rem 1rem;
+		border-top: 1px solid var(--color-rule, #eaecf0);
+		background: var(--color-disabled, #f9fafb);
 		color: var(--color-muted, #667085);
-		font-size: 0.75rem;
+		font-size: 0.8rem;
 		font-weight: 600;
 		text-align: left;
 	}
 	th:first-child {
-		width: 5rem;
+		width: 6rem;
 	}
 	td {
-		padding: 0.5rem;
-		border-top: 1px solid var(--color-rule, #d0d5dd);
+		padding: 0.6rem 1rem;
+		border-top: 1px solid var(--color-rule, #eaecf0);
 		vertical-align: middle;
 	}
 	.cell {
@@ -553,29 +718,79 @@
 		min-width: 0;
 		color: var(--color-ink, #101828);
 		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 0.8rem;
+		font-size: 0.85rem;
 		overflow-wrap: anywhere;
+	}
+	.state {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.85rem;
+		padding: 1rem 1.25rem;
+		border-radius: var(--radius-md, 8px);
+		background: var(--color-warning-soft, #fffaeb);
+		color: var(--color-warning, #b54708);
+	}
+	.state.failed {
+		background: var(--color-danger-soft, #fef3f2);
+		color: var(--color-danger, #b42318);
+	}
+	.state :global(svg) {
+		flex: none;
+	}
+	.state p {
+		display: grid;
+		gap: 0.15rem;
+	}
+	.state strong {
+		color: var(--color-strong, #101828);
+		font-weight: 650;
+	}
+	.state span {
+		color: var(--color-ink, #344054);
+		font-size: 0.875rem;
 	}
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 0.5rem;
+		gap: 0.5rem 1rem;
 	}
 	.confirm {
 		flex-basis: 100%;
 		color: var(--color-strong, #101828);
 		font-size: 0.85rem;
 	}
+	.guide {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		min-height: 44px;
+		color: var(--color-accent-ink, #b93815);
+		font-weight: 600;
+	}
+	.guide:hover {
+		text-decoration: underline;
+	}
+	.foot {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		padding-top: 0.9rem;
+		border-top: 1px solid var(--color-rule, #eaecf0);
+		color: var(--color-muted, #667085);
+		font-size: 0.85rem;
+	}
 	.add {
 		display: grid;
-		gap: 0.75rem;
-		max-width: 28rem;
-		margin-top: 0.5rem;
-	}
-	.field {
-		display: grid;
 		gap: 0.4rem;
+	}
+	.add-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+	.add-row input {
+		flex: 1 1 16rem;
 	}
 	label {
 		color: var(--color-strong, #101828);
@@ -590,7 +805,7 @@
 		color: var(--color-ink, #101828);
 		border: 1px solid var(--color-rule, #d0d5dd);
 		border-radius: var(--radius-sm, 6px);
-		background: var(--color-paper, #fff);
+		background: var(--color-input, #fff);
 	}
 	input:focus-visible {
 		border-color: var(--color-muted, #667085);
@@ -601,25 +816,33 @@
 		border-color: var(--color-danger, #b42318);
 	}
 	button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.4rem;
 		min-height: 44px;
 		padding: 0.4rem 0.9rem;
 		border: 1px solid var(--color-rule, #d0d5dd);
 		border-radius: var(--radius-sm, 6px);
 		background: var(--color-paper, #fff);
 		color: var(--color-ink, #101828);
-		font-size: 0.8rem;
+		font-size: 0.85rem;
 		font-weight: 600;
 	}
 	button:hover:not(:disabled) {
 		border-color: var(--color-muted, #667085);
 	}
+	button.copy {
+		min-width: 40px;
+		min-height: 40px;
+		padding: 0;
+	}
 	button.primary {
-		justify-self: start;
-		padding: 0.65rem 1.15rem;
+		padding: 0.65rem 1.25rem;
 		border-color: var(--color-button-primary, #101828);
 		background: var(--color-button-primary, #101828);
 		color: var(--color-on-primary, #fff);
-		font-size: inherit;
+		font-size: 0.9rem;
 		font-weight: 620;
 	}
 	button.primary:hover:not(:disabled) {
@@ -636,14 +859,6 @@
 		color: var(--color-muted, #667085);
 		background: var(--color-disabled, #eaecf0);
 		border-color: var(--color-disabled, #eaecf0);
-	}
-	.visually-hidden {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		overflow: hidden;
-		clip: rect(0 0 0 0);
-		white-space: nowrap;
 	}
 	@media (max-width: 40rem) {
 		thead {
@@ -665,8 +880,9 @@
 			font-size: 0.75rem;
 			font-weight: 600;
 		}
-		button.primary {
-			justify-self: stretch;
+		.limit {
+			justify-items: start;
+			margin-left: 0;
 		}
 	}
 </style>
