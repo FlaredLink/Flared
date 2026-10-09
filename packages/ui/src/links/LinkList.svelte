@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
 	import EmptyState from '../empty/EmptyState.svelte';
+	import Glyph from '../icons/Glyph.svelte';
 	import SiteIcon from '../icons/SiteIcon.svelte';
 	import { iconHostnameOfUrl } from '@flared/contracts/icons';
 	import type { Link, ListedLink } from '@flared/contracts/links';
@@ -15,9 +16,20 @@
 		highlightId?: string | null;
 		// Address of a site's icon on the app's origin. Without it, rows show a letter tile.
 		iconHref?: (hostname: string) => string;
+		// Search and domain filter in the header. They submit as ?q= and ?domain= to this page,
+		// which passes them to GET /v1/links. Without it, the header shows no filters.
+		filters?: { search: string; domainId: string; domains: { id: string; hostname: string }[] };
 	}
 
-	let { links, analyticsHref, nextHref = null, highlightId = null, iconHref }: Props = $props();
+	let {
+		links,
+		analyticsHref,
+		nextHref = null,
+		highlightId = null,
+		iconHref,
+		filters
+	}: Props = $props();
+	const filtered = $derived(Boolean(filters && (filters.search || filters.domainId)));
 	let status = $state('');
 	let copiedId = $state<string | null>(null);
 
@@ -42,6 +54,10 @@
 		return { line: `M${points.join(' L')}`, area: `M0,20 L${points.join(' L')} L64,20 Z` };
 	}
 
+	function clicksNumber(link: ListedLink): string {
+		return link.clicksLast30Days === null ? '–' : numbers.format(link.clicksLast30Days);
+	}
+
 	function display(url: string): string {
 		return url.replace(/^https?:\/\//, '');
 	}
@@ -59,116 +75,271 @@
 </script>
 
 <section class="link-list" aria-labelledby="link-list-heading">
-	<h2 id="link-list-heading">Your links</h2>
+	<div class="head">
+		<h2 id="link-list-heading">
+			Your links{#if !nextHref && links.length > 0}<span class="count">{links.length}</span>{/if}
+		</h2>
+		{#if filters}
+			<form class="filters" method="get" role="search" aria-label="Filter links">
+				<label class="search">
+					<span class="visually-hidden">Search links</span>
+					<Glyph name="search" size={18} />
+					<input
+						type="search"
+						name="q"
+						value={filters.search}
+						placeholder="Search links…"
+						maxlength="100"
+						autocomplete="off"
+					/>
+				</label>
+				{#if filters.domains.length > 1}
+					<label>
+						<span class="visually-hidden">Domain</span>
+						<select
+							name="domain"
+							value={filters.domainId}
+							onchange={(event) => event.currentTarget.form?.requestSubmit()}
+						>
+							<option value="">All domains</option>
+							{#each filters.domains as domain (domain.id)}
+								<option value={domain.id}>{domain.hostname}</option>
+							{/each}
+						</select>
+					</label>
+				{/if}
+			</form>
+		{/if}
+	</div>
 	<p class="status" role="status" aria-live="polite">{status}</p>
 	{#if links.length === 0}
-		<EmptyState>No links yet. Create your first short link above.</EmptyState>
+		{#if filtered}
+			<p class="empty">No links match. <a href="?">Show all links</a></p>
+		{:else}
+			<EmptyState>No links yet. Create your first short link above.</EmptyState>
+		{/if}
 	{:else}
-		<ul>
-			{#each links as link (link.id)}
-				{@const spark = trend(link)}
-				{@const site = iconHostnameOfUrl(link.destination)}
-				<li class:highlight={link.id === highlightId}>
-					<SiteIcon
-						hostname={site ?? display(link.destination)}
-						src={site && iconHref ? iconHref(site) : null}
-					/>
-					<div class="main">
-						<a class="short" href={link.shortUrl} target="_blank" rel="noopener noreferrer"
-							>{display(link.shortUrl)}</a
-						>
-						{#if link.blocked}<span class="badge blocked">{blockLabel(link.blocked.reason)}</span
-							>{:else if !link.enabled}<span class="badge">Disabled</span>{/if}
-						{#if link.title}<span class="title">{link.title}</span>{/if}
-						<span class="destination" title={link.destination}>{link.destination}</span>
-					</div>
-					<div class="meta">
-						{#if spark}
-							<svg class="trend" viewBox="0 0 64 20" width="64" height="20" aria-hidden="true">
-								<path d={spark.area} class="trend-area" />
-								<path d={spark.line} class="trend-line" />
-							</svg>
-						{/if}
-						{#if analyticsHref}
-							<a
-								class="clicks"
-								href={analyticsHref(link)}
-								title="Clicks in the last 30 days"
-								aria-label={`${clicksText(link)} in the last 30 days for ${display(link.shortUrl)}. Open analytics.`}
-								>{clicksText(link)}</a
-							>
-						{:else}
-							<span class="clicks" title="Clicks in the last 30 days">{clicksText(link)}</span>
-						{/if}
+		<div class="table">
+			<div class="columns" aria-hidden="true">
+				<span>Link</span><span>Clicks (30 days)</span><span>Created</span><span></span>
+			</div>
+			<ul>
+				{#each links as link (link.id)}
+					{@const spark = trend(link)}
+					{@const site = iconHostnameOfUrl(link.destination)}
+					<li class:highlight={link.id === highlightId}>
+						<div class="link">
+							<SiteIcon
+								hostname={site ?? display(link.destination)}
+								src={site && iconHref ? iconHref(site) : null}
+							/>
+							<div class="main">
+								{#if link.title}<span class="title">{link.title}</span>{/if}
+								<span class="short-row">
+									<a class="short" href={link.shortUrl} target="_blank" rel="noopener noreferrer"
+										>{display(link.shortUrl)}</a
+									>
+									{#if link.blocked}<span class="badge blocked"
+											>{blockLabel(link.blocked.reason)}</span
+										>{:else if !link.enabled}<span class="badge">Disabled</span>{/if}
+								</span>
+								<span class="destination" title={link.destination}
+									>{site ?? display(link.destination)}</span
+								>
+							</div>
+						</div>
+						<div class="clicks-cell">
+							{#if analyticsHref}
+								<a
+									class="clicks"
+									href={analyticsHref(link)}
+									title="Clicks in the last 30 days"
+									aria-label={`${clicksText(link)} in the last 30 days for ${display(link.shortUrl)}. Open analytics.`}
+									>{clicksNumber(link)}</a
+								>
+							{:else}
+								<span class="clicks" title="Clicks in the last 30 days">{clicksNumber(link)}</span>
+							{/if}
+							{#if spark}
+								<svg class="trend" viewBox="0 0 64 20" width="64" height="20" aria-hidden="true">
+									<path d={spark.area} class="trend-area" />
+									<path d={spark.line} class="trend-line" />
+								</svg>
+							{/if}
+						</div>
 						<time datetime={link.createdAt}>{dates.format(new Date(link.createdAt))}</time>
 						<button
 							type="button"
 							onclick={() => copy(link)}
 							aria-label={`Copy ${display(link.shortUrl)}`}
-							>{copiedId === link.id ? 'Copied' : 'Copy'}</button
+							><Glyph name="copy" size={16} />{copiedId === link.id ? 'Copied' : 'Copy'}</button
 						>
-					</div>
-				</li>
-			{/each}
-		</ul>
+					</li>
+				{/each}
+			</ul>
+		</div>
 		{#if nextHref}<a class="more" href={nextHref}>Next page</a>{/if}
 	{/if}
 </section>
 
 <style>
 	.link-list {
-		max-width: 44rem;
+		display: grid;
+		gap: 0.75rem;
 		margin-top: 1.5rem;
+		padding: 1.25rem 1.5rem;
+		border: 1px solid var(--color-rule, #eaecf0);
+		border-radius: var(--radius-lg, 12px);
+		background: var(--color-surface, #fff);
+		container-type: inline-size;
+	}
+	.head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem 1rem;
 	}
 	h2 {
-		font-size: 1.05rem;
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		color: var(--color-strong, #101828);
+		font-size: 1.2rem;
+	}
+	.count {
+		min-width: 1.75rem;
+		padding: 0.1rem 0.5rem;
+		border-radius: 999px;
+		background: var(--color-disabled, #f2f4f7);
+		color: var(--color-ink, #344054);
+		font-size: 0.8rem;
+		font-weight: 600;
+		text-align: center;
+	}
+	.filters {
+		display: flex;
+		flex: 1 1 18rem;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+		gap: 0.5rem;
+	}
+	.search {
+		display: flex;
+		flex: 1 1 14rem;
+		align-items: center;
+		gap: 0.5rem;
+		max-width: 20rem;
+		padding-left: 0.75rem;
+		border: 1px solid var(--color-rule, #d0d5dd);
+		border-radius: var(--radius-sm, 6px);
+		background: var(--color-input, #fff);
+		color: var(--color-muted, #667085);
+	}
+	.search:focus-within {
+		border-color: var(--color-muted, #667085);
+		outline: 1px solid var(--color-muted, #667085);
+		outline-offset: -1px;
+	}
+	.search input {
+		flex: 1;
+		min-width: 0;
+		min-height: 42px;
+		padding: 0.5rem 0.75rem 0.5rem 0;
+		border: 0;
+		background: none;
+		color: var(--color-ink, #101828);
+		font: inherit;
+		font-size: 0.9rem;
+	}
+	.search input:focus-visible {
+		outline: none;
+	}
+	select {
+		min-height: 44px;
+		padding: 0.5rem 0.75rem;
+		border: 1px solid var(--color-rule, #d0d5dd);
+		border-radius: var(--radius-sm, 6px);
+		background: var(--color-input, #fff);
+		color: var(--color-ink, #101828);
+		font: inherit;
+		font-size: 0.9rem;
 	}
 	.status:empty {
 		display: none;
 	}
-	.status {
-		margin-top: 0.5rem;
+	.status,
+	.empty {
 		color: var(--color-muted, #667085);
 		font-size: 0.85rem;
 	}
+	.empty a {
+		color: var(--color-strong, #101828);
+		text-decoration: underline;
+	}
+	.columns {
+		display: none;
+		padding: 0 0 0.6rem;
+		border-bottom: 1px solid var(--color-rule, #eaecf0);
+		color: var(--color-muted, #667085);
+		font-size: 0.8rem;
+		font-weight: 550;
+	}
 	ul {
 		display: grid;
-		margin: 0.75rem 0 0;
+		margin: 0;
 		padding: 0;
 		list-style: none;
-		border: 1px solid var(--color-rule, #d0d5dd);
-		border-radius: var(--radius-md, 8px);
-		background: var(--color-paper, #fff);
 	}
 	li {
-		display: flex;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
 		align-items: center;
-		gap: 0.85rem;
-		padding: 0.85rem 1rem;
+		gap: 0.5rem 1rem;
+		padding: 0.9rem 0;
 	}
 	li + li {
-		border-top: 1px solid var(--color-rule, #d0d5dd);
+		border-top: 1px solid var(--color-rule, #eaecf0);
 	}
 	li.highlight {
+		margin-inline: -0.75rem;
+		padding-inline: 0.75rem;
+		border-radius: var(--radius-md, 8px);
 		background: var(--color-accent-soft, #fff4ed);
+	}
+	.link {
+		display: flex;
+		grid-column: 1 / -1;
+		align-items: center;
+		gap: 0.85rem;
+		min-width: 0;
 	}
 	.main {
 		display: grid;
-		flex: 1;
-		gap: 0.15rem;
+		gap: 0.1rem;
 		min-width: 0;
 	}
-	.short {
+	.title {
+		overflow: hidden;
 		color: var(--color-strong, #101828);
 		font-weight: 650;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.short-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.4rem;
+	}
+	.short {
+		color: var(--color-accent-ink, #b93815);
+		font-size: 0.9rem;
+		font-weight: 550;
 		overflow-wrap: anywhere;
 	}
 	.short:hover {
 		text-decoration: underline;
-	}
-	.title {
-		color: var(--color-ink, #101828);
-		font-size: 0.85rem;
 	}
 	.destination {
 		overflow: hidden;
@@ -178,8 +349,7 @@
 		white-space: nowrap;
 	}
 	.badge {
-		justify-self: start;
-		padding: 0 0.4rem;
+		padding: 0 0.45rem;
 		border-radius: 999px;
 		background: var(--color-disabled, #eaecf0);
 		color: var(--color-muted, #667085);
@@ -189,13 +359,10 @@
 		background: var(--color-danger-soft, #fee4e2);
 		color: var(--color-danger, #b42318);
 	}
-	.meta {
+	.clicks-cell {
 		display: flex;
-		flex-shrink: 0;
 		align-items: center;
 		gap: 0.75rem;
-		color: var(--color-muted, #667085);
-		font-size: 0.8rem;
 	}
 	.trend {
 		flex: none;
@@ -219,6 +386,7 @@
 	a.clicks {
 		display: inline-flex;
 		align-items: center;
+		min-width: 2.5rem;
 		min-height: 40px;
 		text-decoration: underline;
 		text-decoration-color: var(--color-rule, #d0d5dd);
@@ -227,8 +395,17 @@
 	a.clicks:hover {
 		text-decoration-color: currentColor;
 	}
+	time {
+		color: var(--color-muted, #667085);
+		font-size: 0.85rem;
+		white-space: nowrap;
+	}
 	button {
-		min-width: 4.5rem;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.4rem;
+		min-width: 5.5rem;
 		min-height: 40px;
 		padding: 0.4rem 0.8rem;
 		border: 1px solid var(--color-rule, #d0d5dd);
@@ -242,22 +419,39 @@
 		border-color: var(--color-muted, #667085);
 	}
 	.more {
-		display: inline-block;
-		margin-top: 0.75rem;
+		justify-self: start;
 		color: var(--color-accent-ink, #b42318);
 		font-size: 0.85rem;
 		font-weight: 600;
 	}
-	@media (max-width: 40rem) {
+	.visually-hidden {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
+		white-space: nowrap;
+	}
+	/* Columns once the list has room: link, clicks, created, copy. */
+	@container (min-width: 46rem) {
+		.columns,
 		li {
 			display: grid;
-			grid-template-columns: auto minmax(0, 1fr);
-			align-items: start;
-			gap: 0.5rem 0.75rem;
+			grid-template-columns: minmax(0, 1fr) 11rem 8rem 6rem;
+			align-items: center;
+			gap: 1rem;
 		}
-		.meta {
-			grid-column: 1 / -1;
-			justify-content: space-between;
+		.link {
+			grid-column: auto;
+		}
+		.columns span:last-child,
+		li > button {
+			justify-self: end;
+		}
+	}
+	@container (max-width: 46rem) {
+		li time {
+			display: none;
 		}
 	}
 </style>

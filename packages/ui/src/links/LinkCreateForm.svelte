@@ -18,6 +18,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import type { Action } from 'svelte/action';
+	import Tile from '../layout/Tile.svelte';
 
 	interface Props {
 		// Form action URL. The app wrapper sends the fields to POST /v1/links.
@@ -45,6 +46,13 @@
 	}: Props = $props();
 
 	const invalid = (field: string) => error?.field === field;
+	// The extra fields stay folded unless they hold a value or an error.
+	const customized = $derived(
+		Boolean(values.slug || values.title || values.domainId) ||
+			invalid('slug') ||
+			invalid('title') ||
+			invalid('domainId')
+	);
 
 	// The last domain used in this browser. Only a preference: a stale ID is ignored.
 	const storageKey = 'flared:link-domain';
@@ -106,103 +114,127 @@
 	onreset={restoreAfterReset}
 	aria-labelledby="create-link-heading"
 >
-	<h2 id="create-link-heading">Create a short link</h2>
+	<h2 id="create-link-heading" class="visually-hidden">Create a short link</h2>
 	<input type="hidden" name="idempotencyKey" value={idempotencyKey} />
-	<div class="field">
-		<label for="link-destination">Destination URL</label>
+	<div class="bar">
+		<Tile icon="link" tone="accent" />
+		<label for="link-destination" class="visually-hidden">Destination URL</label>
 		<input
 			id="link-destination"
 			name="destination"
 			type="url"
 			inputmode="url"
 			autocomplete="off"
-			placeholder="https://example.com/launch"
+			placeholder="Paste a destination URL"
 			maxlength="4096"
 			required
 			value={values.destination}
 			aria-invalid={invalid('destination') || undefined}
 			aria-describedby={invalid('destination') ? 'link-form-error' : undefined}
 		/>
-	</div>
-	{#if showPicker}
-		<div class="field domain">
-			<label for="link-domain">Domain</label>
-			<select
-				id="link-domain"
-				name="domainId"
-				bind:this={picker}
-				bind:value={selected}
-				aria-invalid={invalid('domainId') || undefined}
-				aria-describedby={invalid('domainId') ? 'link-form-error' : undefined}
-			>
-				{#each choices as choice (choice.value)}
-					<option value={choice.value}>{choice.hostname}</option>
-				{/each}
-			</select>
-		</div>
-	{/if}
-	<div class="row">
-		<div class="field">
-			<label for="link-slug">Slug <span class="optional">optional</span></label>
-			<div class="slug">
-				<span class="prefix" aria-hidden="true">{previewHost}/</span>
-				<input
-					id="link-slug"
-					name="slug"
-					type="text"
-					autocomplete="off"
-					autocapitalize="none"
-					spellcheck="false"
-					placeholder="random"
-					minlength="3"
-					maxlength="64"
-					pattern="[a-z0-9]([a-z0-9\-]*[a-z0-9])?"
-					title="3 to 64 lowercase letters, digits, or hyphens"
-					value={values.slug}
-					aria-invalid={invalid('slug') || undefined}
-					aria-describedby={invalid('slug') ? 'link-form-error link-slug-hint' : 'link-slug-hint'}
-				/>
-			</div>
-			<p id="link-slug-hint" class="hint">
-				Leave empty for a random slug. A slug cannot change later.
-			</p>
-		</div>
-		<div class="field">
-			<label for="link-title">Title <span class="optional">optional</span></label>
-			<input
-				id="link-title"
-				name="title"
-				type="text"
-				autocomplete="off"
-				maxlength="200"
-				placeholder="Spring launch"
-				value={values.title}
-				aria-invalid={invalid('title') || undefined}
-				aria-describedby={invalid('title') ? 'link-form-error' : undefined}
-			/>
-		</div>
+		<button type="submit" disabled={pending}>{pending ? 'Creating…' : 'Create link'}</button>
 	</div>
 	{#if error}<p id="link-form-error" class="error" role="alert">{error.message}</p>{/if}
-	<button type="submit" disabled={pending}>{pending ? 'Creating…' : 'Create link'}</button>
+	<details open={customized}>
+		<summary>Customize link</summary>
+		<div class="custom">
+			{#if showPicker}
+				<div class="field">
+					<label for="link-domain">Domain</label>
+					<select
+						id="link-domain"
+						name="domainId"
+						bind:this={picker}
+						bind:value={selected}
+						aria-invalid={invalid('domainId') || undefined}
+						aria-describedby={invalid('domainId') ? 'link-form-error' : undefined}
+					>
+						{#each choices as choice (choice.value)}
+							<option value={choice.value}>{choice.hostname}</option>
+						{/each}
+					</select>
+				</div>
+			{/if}
+			<div class="field">
+				<label for="link-slug">Slug <span class="optional">optional</span></label>
+				<div class="slug">
+					<span class="prefix" aria-hidden="true">{previewHost}/</span>
+					<input
+						id="link-slug"
+						name="slug"
+						type="text"
+						autocomplete="off"
+						autocapitalize="none"
+						spellcheck="false"
+						placeholder="random"
+						minlength="3"
+						maxlength="64"
+						pattern="[a-z0-9]([a-z0-9\-]*[a-z0-9])?"
+						title="3 to 64 lowercase letters, digits, or hyphens"
+						value={values.slug}
+						aria-invalid={invalid('slug') || undefined}
+						aria-describedby={invalid('slug') ? 'link-form-error link-slug-hint' : 'link-slug-hint'}
+					/>
+				</div>
+				<p id="link-slug-hint" class="hint">
+					Leave empty for a random slug. A slug cannot change later.
+				</p>
+			</div>
+			<div class="field">
+				<label for="link-title">Title <span class="optional">optional</span></label>
+				<input
+					id="link-title"
+					name="title"
+					type="text"
+					autocomplete="off"
+					maxlength="200"
+					placeholder="Spring launch"
+					value={values.title}
+					aria-invalid={invalid('title') || undefined}
+					aria-describedby={invalid('title') ? 'link-form-error' : undefined}
+				/>
+			</div>
+		</div>
+	</details>
 </form>
 
 <style>
 	.link-form {
 		display: grid;
-		gap: 1rem;
-		max-width: 44rem;
-		padding: 1.25rem;
-		border: 1px solid var(--color-rule, #d0d5dd);
-		border-radius: var(--radius-md, 8px);
-		background: var(--color-paper, #fff);
+		gap: 0.75rem;
+		padding: 1.25rem 1.5rem;
+		border: 1px solid var(--color-rule, #eaecf0);
+		border-radius: var(--radius-lg, 12px);
+		background: var(--color-surface, #fff);
+		container-type: inline-size;
 	}
-	h2 {
-		font-size: 1.05rem;
+	.bar {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.75rem;
 	}
-	.row {
+	.bar input {
+		flex: 1 1 16rem;
+	}
+	summary {
+		justify-self: start;
+		min-height: 32px;
+		padding: 0.3rem 0;
+		color: var(--color-ink, #101828);
+		font-size: 0.9rem;
+		font-weight: 550;
+		cursor: pointer;
+	}
+	.custom {
 		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 1rem;
+		padding-top: 0.75rem;
+	}
+	@container (min-width: 40rem) {
+		.custom {
+			grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+		}
 	}
 	.field {
 		display: grid;
@@ -228,16 +260,13 @@
 		color: var(--color-ink, #101828);
 		border: 1px solid var(--color-rule, #d0d5dd);
 		border-radius: var(--radius-sm, 6px);
-		background: var(--color-paper, #fff);
+		background: var(--color-input, #fff);
 	}
 	input:focus-visible,
 	select:focus-visible {
 		border-color: var(--color-muted, #667085);
 		outline: 1px solid var(--color-muted, #667085);
 		outline-offset: -1px;
-	}
-	.domain {
-		max-width: 20rem;
 	}
 	input[aria-invalid='true'],
 	select[aria-invalid='true'] {
@@ -249,7 +278,7 @@
 		min-width: 0;
 		border: 1px solid var(--color-rule, #d0d5dd);
 		border-radius: var(--radius-sm, 6px);
-		background: var(--color-paper, #fff);
+		background: var(--color-input, #fff);
 	}
 	.slug:focus-within {
 		border-color: var(--color-muted, #667085);
@@ -277,9 +306,8 @@
 		font-size: 0.85rem;
 	}
 	button {
-		justify-self: start;
 		min-height: 44px;
-		padding: 0.65rem 1.15rem;
+		padding: 0.65rem 1.5rem;
 		border: 1px solid var(--color-button-primary, #101828);
 		border-radius: var(--radius-sm, 6px);
 		background: var(--color-button-primary, #101828);
@@ -295,12 +323,20 @@
 		background: var(--color-disabled, #eaecf0);
 		border-color: var(--color-disabled, #eaecf0);
 	}
-	@media (max-width: 40rem) {
-		.row {
-			grid-template-columns: minmax(0, 1fr);
+	.visually-hidden {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
+		white-space: nowrap;
+	}
+	@container (max-width: 30rem) {
+		.bar > :global(.tile) {
+			display: none;
 		}
 		button {
-			justify-self: stretch;
+			flex: 1 1 100%;
 		}
 	}
 </style>
