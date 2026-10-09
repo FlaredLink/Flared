@@ -44,7 +44,7 @@
 	];
 
 	let name = $state('');
-	let scopes = $state<TokenScope[]>([...scopePresets.full]);
+	let scopes = $state<TokenScope[]>([...scopePresets.read]);
 	let expiry = $state(String(defaultTokenExpiryDays));
 	let pending = $state<string | null>(null);
 	let status = $state('');
@@ -296,7 +296,6 @@
 					<button type="submit" disabled={pending !== null || scopes.length === 0}
 						>{pending === 'create' ? 'Creating…' : 'Create token'}</button
 					>
-					<p class="hint">Applies only to this workspace.</p>
 				</form>
 			{/if}
 		</Panel>
@@ -337,8 +336,7 @@
 	.lead,
 	.status,
 	.empty,
-	.meta,
-	.hint {
+	.meta {
 		color: var(--color-muted, #667085);
 		font-size: 0.85rem;
 	}

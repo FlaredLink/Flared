@@ -203,7 +203,7 @@
 			<p class="usage" class:warn={atLimit || nearLimit}>
 				{#if page.limit === 0}Custom domains are not available in this workspace.{:else}{numbers.format(
 						page.used
-					)} of {numbers.format(page.limit)} custom domains used{/if}
+					)} / {numbers.format(page.limit)} custom domains used{/if}
 			</p>
 		</div>
 	</div>

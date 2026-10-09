@@ -103,6 +103,8 @@
 			{/each}
 		</ul>
 		<p class="note">No API token needed.</p>
+	{:else}
+		<p class="empty">No apps connected yet.</p>
 	{/if}
 	<ConnectGuide {mcpUrl} another={page.apps.length > 0} />
 </section>
@@ -130,6 +132,13 @@
 	}
 	.status:empty {
 		display: none;
+	}
+	.empty {
+		padding: 1rem;
+		border: 1px dashed var(--color-rule, #d0d5dd);
+		border-radius: var(--radius-md, 10px);
+		color: var(--color-muted, #667085);
+		font-size: 0.875rem;
 	}
 	.error {
 		color: var(--color-danger, #b42318);

@@ -64,7 +64,7 @@
 <Panel
 	id="export-heading"
 	title="Export your data"
-	lead="Download your links and {history}. The file is built in this browser."
+	lead="Download your links as CSV, or your links and {history} as JSON. The file is built in this browser."
 	icon="download"
 	tone="blue"
 >
