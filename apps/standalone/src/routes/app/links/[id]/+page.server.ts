@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { error, redirect } from '@sveltejs/kit';
+import { error, fail, redirect } from '@sveltejs/kit';
 import { oldestRetainedDay, utcDay, type LinkAnalytics } from '@flared/contracts/analytics';
 import type { Link } from '@flared/contracts/links';
-import { fetchLink, fetchLinkAnalytics } from '@flared/server/web/api';
+import {
+	fetchLink,
+	fetchLinkAnalytics,
+	linkChangeOf,
+	updateLink,
+	type ApiFailure
+} from '@flared/server/web/api';
 import { appRoutes } from '$lib/routes';
-import type { PageServerLoad } from './$types';
+import type { Actions, PageServerLoad } from './$types';
 
 type AnalyticsState = { status: 'ready'; analytics: LinkAnalytics } | { status: 'unavailable' };
 
@@ -37,4 +43,47 @@ export const load: PageServerLoad = async ({ parent, platform, request, params, 
 		error(503, 'This link is not available. Try again.');
 	}
 	return { link, analytics, days };
+};
+
+export const actions: Actions = {
+	update: async ({ request, platform, params }) => {
+		const form = await request.formData().catch(() => null);
+		const change = form ? linkChangeOf(form) : null;
+		const values = change && 'destination' in change ? change : null;
+		const failure = (problem: Pick<ApiFailure, 'code' | 'message' | 'status' | 'field'>) =>
+			fail(problem.status, {
+				error: { code: problem.code, message: problem.message, field: problem.field },
+				values
+			});
+		const service = platform?.env.API_SERVICE;
+		if (!change)
+			return failure({
+				code: 'VALIDATION_ERROR',
+				message: 'Choose a change to make.',
+				status: 400,
+				field: null
+			});
+		if (!service)
+			return failure({
+				code: 'SERVICE_UNAVAILABLE',
+				message: 'Changing links is not available. Try again.',
+				status: 503,
+				field: null
+			});
+		try {
+			const result = await updateLink(service, request.headers, params.id, change);
+			if (!result.ok) return failure(result.failure);
+			const updated: 'edit' | 'enable' | 'disable' =
+				'enabled' in change ? (change.enabled ? 'enable' : 'disable') : 'edit';
+			return { updated };
+		} catch {
+			console.error(JSON.stringify({ event: 'link_update_failed' }));
+			return failure({
+				code: 'SERVICE_UNAVAILABLE',
+				message: 'Changing links is not available. Try again.',
+				status: 503,
+				field: null
+			});
+		}
+	}
 };

@@ -228,6 +228,49 @@ export async function fetchLink(
 		: { ok: false, failure: malformed };
 }
 
+// The fields of PATCH /v1/links/:id. An empty title clears it.
+export type LinkChange = { destination: string; title: string } | { enabled: boolean };
+
+// The change that LinkEditForm submits: intent "edit" with the fields, or "enable" or "disable".
+export function linkChangeOf(form: FormData): LinkChange | null {
+	const text = (name: string) => {
+		const value = form.get(name);
+		return typeof value === 'string' ? value : '';
+	};
+	switch (text('intent')) {
+		case 'edit':
+			return { destination: text('destination'), title: text('title') };
+		case 'enable':
+			return { enabled: true };
+		case 'disable':
+			return { enabled: false };
+		default:
+			return null;
+	}
+}
+
+export async function updateLink(
+	service: ApiService,
+	headers: Headers,
+	id: string,
+	change: LinkChange
+): Promise<{ ok: true; link: Link } | { ok: false; failure: ApiFailure }> {
+	const body =
+		'enabled' in change
+			? { enabled: change.enabled }
+			: { destination: change.destination, title: change.title || null };
+	const response = await service.fetch(
+		apiRequest(`/v1/links/${encodeURIComponent(id)}`, {
+			method: 'PATCH',
+			headers: forwardedHeaders(headers, { 'content-type': 'application/json' }),
+			body: JSON.stringify(body)
+		})
+	);
+	if (!response.ok) return { ok: false, failure: await failureOf(response) };
+	const link = fields(await response.json().catch(() => null)).link;
+	return isLink(link) ? { ok: true, link } : { ok: false, failure: malformed };
+}
+
 export async function fetchLinkAnalytics(
 	service: ApiService,
 	headers: Headers,

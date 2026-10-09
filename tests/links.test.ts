@@ -6,6 +6,7 @@ import { listReservedSlugs, setSlugReserved } from '../packages/data/src/links';
 import { createTenant } from '../packages/data/src/tenancy';
 import { createApi } from '../packages/server/src/api';
 import { createLink, createKeyLifetimeMs, generateSlug } from '../packages/server/src/links';
+import { linkChangeOf, updateLink } from '../packages/server/src/web/api';
 import { projectPolicy } from '../packages/server/src/tenancy';
 
 const origin = 'https://app.example';
@@ -524,5 +525,61 @@ describe('validation', () => {
 		});
 		expect((await call('user-a', 'PATCH', `/v1/links/${link.id}`, {})).status).toBe(422);
 		expect((await call('user-a', 'DELETE', `/v1/links/${link.id}`)).status).toBe(405);
+	});
+});
+
+describe('dashboard edit form', () => {
+	// The app forwards only the cookie and Origin; the test principal rides on the same request.
+	const service = (user: string) => ({
+		fetch: async (request: Request) => {
+			const headers = new Headers(request.headers);
+			headers.set('x-test-user', user);
+			return api().fetch(new Request(request, { headers }));
+		}
+	});
+	const form = (fields: Record<string, string>) => {
+		const data = new FormData();
+		for (const [name, value] of Object.entries(fields)) data.set(name, value);
+		return data;
+	};
+	const change = (fields: Record<string, string>) => {
+		const result = linkChangeOf(form(fields));
+		if (!result) throw new Error(`No change for intent ${fields.intent}`);
+		return result;
+	};
+
+	it('saves an edit, clears an empty title, and disables the link', async () => {
+		const { link } = await json(
+			await create('user-a', { destination: 'https://example.com/before', title: 'Before' })
+		);
+		const headers = new Headers({ origin });
+		const edit = change({ intent: 'edit', destination: 'https://example.com/after', title: '' });
+		expect(edit).toEqual({ destination: 'https://example.com/after', title: '' });
+		const saved = await updateLink(service('user-a'), headers, link.id, edit);
+		expect(saved.ok && saved.link).toMatchObject({
+			destination: 'https://example.com/after',
+			title: null,
+			slug: link.slug
+		});
+		const disabled = await updateLink(
+			service('user-a'),
+			headers,
+			link.id,
+			change({ intent: 'disable' })
+		);
+		expect(disabled.ok && disabled.link.enabled).toBe(false);
+		expect(linkChangeOf(form({ intent: 'delete' }))).toBeNull();
+	});
+
+	it('returns the field of a rejected edit and refuses another tenant', async () => {
+		const { link } = await json(await create('user-a', { destination: 'https://example.com/x' }));
+		const headers = new Headers({ origin });
+		const bad = await updateLink(service('user-a'), headers, link.id, {
+			destination: 'not a url',
+			title: ''
+		});
+		expect(bad).toMatchObject({ ok: false, failure: { status: 422, field: 'destination' } });
+		const foreign = await updateLink(service('user-b'), headers, link.id, { enabled: false });
+		expect(foreign).toMatchObject({ ok: false, failure: { status: 404 } });
 	});
 });

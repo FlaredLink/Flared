@@ -12,6 +12,10 @@
 			"types": "./src/links/LinkList.svelte",
 			"svelte": "./src/links/LinkList.svelte"
 		},
+		"./links/LinkEditForm.svelte": {
+			"types": "./src/links/LinkEditForm.svelte",
+			"svelte": "./src/links/LinkEditForm.svelte"
+		},
 		"./links/LinkQr.svelte": {
 			"types": "./src/links/LinkQr.svelte",
 			"svelte": "./src/links/LinkQr.svelte"

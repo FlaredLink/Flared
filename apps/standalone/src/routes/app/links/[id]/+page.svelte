@@ -2,13 +2,39 @@
 <script lang="ts">
 	import LinkAnalytics from '@flared/ui/analytics/LinkAnalytics.svelte';
 	import LinkQr from '@flared/ui/links/LinkQr.svelte';
-	import { blockLabel } from '@flared/ui/links/messages';
+	import type { Action } from 'svelte/action';
+	import { enhance } from '$app/forms';
+	import LinkEditForm from '@flared/ui/links/LinkEditForm.svelte';
+	import { blockLabel, linkErrorMessage } from '@flared/ui/links/messages';
 	import { appRoutes } from '$lib/routes';
-	import type { PageData } from './$types';
+	import type { ActionData, PageData } from './$types';
 
-	let { data }: { data: PageData } = $props();
+	let { data, form }: { data: PageData; form: ActionData } = $props();
+	let pending = $state(false);
 
 	const shortName = $derived(data.link.shortUrl.replace(/^https?:\/\//, ''));
+	const notices = {
+		edit: 'Saved.',
+		enable: 'Link enabled. The short link opens again.',
+		disable: 'Link disabled. The short link no longer opens.'
+	} as const;
+	const editError = $derived(
+		form && 'error' in form && form.error
+			? { message: linkErrorMessage(form.error.code, form.error.message), field: form.error.field }
+			: null
+	);
+	const editValues = $derived(form && 'values' in form ? form.values : null);
+	const notice = $derived(form && 'updated' in form && form.updated ? notices[form.updated] : '');
+
+	const enhanceEdit: Action<HTMLFormElement> = (node) =>
+		enhance(node, () => {
+			pending = true;
+			return async ({ update }) => {
+				await update({ reset: false });
+				pending = false;
+			};
+		});
+
 	const ranges = $derived(
 		[7, 30].map((days) => ({
 			label: `${days} days`,
@@ -22,8 +48,8 @@
 
 <p class="back"><a href={appRoutes.app}>← All links</a></p>
 <div class="page-head">
-	<h1>{shortName}</h1>
-	{#if data.link.title}<p class="title">{data.link.title}</p>{/if}
+	<h1>{data.link.title ?? shortName}</h1>
+	{#if data.link.title}<p class="short">{shortName}</p>{/if}
 	{#if data.link.blocked}
 		<p class="destination">Went to {data.link.destination}</p>
 		<p class="badge blocked">{blockLabel(data.link.blocked.reason)}</p>
@@ -35,6 +61,20 @@
 		{#if !data.link.enabled}<p class="badge">Disabled</p>{/if}
 	{/if}
 </div>
+
+{#if !data.link.blocked}
+	<div class="edit">
+		<LinkEditForm
+			action="?/update"
+			link={data.link}
+			values={editValues}
+			error={editError}
+			{notice}
+			{pending}
+			enhance={enhanceEdit}
+		/>
+	</div>
+{/if}
 
 <div class="qr">
 	<LinkQr apiBase="/api/v1" linkId={data.link.id} shortUrl={data.link.shortUrl} />
@@ -71,8 +111,13 @@
 		font-size: 1.6rem;
 		overflow-wrap: anywhere;
 	}
-	.title {
-		color: var(--color-ink);
+	.short {
+		color: var(--color-accent-ink);
+		font-weight: 600;
+		overflow-wrap: anywhere;
+	}
+	.edit {
+		margin-bottom: 1.5rem;
 	}
 	.destination {
 		overflow: hidden;
