@@ -134,7 +134,9 @@
 								src={site && iconHref ? iconHref(site) : null}
 							/>
 							<div class="main">
-								{#if link.title}<span class="title">{link.title}</span>{/if}
+								{#if link.title}{#if analyticsHref}<a class="title" href={analyticsHref(link)}
+											>{link.title}</a
+										>{:else}<span class="title">{link.title}</span>{/if}{/if}
 								<span class="short-row">
 									<a class="short" href={link.shortUrl} target="_blank" rel="noopener noreferrer"
 										>{display(link.shortUrl)}</a
@@ -162,6 +164,7 @@
 							{/if}
 							{#if spark}
 								<svg class="trend" viewBox="0 0 64 20" width="64" height="20" aria-hidden="true">
+									<title>Daily clicks, last 30 days</title>
 									<path d={spark.area} class="trend-area" />
 									<path d={spark.line} class="trend-line" />
 								</svg>
@@ -325,6 +328,9 @@
 		font-weight: 650;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	a.title:hover {
+		text-decoration: underline;
 	}
 	.short-row {
 		display: flex;

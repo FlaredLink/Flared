@@ -27,7 +27,12 @@
 		day: 'numeric',
 		timeZone: 'UTC'
 	});
-	const time = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+	// UTC, as the chart and the table, with the zone named.
+	const time = new Intl.DateTimeFormat(undefined, {
+		dateStyle: 'medium',
+		timeStyle: 'short',
+		timeZone: 'UTC'
+	});
 	let regions: Intl.DisplayNames | null = null;
 	try {
 		regions = new Intl.DisplayNames(undefined, { type: 'region' });
@@ -61,6 +66,9 @@
 		other: 'Other',
 		unknown: 'Unknown'
 	};
+
+	const clickCount = (clicks: number) =>
+		`${numbers.format(clicks)} ${clicks === 1 ? 'click' : 'clicks'}`;
 
 	function formatDay(day: string): string {
 		return dayLabel.format(new Date(`${day}T00:00:00Z`));
@@ -111,11 +119,11 @@
 	});
 
 	const stats = $derived.by(() => {
-		const countries = analytics.countries.filter((row) => row.value !== 'unknown').length;
+		const topCountry = analytics.countries.find((row) => row.value !== 'unknown')?.value;
 		const device = analytics.devices.find((row) => row.value !== 'unknown')?.value;
 		return [
 			{ label: 'Total clicks', value: numbers.format(analytics.total), icon: phosphor.direct },
-			{ label: 'Countries', value: numbers.format(countries), icon: phosphor.globe },
+			{ label: 'Top country', value: topCountry ? country(topCountry) : '–', icon: phosphor.globe },
 			{
 				label: 'Top device',
 				value: device ? (deviceNames[device] ?? device) : '–',
@@ -294,9 +302,8 @@
 									<span class="meter" aria-hidden="true"
 										><span style:width={`${value}%`}></span></span
 									>
-									<span class="share" title={`${numbers.format(row.clicks)} clicks`}
-										>{percent(value)}<span class="visually-hidden"
-											>, {numbers.format(row.clicks)} clicks</span
+									<span class="share" title={clickCount(row.clicks)}
+										>{percent(value)}<span class="visually-hidden">, {clickCount(row.clicks)}</span
 										></span
 									>
 								</li>
@@ -315,8 +322,8 @@
 		</div>
 	{/if}
 	<p class="as-of">
-		Updated {time.format(new Date(analytics.asOf))}. New clicks can take up to five minutes to
-		appear. Link previews and known bots are not counted.
+		Updated {time.format(new Date(analytics.asOf))} UTC. New clicks can take up to five minutes to appear.
+		Link previews and known bots are not counted.
 	</p>
 </section>
 

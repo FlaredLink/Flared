@@ -116,9 +116,9 @@
 >
 	<h2 id="create-link-heading" class="visually-hidden">Create a short link</h2>
 	<input type="hidden" name="idempotencyKey" value={idempotencyKey} />
+	<label for="link-destination" class="destination-label">Destination URL</label>
 	<div class="bar">
 		<Tile icon="link" tone="accent" />
-		<label for="link-destination" class="visually-hidden">Destination URL</label>
 		<input
 			id="link-destination"
 			name="destination"
@@ -246,6 +246,10 @@
 		color: var(--color-strong, #101828);
 		font-size: 0.85rem;
 		font-weight: 650;
+	}
+	.destination-label {
+		display: block;
+		margin-bottom: 0.4rem;
 	}
 	.optional {
 		color: var(--color-muted, #667085);
