@@ -16,13 +16,16 @@
 	}
 
 	let { page, apiBase, mcpUrl, onChanged }: Props = $props();
-	// With no app yet, the setup steps are the main content of the section.
-	let guideOpen = $state(false);
 	let pending = $state<string | null>(null);
 	let confirming = $state<string | null>(null);
 	let status = $state('');
 	let error = $state('');
 	const dates = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
+	// The descriptions start with a capital; in one list only the first keeps it.
+	const sentence = (parts: string[]) =>
+		parts
+			.map((part, index) => (index === 0 ? part : part[0].toLowerCase() + part.slice(1)))
+			.join(', ');
 
 	async function remove(clientId: string, name: string) {
 		pending = clientId;
@@ -44,11 +47,13 @@
 </script>
 
 <section class="apps" aria-labelledby="apps-heading">
-	<h2 id="apps-heading">Connected apps</h2>
-	<p class="lead">
-		Connect Claude, ChatGPT, or another AI assistant to create links and read analytics from a chat.
-		Removing an app ends its access at once.
-	</p>
+	<div class="titles">
+		<h2 id="apps-heading">Connected apps</h2>
+		<p class="lead">
+			Use Flared from the AI assistants you already work in. Removing an app ends its access at
+			once.
+		</p>
+	</div>
 	<p class="status" role="status" aria-live="polite">{status}</p>
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
 	{#if page.apps.length > 0}
@@ -56,23 +61,22 @@
 			{#each page.apps as app (app.clientId)}
 				<li>
 					<span class="tile {app.assistant ?? 'other'}" aria-hidden="true"
-						>{#if app.assistant}<AssistantMark assistant={app.assistant} />{:else}{(
+						>{#if app.assistant}<AssistantMark assistant={app.assistant} size={30} />{:else}{(
 								Array.from(app.name)[0] ?? '?'
 							).toLocaleUpperCase()}{/if}</span
 					>
 					<div class="main">
 						<span class="name">{app.name}</span>
-						{#if app.uri}<span class="meta">{app.uri}</span>{/if}
-						<span class="meta"
-							>{app.scopes.map((scope) => scopeDescriptions[scope]).join(', ')}</span
+						<span class="meta">{sentence(app.scopes.map((scope) => scopeDescriptions[scope]))}</span
 						>
-						<span class="meta">
+						<span class="connected">
 							Connected <time datetime={app.connectedAt}
 								>{dates.format(new Date(app.connectedAt))}</time
 							>
-							·
-							{#if app.lastActiveAt}Last active <time datetime={app.lastActiveAt}
-									>{dates.format(new Date(app.lastActiveAt))}</time
+						</span>
+						<span class="meta">
+							{#if app.uri}{app.uri}{' · '}{/if}{#if app.lastActiveAt}Last active <time
+									datetime={app.lastActiveAt}>{dates.format(new Date(app.lastActiveAt))}</time
 								>{:else}Not used yet{/if}
 						</span>
 					</div>
@@ -98,28 +102,29 @@
 				</li>
 			{/each}
 		</ul>
+		<p class="note">No API token needed.</p>
 	{/if}
-	{#if page.apps.length === 0 || guideOpen}
-		<ConnectGuide {mcpUrl} />
-	{:else}
-		<button type="button" class="add" onclick={() => (guideOpen = true)}
-			>Connect another assistant</button
-		>
-	{/if}
+	<ConnectGuide {mcpUrl} another={page.apps.length > 0} />
 </section>
 
 <style>
 	.apps {
 		display: grid;
 		gap: 0.75rem;
-		max-width: 44rem;
+		container-type: inline-size;
+	}
+	.titles {
+		display: grid;
+		gap: 0.2rem;
 	}
 	h2 {
-		font-size: 1.05rem;
+		color: var(--color-strong, #101828);
+		font-size: 1.1rem;
 	}
 	.lead,
 	.status,
-	.meta {
+	.meta,
+	.note {
 		color: var(--color-muted, #667085);
 		font-size: 0.85rem;
 	}
@@ -132,34 +137,37 @@
 	}
 	ul {
 		display: grid;
+		gap: 0.75rem;
 		margin: 0;
 		padding: 0;
 		list-style: none;
-		border: 1px solid var(--color-rule, #d0d5dd);
-		border-radius: var(--radius-md, 8px);
-		background: var(--color-paper, #fff);
+	}
+	@container (min-width: 44rem) {
+		ul {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
 	}
 	li {
 		display: flex;
 		flex-wrap: wrap;
-		justify-content: space-between;
 		align-items: center;
-		gap: 0.75rem;
-		padding: 0.85rem 1rem;
-	}
-	li + li {
-		border-top: 1px solid var(--color-rule, #d0d5dd);
+		gap: 0.75rem 1rem;
+		padding: 1.25rem;
+		border: 1px solid var(--color-rule, #eaecf0);
+		border-radius: var(--radius-lg, 12px);
+		background: var(--color-surface, #fff);
 	}
 	/* An official mark only for a verified assistant; any other app gets its initial. */
 	.tile {
 		display: grid;
 		flex: none;
 		place-items: center;
-		width: 2.5rem;
-		height: 2.5rem;
+		width: 3.5rem;
+		height: 3.5rem;
 		border-radius: var(--radius-md, 8px);
 		background: var(--color-disabled, #f2f4f7);
 		color: var(--color-muted, #667085);
+		font-size: 1.2rem;
 		font-weight: 700;
 	}
 	.tile.claude {
@@ -167,17 +175,32 @@
 	}
 	.main {
 		display: grid;
-		flex: 1;
-		gap: 0.15rem;
+		flex: 1 1 12rem;
+		gap: 0.2rem;
 		min-width: 0;
 	}
 	.name {
 		color: var(--color-strong, #101828);
+		font-size: 1.05rem;
 		font-weight: 650;
 		overflow-wrap: anywhere;
 	}
 	.meta {
 		overflow-wrap: anywhere;
+	}
+	.connected {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		color: var(--color-ink, #344054);
+		font-size: 0.85rem;
+	}
+	.connected::before {
+		width: 0.5rem;
+		height: 0.5rem;
+		border-radius: 50%;
+		background: var(--color-positive, #067647);
+		content: '';
 	}
 	.actions {
 		display: flex;
@@ -207,9 +230,6 @@
 		border-color: var(--color-button-danger, #b42318);
 		background: var(--color-button-danger, #b42318);
 		color: var(--color-on-primary, #fff);
-	}
-	button.add {
-		justify-self: start;
 	}
 	button:disabled {
 		color: var(--color-muted, #667085);

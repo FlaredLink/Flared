@@ -5,6 +5,7 @@
 		normalizeWorkspaceName,
 		workspaceNameMaxLength
 	} from '@flared/contracts/workspace';
+	import Panel from '../layout/Panel.svelte';
 
 	interface Props {
 		// The path of the /v1 API for this browser, such as "/api/v1".
@@ -58,8 +59,7 @@
 	}
 </script>
 
-<section class="workspace" aria-labelledby="workspace-heading">
-	<h2 id="workspace-heading">Workspace</h2>
+<Panel id="workspace-heading" title="Workspace" icon="buildings" tone="teal">
 	<form onsubmit={save}>
 		<label for="workspace-name">Workspace name</label>
 		<div class="row">
@@ -77,17 +77,9 @@
 	</form>
 	<p class="status" role="status" aria-live="polite">{status}</p>
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
-</section>
+</Panel>
 
 <style>
-	.workspace {
-		display: grid;
-		gap: 0.75rem;
-		max-width: 44rem;
-	}
-	h2 {
-		font-size: 1.05rem;
-	}
 	form {
 		display: grid;
 		gap: 0.4rem;

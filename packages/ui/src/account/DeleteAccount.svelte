@@ -1,5 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
+	import Panel from '../layout/Panel.svelte';
+
 	interface Props {
 		// The edition's deletion route. It receives { confirmation } as JSON.
 		endpoint: string;
@@ -60,18 +62,22 @@
 	}
 </script>
 
-<section class="delete" aria-labelledby="delete-heading">
-	<h2 id="delete-heading">Delete your account</h2>
-	<p class="lead">
-		Deleting your account stops every short link at once and removes your links, domains, analytics,
-		API tokens, and connected apps. It cannot be undone. Export your data first if you want to keep
-		it.
-	</p>
+<Panel
+	id="delete-heading"
+	title="Delete account"
+	lead="Stops every short link at once and removes your links, domains, analytics, API tokens, and connected apps. It cannot be undone."
+	icon="warning"
+	tone="danger"
+	plain
+>
+	{#snippet actions()}
+		{#if !blocked && !open}
+			<button type="button" class="outline" onclick={() => (open = true)}>Delete account…</button>
+		{/if}
+	{/snippet}
 	{#if blocked}
 		<p class="blocked">{blocked.message} <a href={blocked.href}>{blocked.action}</a></p>
-	{:else if !open}
-		<button type="button" class="danger" onclick={() => (open = true)}>Delete account…</button>
-	{:else}
+	{:else if open}
 		<form
 			onsubmit={(event) => {
 				event.preventDefault();
@@ -79,17 +85,20 @@
 			}}
 		>
 			<ul>
+				<li>Export your data first if you want to keep it.</li>
 				<li>Your short links stop redirecting within a minute.</li>
 				<li>Their addresses stay reserved, so no one else can use them.</li>
 				<li>{afterDeletion}</li>
 			</ul>
 			<label for="delete-confirmation">Type <strong>{confirmation}</strong> to confirm</label>
+			<!-- svelte-ignore a11y_autofocus -->
 			<input
 				id="delete-confirmation"
 				bind:value={typed}
 				autocomplete="off"
 				autocapitalize="none"
 				spellcheck="false"
+				autofocus
 			/>
 			{#if error}<p class="error" role="alert">{error}</p>{/if}
 			<div class="actions">
@@ -109,18 +118,9 @@
 			</div>
 		</form>
 	{/if}
-</section>
+</Panel>
 
 <style>
-	.delete {
-		display: grid;
-		gap: 0.75rem;
-		max-width: 44rem;
-	}
-	h2 {
-		font-size: 1.05rem;
-	}
-	.lead,
 	li {
 		color: var(--color-muted, #667085);
 		font-size: 0.85rem;
@@ -191,6 +191,14 @@
 		color: var(--color-muted, #667085);
 		background: var(--color-disabled, #eaecf0);
 		border-color: var(--color-disabled, #eaecf0);
+	}
+	button.outline {
+		border: 1px solid var(--color-danger, #b42318);
+		background: var(--color-paper, #fff);
+		color: var(--color-danger, #b42318);
+	}
+	button.outline:hover {
+		background: var(--color-danger-soft, #fef3f2);
 	}
 	button.quiet {
 		border: 1px solid var(--color-rule, #d0d5dd);

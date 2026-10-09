@@ -1,11 +1,16 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
+	import Panel from '../layout/Panel.svelte';
+
 	interface Props {
 		// The MCP endpoint of this edition, such as "https://api.flared.page/mcp".
 		mcpUrl: string;
+		// True when an assistant is already connected: the card offers another and its steps start
+		// closed.
+		another?: boolean;
 	}
 
-	let { mcpUrl }: Props = $props();
+	let { mcpUrl, another = false }: Props = $props();
 
 	const assistants = [
 		{ id: 'claude', label: 'Claude' },
@@ -58,8 +63,13 @@
 	}
 </script>
 
-<div class="guide" role="region" aria-labelledby="connect-heading">
-	<h3 id="connect-heading">Connect an AI assistant</h3>
+<Panel
+	id="connect-heading"
+	title={another ? 'Connect another assistant' : 'Connect an AI assistant'}
+	lead="Use Flared with any AI assistant that supports the Model Context Protocol (MCP). You need no API token."
+	icon="sparkle"
+	tone="violet"
+>
 	<div class="field">
 		<label for="mcp-url">MCP server URL</label>
 		<div class="copy-row">
@@ -74,118 +84,131 @@
 		</div>
 	</div>
 
-	<div class="tabs" role="tablist" aria-label="Assistant">
-		{#each assistants as assistant, index (assistant.id)}
-			<button
-				bind:this={tabs[index]}
-				type="button"
-				role="tab"
-				id={`connect-tab-${assistant.id}`}
-				aria-selected={selected === assistant.id}
-				aria-controls="connect-panel"
-				tabindex={selected === assistant.id ? 0 : -1}
-				onclick={() => (selected = assistant.id)}
-				onkeydown={(event) => move(event, index)}>{assistant.label}</button
+	<details open={!another}>
+		<summary>Setup instructions</summary>
+		<div class="steps">
+			<div class="tabs" role="tablist" aria-label="Assistant">
+				{#each assistants as assistant, index (assistant.id)}
+					<button
+						bind:this={tabs[index]}
+						type="button"
+						role="tab"
+						id={`connect-tab-${assistant.id}`}
+						aria-selected={selected === assistant.id}
+						aria-controls="connect-panel"
+						tabindex={selected === assistant.id ? 0 : -1}
+						onclick={() => (selected = assistant.id)}
+						onkeydown={(event) => move(event, index)}>{assistant.label}</button
+					>
+				{/each}
+			</div>
+
+			<div
+				id="connect-panel"
+				class="panel"
+				role="tabpanel"
+				aria-labelledby={`connect-tab-${selected}`}
 			>
-		{/each}
-	</div>
+				{#if selected === 'claude'}
+					<p class="open-row">
+						<a class="open" href={claudeLink} target="_blank" rel="noopener">Add to Claude</a>
+						<span
+							>Opens Claude with Flared filled in. Select <strong>Add</strong>, then sign in.</span
+						>
+					</p>
+					<p>If the form opens empty:</p>
+					<ol>
+						<li>In Claude, open <strong>Settings</strong>, then <strong>Connectors</strong>.</li>
+						<li>
+							Select <strong>Add custom connector</strong>. Name it Flared and paste the URL.
+						</li>
+						<li>Select <strong>Add</strong>, then <strong>Connect</strong>.</li>
+						<li>Sign in to Flared and approve the access.</li>
+					</ol>
+				{:else if selected === 'chatgpt'}
+					<ol>
+						<li>
+							In ChatGPT, open <strong>Settings</strong>, <strong>Apps</strong>, then
+							<strong>Advanced settings</strong>. Turn on <strong>Developer mode</strong>.
+						</li>
+						<li>Select <strong>Create app</strong>. Name it Flared and paste the URL.</li>
+						<li>
+							Choose <strong>OAuth</strong> for authentication. Leave the client ID and secret empty.
+						</li>
+						<li>
+							Confirm and select <strong>Create</strong>. Sign in to Flared and approve the access.
+						</li>
+						<li>In a chat, add Flared from the <strong>+</strong> menu.</li>
+					</ol>
+				{:else if selected === 'grok'}
+					<ol>
+						<li>
+							In Grok, open <strong>Connectors</strong> and select <strong>New Connector</strong>.
+						</li>
+						<li>Choose <strong>Custom</strong>. Name it Flared and paste the URL.</li>
+						<li>Sign in to Flared and approve the access.</li>
+					</ol>
+				{:else if selected === 'claude-code'}
+					<ol>
+						<li>
+							Run this command:
+							<span class="copy-row">
+								<code>{command}</code>
+								<button type="button" onclick={() => void copy(command, 'Command')}>Copy</button>
+							</span>
+						</li>
+						<li>In Claude Code, run <code>/mcp</code>, choose flared, and sign in.</li>
+					</ol>
+				{:else if selected === 'cursor'}
+					<p class="open-row">
+						<a class="open" href={cursorLink}>Add to Cursor</a>
+						<span
+							>Opens Cursor with Flared filled in. Install it, then select <strong>Connect</strong
+							>.</span
+						>
+					</p>
+					<p>
+						Or open <strong>Cursor Settings</strong>, then <strong>MCP</strong>, add a server named
+						flared with the URL above, and sign in.
+					</p>
+				{:else if selected === 'vscode'}
+					<p class="open-row">
+						<a class="open" href={vscodeLink}>Install in VS Code</a>
+						<span
+							>Opens VS Code with Flared filled in. Install it, then sign in when VS Code asks.</span
+						>
+					</p>
+					<p>
+						Or run <strong>MCP: Add Server</strong> from the Command Palette, choose
+						<strong>HTTP</strong>, and paste the URL above.
+					</p>
+				{:else}
+					<p>
+						Any assistant that supports remote MCP servers with OAuth can connect. Add the URL as a
+						remote MCP server, then sign in to Flared when the assistant asks.
+					</p>
+				{/if}
+			</div>
 
-	<div id="connect-panel" class="panel" role="tabpanel" aria-labelledby={`connect-tab-${selected}`}>
-		{#if selected === 'claude'}
-			<p class="open-row">
-				<a class="open" href={claudeLink} target="_blank" rel="noopener">Add to Claude</a>
-				<span>Opens Claude with Flared filled in. Select <strong>Add</strong>, then sign in.</span>
-			</p>
-			<p>If the form opens empty:</p>
-			<ol>
-				<li>In Claude, open <strong>Settings</strong>, then <strong>Connectors</strong>.</li>
-				<li>
-					Select <strong>Add custom connector</strong>. Name it Flared and paste the URL.
-				</li>
-				<li>Select <strong>Add</strong>, then <strong>Connect</strong>.</li>
-				<li>Sign in to Flared and approve the access.</li>
-			</ol>
-		{:else if selected === 'chatgpt'}
-			<ol>
-				<li>
-					In ChatGPT, open <strong>Settings</strong>, <strong>Apps</strong>, then
-					<strong>Advanced settings</strong>. Turn on <strong>Developer mode</strong>.
-				</li>
-				<li>Select <strong>Create app</strong>. Name it Flared and paste the URL.</li>
-				<li>
-					Choose <strong>OAuth</strong> for authentication. Leave the client ID and secret empty.
-				</li>
-				<li>
-					Confirm and select <strong>Create</strong>. Sign in to Flared and approve the access.
-				</li>
-				<li>In a chat, add Flared from the <strong>+</strong> menu.</li>
-			</ol>
-		{:else if selected === 'grok'}
-			<ol>
-				<li>
-					In Grok, open <strong>Connectors</strong> and select <strong>New Connector</strong>.
-				</li>
-				<li>Choose <strong>Custom</strong>. Name it Flared and paste the URL.</li>
-				<li>Sign in to Flared and approve the access.</li>
-			</ol>
-		{:else if selected === 'claude-code'}
-			<ol>
-				<li>
-					Run this command:
-					<span class="copy-row">
-						<code>{command}</code>
-						<button type="button" onclick={() => void copy(command, 'Command')}>Copy</button>
-					</span>
-				</li>
-				<li>In Claude Code, run <code>/mcp</code>, choose flared, and sign in.</li>
-			</ol>
-		{:else if selected === 'cursor'}
-			<p class="open-row">
-				<a class="open" href={cursorLink}>Add to Cursor</a>
-				<span
-					>Opens Cursor with Flared filled in. Install it, then select <strong>Connect</strong
-					>.</span
-				>
-			</p>
-			<p>
-				Or open <strong>Cursor Settings</strong>, then <strong>MCP</strong>, add a server named
-				flared with the URL above, and sign in.
-			</p>
-		{:else if selected === 'vscode'}
-			<p class="open-row">
-				<a class="open" href={vscodeLink}>Install in VS Code</a>
-				<span>Opens VS Code with Flared filled in. Install it, then sign in when VS Code asks.</span
-				>
-			</p>
-			<p>
-				Or run <strong>MCP: Add Server</strong> from the Command Palette, choose
-				<strong>HTTP</strong>, and paste the URL above.
-			</p>
-		{:else}
-			<p>
-				Any assistant that supports remote MCP servers with OAuth can connect. Add the URL as a
-				remote MCP server, then sign in to Flared when the assistant asks.
-			</p>
-		{/if}
-	</div>
-
-	<p class="note">
-		You need no API token. Flared shows what the assistant asks for before you approve.
-	</p>
+			<p class="note">Flared shows what the assistant asks for before you approve.</p>
+		</div>
+	</details>
 	<p class="status" role="status" aria-live="polite">{copied}</p>
-</div>
+</Panel>
 
 <style>
-	.guide {
+	summary {
+		min-height: 32px;
+		padding: 0.35rem 0;
+		color: var(--color-ink, #101828);
+		font-size: 0.875rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.steps {
 		display: grid;
 		gap: 0.85rem;
-		padding: 1rem;
-		border: 1px solid var(--color-rule, #d0d5dd);
-		border-radius: var(--radius-md, 8px);
-		background: var(--color-surface, #f9fafb);
-	}
-	h3 {
-		font-size: 0.95rem;
+		padding-top: 0.5rem;
 	}
 	.field {
 		display: grid;

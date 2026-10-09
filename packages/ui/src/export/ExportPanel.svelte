@@ -2,6 +2,8 @@
 <script lang="ts">
 	import type { ExportProgress } from '@flared/client/export';
 	import { buildExport, buildLinksCsv, exportErrorMessage, ExportFailure } from './client';
+	import Panel from '../layout/Panel.svelte';
+	import Tile from '../layout/Tile.svelte';
 
 	interface Props {
 		// The path of the /v1 API for this browser, such as "/api/v1".
@@ -59,40 +61,90 @@
 	}
 </script>
 
-<section class="export" aria-labelledby="export-heading">
-	<h2 id="export-heading">Export your data</h2>
-	<p class="lead">
-		Download every link and {history} as one JSON file, or only the links as CSV for a spreadsheet. The
-		file is built in this browser.
-	</p>
+<Panel
+	id="export-heading"
+	title="Export your data"
+	lead="Download your links and {history}. The file is built in this browser."
+	icon="download"
+	tone="blue"
+>
+	<ul>
+		<li>
+			<Tile icon="file" />
+			<div class="main">
+				<span class="name">Links</span>
+				<span class="meta">CSV spreadsheet</span>
+			</div>
+			{#if pending === 'csv'}
+				<button type="button" class="quiet" onclick={() => controller?.abort()}
+					>Cancel export</button
+				>
+			{:else}
+				<button
+					type="button"
+					class="quiet"
+					disabled={pending !== null}
+					onclick={() => void start('csv')}>Download CSV</button
+				>
+			{/if}
+		</li>
+		<li>
+			<Tile icon="code" />
+			<div class="main">
+				<span class="name">Links and clicks</span>
+				<span class="meta">JSON file</span>
+			</div>
+			{#if pending === 'json'}
+				<button type="button" class="quiet" onclick={() => controller?.abort()}
+					>Cancel export</button
+				>
+			{:else}
+				<button
+					type="button"
+					class="quiet"
+					disabled={pending !== null}
+					onclick={() => void start('json')}>Download JSON</button
+				>
+			{/if}
+		</li>
+	</ul>
 	<p class="status" role="status" aria-live="polite">
 		{#if progress}Fetched {numbers.format(progress.links)} links and {numbers.format(
 				progress.dailyTotals + progress.dailyDimensions
 			)} analytics rows…{:else}{status}{/if}
 	</p>
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
-	<div class="actions">
-		{#if pending}
-			<button type="button" class="quiet" onclick={() => controller?.abort()}>Cancel export</button>
-		{:else}
-			<button type="button" onclick={() => void start('json')}>Download JSON</button>
-			<button type="button" class="quiet" onclick={() => void start('csv')}
-				>Download links as CSV</button
-			>
-		{/if}
-	</div>
-</section>
+</Panel>
 
 <style>
-	.export {
+	ul {
 		display: grid;
-		gap: 0.75rem;
-		max-width: 44rem;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		border-top: 1px solid var(--color-rule, #eaecf0);
 	}
-	h2 {
-		font-size: 1.05rem;
+	li {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.75rem 1rem;
+		padding: 0.9rem 0;
 	}
-	.lead,
+	li + li {
+		border-top: 1px solid var(--color-rule, #eaecf0);
+	}
+	.main {
+		display: grid;
+		flex: 1 1 10rem;
+		gap: 0.15rem;
+		min-width: 0;
+	}
+	.name {
+		color: var(--color-strong, #101828);
+		font-weight: 650;
+	}
+	.meta,
 	.status {
 		color: var(--color-muted, #667085);
 		font-size: 0.85rem;
@@ -104,31 +156,22 @@
 		color: var(--color-danger, #b42318);
 		font-size: 0.85rem;
 	}
-	.actions {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-	}
 	button {
 		min-height: 44px;
-		padding: 0.65rem 1.15rem;
-		border: 1px solid var(--color-button-primary, #101828);
+		padding: 0.6rem 1.15rem;
+		border: 1px solid var(--color-rule, #d0d5dd);
 		border-radius: var(--radius-sm, 6px);
-		background: var(--color-button-primary, #101828);
-		color: var(--color-on-primary, #fff);
-		font-weight: 620;
-	}
-	button:hover {
-		background: var(--color-button-primary-hover, #344054);
-		border-color: var(--color-button-primary-hover, #344054);
-	}
-	button.quiet {
-		border-color: var(--color-rule, #d0d5dd);
 		background: var(--color-paper, #fff);
 		color: var(--color-ink, #101828);
+		font-weight: 620;
 	}
-	button.quiet:hover {
+	button:hover:not(:disabled) {
 		background: var(--color-surface, #f9fafb);
 		border-color: var(--color-muted, #667085);
+	}
+	button:disabled {
+		color: var(--color-muted, #667085);
+		background: var(--color-disabled, #eaecf0);
+		border-color: var(--color-disabled, #eaecf0);
 	}
 </style>
