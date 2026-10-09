@@ -269,7 +269,12 @@ function escapeLike(value: string): string {
 export async function listLinks(
 	db: D1Database,
 	tenantId: string,
-	options: { limit: number; after: { createdAt: number; id: string } | null; search: string | null }
+	options: {
+		limit: number;
+		after: { createdAt: number; id: string } | null;
+		search: string | null;
+		domainId?: string | null;
+	}
 ): Promise<LinkRow[]> {
 	const conditions = ['l.tenant_id = ?'];
 	const values: (string | number)[] = [tenantId];
@@ -281,6 +286,10 @@ export async function listLinks(
 		const pattern = `%${escapeLike(options.search)}%`;
 		conditions.push("(l.slug LIKE ? ESCAPE '\\' OR l.title LIKE ? ESCAPE '\\')");
 		values.push(pattern, pattern);
+	}
+	if (options.domainId) {
+		conditions.push('l.domain_id = ?');
+		values.push(options.domainId);
 	}
 	const { results } = await db
 		.prepare(

@@ -70,9 +70,14 @@ function isLink(value: unknown): value is Link {
 export async function fetchLinks(
 	service: ApiService,
 	headers: Headers,
-	cursor: string | null
+	cursor: string | null,
+	filters: { search?: string | null; domainId?: string | null } = {}
 ): Promise<{ ok: true; page: LinkPage } | { ok: false; failure: ApiFailure }> {
-	const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+	const params = new URLSearchParams();
+	if (cursor) params.set('cursor', cursor);
+	if (filters.search) params.set('q', filters.search);
+	if (filters.domainId) params.set('domain', filters.domainId);
+	const query = params.size ? `?${params}` : '';
 	const response = await service.fetch(
 		apiRequest(`/v1/links${query}`, { method: 'GET', headers: forwardedHeaders(headers) })
 	);

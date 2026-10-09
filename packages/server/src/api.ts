@@ -199,6 +199,14 @@ function search(value: string | undefined): string | null {
 	return value.trim();
 }
 
+// A domain ID from GET /v1/domains. Another workspace's ID matches none of this workspace's links.
+function domainFilter(value: string | undefined): string | null {
+	if (value === undefined || value === '') return null;
+	if (value.length > 64)
+		throw new ApiError('INVALID_INPUT', 'Use a domain ID from GET /v1/domains.');
+	return value;
+}
+
 export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Variables }> {
 	const { identity, routing, appOrigin } = dependencies;
 	const now = dependencies.now ?? Date.now;
@@ -320,7 +328,8 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			{
 				limit: pageSize(context.req.query('limit')),
 				cursor: context.req.query('cursor') ?? null,
-				search: search(context.req.query('q'))
+				search: search(context.req.query('q')),
+				domainId: domainFilter(context.req.query('domain'))
 			},
 			(linkIds) => getRecentClicks(identity, dependencies.analytics, tenantId, linkIds, now())
 		);

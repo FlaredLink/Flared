@@ -203,7 +203,7 @@ export function decodeCursor(value: string): { createdAt: number; id: string } {
 export async function listLinks(
 	routing: D1Database,
 	tenantId: string,
-	query: { limit: number; cursor: string | null; search: string | null },
+	query: { limit: number; cursor: string | null; search: string | null; domainId?: string | null },
 	recentClicks: (
 		linkIds: string[]
 	) => Promise<Map<string, { total: number; daily: number[] }> | null> = async () => null
@@ -211,7 +211,8 @@ export async function listLinks(
 	const rows = await listLinkRows(routing, tenantId, {
 		limit: query.limit + 1,
 		after: query.cursor ? decodeCursor(query.cursor) : null,
-		search: query.search
+		search: query.search,
+		domainId: query.domainId ?? null
 	});
 	const page = rows.slice(0, query.limit);
 	const last = page.at(-1);

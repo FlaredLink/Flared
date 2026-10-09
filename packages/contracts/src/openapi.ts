@@ -337,6 +337,12 @@ export function openApiDocument(serverUrl: string) {
 								in: 'query',
 								description: 'Search slugs and titles.',
 								schema: { type: 'string', maxLength: 100 }
+							},
+							{
+								name: 'domain',
+								in: 'query',
+								description: 'Only links on this domain, by its ID from GET /v1/domains.',
+								schema: { type: 'string', maxLength: 64 }
 							}
 						]
 					}

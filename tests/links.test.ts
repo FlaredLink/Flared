@@ -329,6 +329,26 @@ describe('domains', () => {
 		expect((await json(foreign)).error.code).toBe('DOMAIN_UNAVAILABLE');
 	});
 
+	it('lists only the links on one domain, and none for another tenant’s domain', async () => {
+		await create('user-b', {
+			destination: 'https://example.com/a',
+			slug: 'on-other',
+			domainId: 'dom-other'
+		});
+		await create('user-b', { destination: 'https://example.com/b', slug: 'on-short' });
+		const other = await json(await call('user-b', 'GET', '/v1/links?limit=100&domain=dom-other'));
+		expect(other.links.map((link: { slug: string }) => link.slug)).toContain('on-other');
+		expect(
+			other.links.every((link: { hostname: string }) => link.hostname === 'other.example')
+		).toBe(true);
+		const short = await json(await call('user-b', 'GET', '/v1/links?limit=100&domain=dom-short'));
+		expect(short.links.some((link: { slug: string }) => link.slug === 'on-other')).toBe(false);
+		expect(short.links.some((link: { slug: string }) => link.slug === 'on-short')).toBe(true);
+		const foreign = await json(await call('user-a', 'GET', '/v1/links?limit=100&domain=dom-other'));
+		expect(foreign.links).toEqual([]);
+		expect((await call('user-b', 'GET', `/v1/links?domain=${'x'.repeat(65)}`)).status).toBe(422);
+	});
+
 	it('reports an unavailable default domain without storing the result', async () => {
 		await routing().prepare("UPDATE domains SET state = 'disabled' WHERE id = 'dom-short'").run();
 		const key = nextKey();

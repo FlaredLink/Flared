@@ -69,6 +69,8 @@ export interface ListLinksRequest {
 	limit?: number;
 	cursor?: string;
 	search?: string;
+	// A domain ID from listDomains.
+	domainId?: string;
 }
 
 export interface FlaredClient {
@@ -227,6 +229,7 @@ export function createClient(options: ClientOptions): FlaredClient {
 			if (query.limit !== undefined) params.set('limit', String(query.limit));
 			if (query.cursor) params.set('cursor', query.cursor);
 			if (query.search) params.set('q', query.search);
+			if (query.domainId) params.set('domain', query.domainId);
 			const suffix = params.size ? `?${params}` : '';
 			const { status, body } = await request('GET', `/links${suffix}`, { retry: true });
 			if (!isLinkPage(body)) throw invalid(status);
