@@ -165,7 +165,7 @@
 		<details open={customized}>
 			<summary><Glyph name="caretDown" size={18} />Customize</summary>
 			<div class="custom">
-				<div class="field">
+				<div class="custom-field">
 					<label for="link-slug">Slug <span class="optional">optional</span></label>
 					<div class="slug">
 						<span class="prefix" aria-hidden="true">{previewHost}/</span>
@@ -192,7 +192,7 @@
 						Leave empty for a random slug. A slug cannot change later.
 					</p>
 				</div>
-				<div class="field">
+				<div class="custom-field">
 					<label for="link-title">Title <span class="optional">optional</span></label>
 					<input
 						id="link-title"
@@ -215,7 +215,7 @@
 <style>
 	.link-form {
 		display: grid;
-		gap: 0.75rem;
+		gap: 1rem;
 	}
 	.bar {
 		display: flex;
@@ -332,14 +332,20 @@
 		font-size: 0.9375rem;
 	}
 	summary {
-		display: flex;
+		display: inline-flex;
 		align-items: center;
-		gap: 0.6rem;
+		gap: 0.5rem;
 		min-height: 2.25rem;
+		padding: 0 0.5rem;
+		margin-left: -0.5rem;
+		border-radius: var(--radius-control, 0.5rem);
 		color: var(--color-strong);
 		font-size: 0.9375rem;
 		list-style: none;
 		cursor: pointer;
+	}
+	summary:hover {
+		background: var(--color-hover);
 	}
 	summary::-webkit-details-marker {
 		display: none;
@@ -367,15 +373,15 @@
 	.custom {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
-		gap: 1rem 1.25rem;
-		padding: 1rem 0 0.25rem;
+		gap: 1.25rem 1.5rem;
+		padding: 0.75rem 0 0.5rem;
 	}
-	.field {
+	.custom-field {
 		display: grid;
 		align-content: start;
 		gap: 0.4rem;
 	}
-	.field label {
+	.custom-field label {
 		color: var(--color-strong);
 		font-size: 0.9375rem;
 		font-weight: 600;

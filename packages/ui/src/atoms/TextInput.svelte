@@ -25,14 +25,14 @@
 	}: Props = $props();
 </script>
 
-<span class="field {className}" class:invalid class:mono>
+<span class="text-input {className}" class:invalid class:mono>
 	{#if icon}<Glyph name={icon} size={20} />{/if}
 	<input bind:value bind:this={input} aria-invalid={invalid || undefined} {...rest} />
 	{#if end}{@render end()}{/if}
 </span>
 
 <style>
-	.field {
+	.text-input {
 		display: flex;
 		align-items: center;
 		gap: 0.65rem;
@@ -44,7 +44,7 @@
 		background: var(--color-input);
 		color: var(--color-muted);
 	}
-	.field:focus-within {
+	.text-input:focus-within {
 		border-color: var(--color-strong);
 		outline: 1px solid var(--color-strong);
 		outline-offset: -1px;
