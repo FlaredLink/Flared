@@ -83,6 +83,7 @@
 	--dur-fast: 140ms;
 	--shadow-card: 0 8px 28px var(--color-shadow-soft);
 	--shadow-float: 0 12px 35px var(--color-shadow), 0 1px 4px var(--color-shadow-soft);
+	--side-panel-width: 26rem;
 }
 :root[data-mode='light'] {
 	color-scheme: light;

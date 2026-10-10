@@ -35,26 +35,30 @@
 </aside>
 
 <style>
+	/* A full-height sidebar on the right edge of the window. The head stays in place and the
+	   body scrolls on its own. */
 	.side-panel {
-		position: sticky;
-		top: 1.5rem;
-		display: grid;
-		align-content: start;
-		gap: 0.75rem;
-		max-height: calc(100svh - 3rem);
-		overflow-y: auto;
-		padding: 1.25rem 1.5rem 1.5rem;
-		border: 1px solid var(--color-rule);
-		border-radius: var(--radius-lg, 0.875rem);
+		position: fixed;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		z-index: 40;
+		display: flex;
+		flex-direction: column;
+		width: min(var(--side-panel-width), 100%);
+		border-left: 1px solid var(--color-rule);
 		background: var(--color-paper);
-		box-shadow: var(--shadow-card);
+		animation: slide-in 220ms var(--ease-out, ease-out);
 	}
 	.head {
 		display: flex;
+		flex: none;
 		align-items: center;
 		justify-content: space-between;
 		gap: 1rem;
-		margin-right: -0.5rem;
+		min-height: 4rem;
+		padding: 0.75rem 1rem 0.75rem 1.5rem;
+		border-bottom: 1px solid var(--color-rule);
 	}
 	.label {
 		color: var(--color-lead);
@@ -65,19 +69,34 @@
 	}
 	.body {
 		display: grid;
+		flex: 1;
+		align-content: start;
 		gap: 1.25rem;
 		min-width: 0;
+		padding: 1.5rem 1.5rem 2rem;
+		overflow-y: auto;
+		overscroll-behavior: contain;
 	}
-	/* Without room for two columns, the panel slides over the page from the right. */
+	@keyframes slide-in {
+		from {
+			transform: translateX(1.5rem);
+			opacity: 0;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.side-panel {
+			animation: none;
+		}
+	}
+	/* Wide windows keep the page beside the sidebar. */
+	@media (min-width: 75rem) {
+		:global(body:has(.side-panel)) {
+			padding-right: var(--side-panel-width);
+		}
+	}
+	/* Narrow windows show the sidebar over the page. */
 	@media (max-width: 74.99rem) {
 		.side-panel {
-			position: fixed;
-			top: 0.75rem;
-			right: 0.75rem;
-			bottom: 0.75rem;
-			z-index: 40;
-			width: min(26rem, 100% - 1.5rem);
-			max-height: none;
 			box-shadow: var(--shadow-float);
 		}
 	}
