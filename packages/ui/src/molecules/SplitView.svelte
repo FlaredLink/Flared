@@ -2,13 +2,18 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 
-	// The page content, with a details panel beside it while one is open.
-	let { children, panel }: { children: Snippet; panel?: Snippet } = $props();
+	// The page content, with a details panel beside it while one is open. Pass open when the
+	// panel snippet can render nothing, so no empty column is kept for it.
+	let {
+		children,
+		panel,
+		open = Boolean(panel)
+	}: { children: Snippet; panel?: Snippet; open?: boolean } = $props();
 </script>
 
-<div class="split" class:open={panel}>
+<div class="split" class:open>
 	<div class="main">{@render children()}</div>
-	{#if panel}{@render panel()}{/if}
+	{#if panel && open}{@render panel()}{/if}
 </div>
 
 <style>
