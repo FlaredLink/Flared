@@ -3,7 +3,7 @@
 	import { onMount } from 'svelte';
 	import SettingRow from '../molecules/SettingRow.svelte';
 	import SegmentedControl from '../molecules/SegmentedControl.svelte';
-	import { applyTheme, savedTheme, type ThemeChoice } from './theme';
+	import { applyTheme, savedTheme, type ThemeChoice } from './ThemeControl.svelte';
 
 	// Unknown until the browser reads the cookie, so the server renders no chosen option.
 	let choice = $state<string>('');
