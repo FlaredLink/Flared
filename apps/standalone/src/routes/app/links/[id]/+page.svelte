@@ -1,37 +1,66 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
-	import LinkAnalytics from '@flared/ui/analytics/LinkAnalytics.svelte';
-	import LinkQr from '@flared/ui/links/LinkQr.svelte';
+	import { onMount } from 'svelte';
 	import type { Action } from 'svelte/action';
 	import { enhance } from '$app/forms';
+	import { goto } from '$app/navigation';
+	import LinkAnalytics from '@flared/ui/analytics/LinkAnalytics.svelte';
 	import LinkEditForm from '@flared/ui/links/LinkEditForm.svelte';
-	import { blockLabel, linkErrorMessage } from '@flared/ui/links/messages';
+	import LinkHeader from '@flared/ui/links/LinkHeader.svelte';
+	import { linkErrorMessage } from '@flared/ui/links/messages';
+	import SplitView from '@flared/ui/molecules/SplitView.svelte';
+	import SidePanel from '@flared/ui/molecules/SidePanel.svelte';
+	import Callout from '@flared/ui/molecules/Callout.svelte';
 	import { appRoutes } from '$lib/routes';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	let pending = $state(false);
 
-	const shortName = $derived(data.link.shortUrl.replace(/^https?:\/\//, ''));
+	const shortName = $derived(`${data.link.hostname}/${data.link.slug}`);
 	const notices = {
 		edit: 'Saved.',
 		enable: 'Link enabled. The short link opens again.',
 		disable: 'Link disabled. The short link no longer opens.'
 	} as const;
-	const editError = $derived(
+	const failure = $derived(
 		form && 'error' in form && form.error
 			? { message: linkErrorMessage(form.error.code, form.error.message), field: form.error.field }
 			: null
 	);
 	const editValues = $derived(form && 'values' in form ? form.values : null);
+	// A failed edit sends its values back; a failed disable or enable does not.
+	const editError = $derived(failure && editValues ? failure : null);
+	const toggleError = $derived(failure && !editValues ? failure.message : null);
 	const notice = $derived(form && 'updated' in form && form.updated ? notices[form.updated] : '');
 
-	const enhanceEdit: Action<HTMLFormElement> = (node) =>
+	// The edit panel opens from the Edit button, from #edit, and after a failed save.
+	let editing = $state(false);
+	$effect.pre(() => {
+		if (editError) editing = true;
+	});
+	onMount(() => {
+		const fromHash = () => {
+			if (window.location.hash === '#edit' && !data.link.blocked) editing = true;
+		};
+		fromHash();
+		window.addEventListener('hashchange', fromHash);
+		return () => window.removeEventListener('hashchange', fromHash);
+	});
+
+	function closeEdit() {
+		editing = false;
+		if (window.location.hash === '#edit')
+			history.replaceState(history.state, '', window.location.pathname + window.location.search);
+	}
+
+	const enhanceUpdate: Action<HTMLFormElement> = (node) =>
 		enhance(node, () => {
 			pending = true;
-			return async ({ update }) => {
+			return async ({ result, update }) => {
 				await update({ reset: false });
 				pending = false;
+				if (result.type === 'success') closeEdit();
 			};
 		});
 
@@ -46,120 +75,48 @@
 
 <svelte:head><title>{shortName} · Flared</title></svelte:head>
 
-<p class="back"><a href={appRoutes.app}>← All links</a></p>
-<div class="page-head">
-	<h1>{data.link.title ?? shortName}</h1>
-	{#if data.link.title}<p class="short">{shortName}</p>{/if}
-	{#if data.link.blocked}
-		<p class="destination">Went to {data.link.destination}</p>
-		<p class="badge blocked">{blockLabel(data.link.blocked.reason)}</p>
-		<p class="blocked-note">This link is blocked. It does not open, and you cannot change it.</p>
-	{:else}
-		<p class="destination">
-			Goes to <a href={data.link.destination} rel="noopener noreferrer">{data.link.destination}</a>
-		</p>
-		{#if !data.link.enabled}<p class="badge">Disabled</p>{/if}
-	{/if}
-</div>
-
-{#if !data.link.blocked}
-	<div class="edit">
+{#snippet editPanel()}
+	<SidePanel id="link-edit-label" label="Edit link" onclose={closeEdit}>
 		<LinkEditForm
 			action="?/update"
 			link={data.link}
 			values={editValues}
 			error={editError}
-			{notice}
 			{pending}
-			enhance={enhanceEdit}
+			enhance={enhanceUpdate}
+			oncancel={closeEdit}
 		/>
-	</div>
-{/if}
+	</SidePanel>
+{/snippet}
 
-<div class="qr">
-	<LinkQr apiBase="/api/v1" linkId={data.link.id} shortUrl={data.link.shortUrl} />
-</div>
-
-{#if data.analytics.status === 'ready'}
-	<LinkAnalytics
-		analytics={data.analytics.analytics}
-		{ranges}
-		iconHref={(hostname) => `/api/v1/icons/${hostname}`}
+<SplitView panel={editing && !data.link.blocked ? editPanel : undefined}>
+	<LinkHeader
+		link={data.link}
+		apiBase="/api/v1"
+		crumbs={[
+			{ label: data.workspaceName ?? 'Workspace' },
+			{ label: 'Links', href: appRoutes.app },
+			{ label: data.link.title ?? shortName }
+		]}
+		backHref={appRoutes.app}
+		action="?/update"
+		enhance={enhanceUpdate}
+		{pending}
+		{notice}
+		error={toggleError}
+		onedit={() => (editing = true)}
 	/>
-{:else}
-	<section class="notice" role="alert">
-		<h2>We couldn’t load the clicks for this link</h2>
-		<p>Refresh the page to try again. The link still redirects.</p>
-	</section>
-{/if}
 
-<style>
-	.back {
-		margin-bottom: 1rem;
-		font-size: 0.85rem;
-	}
-	.back a {
-		color: var(--color-accent-ink);
-		font-weight: 600;
-	}
-	.page-head {
-		display: grid;
-		gap: 0.3rem;
-		margin-bottom: 1.5rem;
-	}
-	h1 {
-		font-size: 1.6rem;
-		overflow-wrap: anywhere;
-	}
-	.short {
-		color: var(--color-accent-ink);
-		font-weight: 600;
-		overflow-wrap: anywhere;
-	}
-	.edit {
-		margin-bottom: 1.5rem;
-	}
-	.destination {
-		overflow: hidden;
-		color: var(--color-muted);
-		font-size: 0.85rem;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.destination a {
-		color: inherit;
-		text-decoration: underline;
-	}
-	.badge {
-		justify-self: start;
-		padding: 0 0.5rem;
-		border: var(--rule);
-		border-radius: 999px;
-		color: var(--color-muted);
-		font-size: 0.75rem;
-	}
-	.badge.blocked {
-		background: var(--color-accent-soft);
-		color: var(--color-accent-ink);
-	}
-	.blocked-note {
-		font-size: 0.85rem;
-	}
-	.qr {
-		margin-bottom: 1.5rem;
-	}
-	.notice {
-		display: grid;
-		gap: 0.4rem;
-		max-width: 44rem;
-		padding: 1.25rem;
-		border: 1px dashed var(--color-rule);
-		border-radius: var(--radius-md);
-	}
-	.notice h2 {
-		font-size: 1.05rem;
-	}
-	.notice p {
-		font-size: 0.9rem;
-	}
-</style>
+	{#if data.analytics.status === 'ready'}
+		<LinkAnalytics
+			analytics={data.analytics.analytics}
+			{ranges}
+			navigate={(href) => goto(href, { noScroll: true, keepFocus: true })}
+			iconHref={(hostname) => `/api/v1/icons/${hostname}`}
+		/>
+	{:else}
+		<Callout tone="danger" role="alert" title="We couldn’t load the clicks for this link">
+			<p>Refresh the page to try again. The link still redirects.</p>
+		</Callout>
+	{/if}
+</SplitView>
