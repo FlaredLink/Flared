@@ -10,6 +10,9 @@
 	import TokenList from '@flared/ui/tokens/TokenList.svelte';
 	import UsageMeters from '@flared/ui/usage/UsageMeters.svelte';
 	import WorkspaceName from '@flared/ui/workspace/WorkspaceName.svelte';
+	import ThemeSetting from '@flared/ui/theme/ThemeSetting.svelte';
+	import PageHeader from '@flared/ui/molecules/PageHeader.svelte';
+	import SectionHeader from '@flared/ui/molecules/SectionHeader.svelte';
 	import {
 		confirmWithPasskey,
 		passkeyErrorMessage,
@@ -157,10 +160,11 @@
 
 <svelte:head><title>Settings · Flared</title></svelte:head>
 
-<div class="page-head">
-	<h1>Settings</h1>
-	{#if account}<p>Signed in as <strong>{account}</strong></p>{/if}
-</div>
+<PageHeader
+	crumbs={[{ label: data.workspaceName ?? 'Workspace' }, { label: 'Settings' }]}
+	title="Settings"
+	lead={account ? `Signed in as ${account}` : 'Your account, preferences, and access.'}
+/>
 
 {#if reauthOpen}
 	<section class="section reauth" aria-labelledby="reauth-heading">
@@ -205,12 +209,17 @@
 	<div class="divider"></div>
 {/if}
 
-{#if data.workspaceName !== null}
-	<div id="workspace" class="anchor">
-		<WorkspaceName apiBase="/api/v1" name={data.workspaceName} onRenamed={invalidateAll} />
-	</div>
-	<div class="divider"></div>
-{/if}
+<section class="group" aria-labelledby="general-heading">
+	<SectionHeader id="general-heading" title="General" />
+	{#if data.workspaceName !== null}
+		<div id="workspace" class="anchor">
+			<WorkspaceName apiBase="/api/v1" name={data.workspaceName} onRenamed={invalidateAll} />
+		</div>
+	{/if}
+	<ThemeSetting />
+</section>
+
+<div class="divider"></div>
 
 <section class="section" aria-labelledby="password-heading">
 	<h2 id="password-heading">Password</h2>
@@ -267,6 +276,7 @@
 
 <div class="divider"></div>
 
+<SectionHeader title="Passkeys" />
 {#if data.passkeys}
 	<PasskeyList
 		page={data.passkeys}
@@ -382,11 +392,10 @@
 
 <div class="divider"></div>
 
+<SectionHeader title="Your data" />
 <div id="export" class="anchor">
 	<ExportPanel apiBase="/api/v1" retentionDays={data.usage?.retentionDays ?? null} />
 </div>
-
-<div class="divider"></div>
 
 <DeleteAccount
 	endpoint="/api/account/delete"
@@ -412,6 +421,9 @@
 	}
 	.anchor {
 		scroll-margin-top: 1.5rem;
+	}
+	.group {
+		display: grid;
 	}
 	.link-button {
 		padding: 0;
