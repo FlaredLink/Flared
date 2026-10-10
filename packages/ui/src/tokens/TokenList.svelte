@@ -62,6 +62,11 @@
 	let confirmingId = $state<string | null>(null);
 	// The create form opens in a side panel from the section's button.
 	let creating = $state(false);
+	let nameInput = $state<HTMLInputElement>();
+	// Opening the panel moves the keyboard into the form.
+	$effect(() => {
+		if (creating) nameInput?.focus();
+	});
 
 	const dates = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 	const relative = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
@@ -169,6 +174,7 @@
 				<TextInput
 					id="token-name"
 					bind:value={name}
+					bind:input={nameInput}
 					maxlength={maxTokenNameLength}
 					placeholder="Release script"
 					autocomplete="off"
