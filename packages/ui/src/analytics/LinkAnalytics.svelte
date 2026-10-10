@@ -1,7 +1,10 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
 	import EmptyState from '../empty/EmptyState.svelte';
-	import DimensionIcon, { phosphor, type IconKind } from './DimensionIcon.svelte';
+	import Glyph from '../icons/Glyph.svelte';
+	import Select from '../atoms/Select.svelte';
+	import Tabs, { tabPanelId, tabId, type TabItem } from '../molecules/Tabs.svelte';
+	import DimensionIcon, { type IconKind } from './DimensionIcon.svelte';
 	import type { DimensionClicks, LinkAnalytics } from '@flared/contracts/analytics';
 
 	interface Range {
@@ -12,13 +15,15 @@
 
 	interface Props {
 		analytics: LinkAnalytics;
-		// Range choices as links, so the page works without JavaScript.
+		// Range choices. Each is an address, so a page can also offer them as links.
 		ranges?: Range[];
+		// Opens a range. Without it, the page loads the range's address.
+		navigate?: (href: string) => void;
 		// Address of a site's icon on the app's origin. Without it, referrers show a letter.
 		iconHref?: (hostname: string) => string;
 	}
 
-	let { analytics, ranges = [], iconHref }: Props = $props();
+	let { analytics, ranges = [], navigate, iconHref }: Props = $props();
 	const id = $props.id();
 
 	const numbers = new Intl.NumberFormat();
@@ -87,6 +92,12 @@
 
 	const sum = (rows: DimensionClicks[]) => rows.reduce((total, row) => total + row.clicks, 0);
 
+	const currentRange = $derived(ranges.find((range) => range.current)?.href ?? '');
+	function chooseRange(href: string) {
+		if (navigate) navigate(href);
+		else window.location.assign(href);
+	}
+
 	const peak = $derived(Math.max(0, ...analytics.days.map((day) => day.clicks)));
 	// A round top tick at or above the peak, close enough that the line fills the plot.
 	const scale = $derived.by(() => {
@@ -98,6 +109,11 @@
 			peak
 		);
 	});
+	// Whole-number gridlines: three or four even steps where the top tick allows them.
+	const ticks = $derived.by(() => {
+		const count = [3, 4, 2].find((parts) => scale % parts === 0) ?? 1;
+		return Array.from({ length: count + 1 }, (_, index) => (scale / count) * index);
+	});
 
 	// The plot is 100 units high and one unit wide per day; the SVG stretches to the box.
 	const points = $derived.by(() => {
@@ -108,29 +124,19 @@
 	const width = $derived(Math.max(1, points.length - 1));
 	const line = $derived(`M${points.join(' L')}`);
 	const area = $derived(`M0,100 L${points.join(' L')} L${width},100 Z`);
-	// Up to five day labels, evenly spaced, always with the first and the last day.
+	// Up to four day labels, evenly spaced, always with the first and the last day.
 	const labels = $derived.by(() => {
 		const last = analytics.days.length - 1;
-		const indexes = [0, 1, 2, 3, 4].map((step) => Math.round((step * last) / 4));
+		const indexes = [0, 1, 2, 3].map((step) => Math.round((step * last) / 3));
 		return [...new Set(indexes)].map((index) => ({
 			day: analytics.days[index].day,
 			left: last === 0 ? 0 : (index / last) * 100
 		}));
 	});
+	// Dots on every day stay readable up to about a month.
+	const showDots = $derived(analytics.days.length <= 31);
 
-	const stats = $derived.by(() => {
-		const topCountry = analytics.countries.find((row) => row.value !== 'unknown')?.value;
-		const device = analytics.devices.find((row) => row.value !== 'unknown')?.value;
-		return [
-			{ label: 'Total clicks', value: numbers.format(analytics.total), icon: phosphor.direct },
-			{ label: 'Top country', value: topCountry ? country(topCountry) : '–', icon: phosphor.globe },
-			{
-				label: 'Top device',
-				value: device ? (deviceNames[device] ?? device) : '–',
-				icon: (device && phosphor[device]) || phosphor.unknown
-			}
-		];
-	});
+	const countries = $derived(analytics.countries.filter((row) => row.value !== 'unknown').length);
 
 	interface Breakdown {
 		id: string;
@@ -142,15 +148,8 @@
 		recorded?: { clicks: number; noun: string };
 	}
 
-	const breakdowns = $derived.by(() => {
+	const technology = $derived.by(() => {
 		const list: Breakdown[] = [
-			{
-				id: 'countries',
-				title: 'Top countries',
-				kind: 'country',
-				rows: analytics.countries,
-				name: country
-			},
 			{
 				id: 'devices',
 				title: 'Devices',
@@ -177,15 +176,34 @@
 				name: (v) => osNames[v] ?? v,
 				recorded: { clicks: sum(analytics.operatingSystems), noun: 'system' }
 			});
-		list.push({
-			id: 'referrers',
-			title: 'Referrers',
-			kind: 'referrer',
-			rows: analytics.referrers,
-			name: referrer
-		});
 		return list;
 	});
+	const technologyTabs = $derived<TabItem[]>(
+		technology.map((item) => ({ value: item.id, label: item.title }))
+	);
+	let technologyTab = $state('devices');
+	const shownTechnology = $derived(
+		technology.find((item) => item.id === technologyTab) ?? technology[0]
+	);
+
+	const countryBreakdown = $derived<Breakdown>({
+		id: 'countries',
+		title: 'Countries',
+		kind: 'country',
+		rows: analytics.countries,
+		name: country
+	});
+	const referrerBreakdown = $derived<Breakdown>({
+		id: 'referrers',
+		title: 'Referrers',
+		kind: 'referrer',
+		rows: analytics.referrers,
+		name: referrer
+	});
+
+	// Lists show four rows until the person asks for all of them.
+	const preview = 4;
+	let expanded = $state<Record<string, boolean>>({});
 
 	function share(rows: DimensionClicks[], clicks: number): number {
 		const total = sum(rows);
@@ -197,56 +215,102 @@
 	}
 </script>
 
-<section class="analytics" aria-labelledby="analytics-heading">
-	<div class="head">
-		<div>
-			<h2 id="analytics-heading">Clicks</h2>
-			<p class="range">{formatDay(analytics.from)} – {formatDay(analytics.to)} (UTC)</p>
-		</div>
-		{#if ranges.length > 0}
-			<nav class="ranges" aria-label="Date range">
-				{#each ranges as range (range.href)}
-					<a href={range.href} aria-current={range.current ? 'page' : undefined}>{range.label}</a>
-				{/each}
-			</nav>
+{#snippet rows(breakdown: Breakdown, bars: boolean)}
+	{#if breakdown.rows.length > 0}
+		{@const open = expanded[breakdown.id] ?? false}
+		<ol class="rows" class:bars id="{id}-{breakdown.id}-rows">
+			{#each open ? breakdown.rows : breakdown.rows.slice(0, preview) as row (row.value)}
+				{@const value = share(breakdown.rows, row.clicks)}
+				<li>
+					<DimensionIcon kind={breakdown.kind} value={row.value} {iconHref} />
+					<span class="name">{breakdown.name(row.value)}</span>
+					<span class="share" title={clickCount(row.clicks)}
+						>{percent(value)}<span class="visually-hidden">, {clickCount(row.clicks)}</span></span
+					>
+					{#if bars}<span class="meter" aria-hidden="true"
+							><span style:width={`${value}%`}></span></span
+						>{/if}
+				</li>
+			{/each}
+		</ol>
+		{#if breakdown.rows.length > preview}
+			<button
+				type="button"
+				class="all"
+				aria-expanded={open}
+				aria-controls="{id}-{breakdown.id}-rows"
+				onclick={() => (expanded = { ...expanded, [breakdown.id]: !open })}
+				>{open ? 'Show fewer' : `View all ${breakdown.title.toLocaleLowerCase()}`}<Glyph
+					name={open ? 'caretUp' : 'arrow'}
+					size={16}
+				/></button
+			>
 		{/if}
+	{:else}
+		<p class="none">No data in this range.</p>
+	{/if}
+	{#if breakdown.recorded && breakdown.recorded.clicks < analytics.total}
+		<p class="note">
+			{breakdown.recorded.clicks === 0
+				? `No ${breakdown.recorded.noun} data for these clicks yet. Recording started after them.`
+				: `Based on ${numbers.format(breakdown.recorded.clicks)} of ${numbers.format(analytics.total)} clicks. Older clicks have no ${breakdown.recorded.noun} data.`}
+		</p>
+	{/if}
+{/snippet}
+
+<section class="analytics" aria-labelledby="{id}-heading">
+	<div class="bar">
+		<h2 id="{id}-heading" class="tab">Analytics</h2>
+		<div class="period">
+			{#if ranges.length > 0}
+				<Select
+					icon="calendar"
+					value={currentRange}
+					aria-label="Period"
+					onchange={(event) => chooseRange(event.currentTarget.value)}
+				>
+					{#each ranges as range (range.href)}
+						<option value={range.href}>Last {range.label}</option>
+					{/each}
+				</Select>
+			{/if}
+			<p class="dates">{formatDay(analytics.from)} – {formatDay(analytics.to)} · UTC</p>
+		</div>
 	</div>
 
-	<dl class="overview">
-		{#each stats as stat (stat.label)}
-			<div class="stat">
-				<span class="stat-icon" aria-hidden="true">
-					<svg viewBox="0 0 256 256" width="20" height="20" fill="currentColor"
-						><path d={stat.icon} /></svg
-					>
-				</span>
-				<dt>{stat.label}</dt>
-				<dd>{stat.value}</dd>
-			</div>
-		{/each}
+	<dl class="stats">
+		<div>
+			<dt>Total clicks</dt>
+			<dd>{numbers.format(analytics.total)}</dd>
+		</div>
+		<div>
+			<dt>{countries === 1 ? 'Country' : 'Countries'}</dt>
+			<dd>{numbers.format(countries)}</dd>
+		</div>
 	</dl>
 
 	{#if analytics.total === 0}
-		<EmptyState>
-			No clicks in this range yet. Open the short link in a browser; the click shows here within a
-			few minutes.
+		<EmptyState title="No clicks in this range yet" icon="chartLine">
+			Open the short link in a browser; the click shows here within a few minutes.
 		</EmptyState>
 	{:else}
-		<figure class="card chart">
-			<figcaption class="card-title">Clicks over time</figcaption>
+		<figure class="chart">
+			<figcaption class="visually-hidden">Clicks over time</figcaption>
 			<div
 				class="plot"
 				role="img"
 				aria-label={`Daily clicks from ${formatDay(analytics.from)} to ${formatDay(analytics.to)}. Highest day: ${numbers.format(peak)}.`}
 			>
-				<span class="tick" style:top="0" aria-hidden="true">{numbers.format(scale)}</span>
-				{#if scale > 1 && scale % 2 === 0}
-					<span class="tick" style:top="50%" aria-hidden="true">{numbers.format(scale / 2)}</span>
-				{/if}
-				<span class="tick" style:top="100%" aria-hidden="true">0</span>
+				{#each ticks as tick (tick)}
+					<span class="tick" style:top="{100 - (tick / scale) * 100}%" aria-hidden="true"
+						>{numbers.format(tick)}</span
+					>
+				{/each}
 				<div class="area" aria-hidden="true">
-					<span class="grid" style:top="0"></span>
-					<span class="grid" style:top="50%"></span>
+					{#each ticks as tick (tick)}
+						<span class="grid" class:base={tick === 0} style:top="{100 - (tick / scale) * 100}%"
+						></span>
+					{/each}
 					<svg viewBox={`0 0 ${width} 100`} preserveAspectRatio="none">
 						<defs>
 							<linearGradient id={`fill-${id}`} x1="0" x2="0" y1="0" y2="1">
@@ -263,7 +327,11 @@
 					>
 						{#each analytics.days as day (day.day)}
 							<div class="column">
-								<span class="dot" style:bottom={`${(day.clicks / scale) * 100}%`}></span>
+								<span
+									class="dot"
+									class:always={showDots}
+									style:bottom={`${(day.clicks / scale) * 100}%`}
+								></span>
 								<span class="tip">{formatDay(day.day)}: {numbers.format(day.clicks)}</span>
 							</div>
 						{/each}
@@ -276,8 +344,8 @@
 				{/each}
 			</div>
 		</figure>
-		<details class="table">
-			<summary>Daily numbers</summary>
+		<details class="daily">
+			<summary><Glyph name="caretDown" size={18} />Daily numbers</summary>
 			<table>
 				<thead><tr><th scope="col">Day (UTC)</th><th scope="col">Clicks</th></tr></thead>
 				<tbody>
@@ -289,41 +357,46 @@
 		</details>
 
 		<div class="breakdowns">
-			{#each breakdowns as breakdown (breakdown.id)}
-				<section class="card breakdown {breakdown.id}" aria-labelledby={`${id}-${breakdown.id}`}>
-					<h3 class="card-title" id={`${id}-${breakdown.id}`}>{breakdown.title}</h3>
-					{#if breakdown.rows.length > 0}
-						<ol>
-							{#each breakdown.rows.slice(0, 8) as row (row.value)}
-								{@const value = share(breakdown.rows, row.clicks)}
-								<li>
-									<DimensionIcon kind={breakdown.kind} value={row.value} {iconHref} />
-									<span class="name">{breakdown.name(row.value)}</span>
-									<span class="meter" aria-hidden="true"
-										><span style:width={`${value}%`}></span></span
-									>
-									<span class="share" title={clickCount(row.clicks)}
-										>{percent(value)}<span class="visually-hidden">, {clickCount(row.clicks)}</span
-										></span
-									>
-								</li>
-							{/each}
-						</ol>
-					{/if}
-					{#if breakdown.recorded && breakdown.recorded.clicks < analytics.total}
-						<p class="note">
-							{breakdown.recorded.clicks === 0
-								? `No ${breakdown.recorded.noun} data for these clicks yet. Recording started after them.`
-								: `Based on ${numbers.format(breakdown.recorded.clicks)} of ${numbers.format(analytics.total)} clicks. Older clicks have no ${breakdown.recorded.noun} data.`}
-						</p>
-					{/if}
-				</section>
-			{/each}
+			<section class="breakdown" aria-labelledby="{id}-countries">
+				<h3 id="{id}-countries">Countries</h3>
+				{@render rows(countryBreakdown, false)}
+			</section>
+			<section class="breakdown" aria-labelledby="{id}-technology">
+				<h3 id="{id}-technology" class="visually-hidden">Devices and software</h3>
+				{#if technologyTabs.length > 1}
+					<Tabs
+						items={technologyTabs}
+						bind:value={technologyTab}
+						label="Devices and software"
+						idPrefix="{id}-tech"
+						size="sm"
+					/>
+					<div
+						role="tabpanel"
+						id={tabPanelId(`${id}-tech`, shownTechnology.id)}
+						aria-labelledby={tabId(`${id}-tech`, shownTechnology.id)}
+						class="panel"
+					>
+						{@render rows(shownTechnology, true)}
+					</div>
+				{:else}
+					<p class="single-title" aria-hidden="true">Devices</p>
+					{@render rows(shownTechnology, true)}
+				{/if}
+			</section>
+			<section class="breakdown" aria-labelledby="{id}-referrers">
+				<h3 id="{id}-referrers">Referrers</h3>
+				{@render rows(referrerBreakdown, false)}
+			</section>
 		</div>
 	{/if}
 	<p class="as-of">
-		Updated {time.format(new Date(analytics.asOf))} UTC. New clicks can take up to five minutes to appear.
-		Link previews and known bots are not counted.
+		<Glyph name="refresh" size={18} />
+		<span
+			>Updated {time.format(new Date(analytics.asOf))} UTC. New clicks can take up to five minutes to
+			appear.<span class="sep" aria-hidden="true">·</span>Link previews and known bots are not
+			counted.</span
+		>
 	</p>
 </section>
 
@@ -331,122 +404,97 @@
 	.analytics {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr);
-		gap: 1rem;
-		max-width: 64rem;
+		gap: 1.5rem;
+		container-type: inline-size;
 	}
-	.head {
+	.bar {
 		display: flex;
 		flex-wrap: wrap;
-		align-items: end;
+		align-items: flex-end;
 		justify-content: space-between;
-		gap: 1rem;
+		gap: 0.75rem 1.5rem;
+		box-shadow: inset 0 -1px var(--color-rule);
 	}
-	h2 {
-		font-size: 1.05rem;
+	.tab {
+		padding: 0.5rem 0.25rem 0.6rem;
+		border-bottom: 2px solid var(--color-accent);
+		color: var(--color-strong);
+		font-size: 1.1875rem;
+		font-weight: 650;
+		letter-spacing: -0.02em;
 	}
-	.range,
-	.as-of,
-	.note {
-		color: var(--color-muted, #667085);
-		font-size: 0.85rem;
-	}
-	.ranges {
+	.period {
 		display: flex;
-		gap: 0.25rem;
-	}
-	.ranges a {
-		display: inline-flex;
+		flex-wrap: wrap;
 		align-items: center;
-		min-height: 40px;
-		padding: 0 0.8rem;
-		border: 1px solid var(--color-rule, #d0d5dd);
-		border-radius: var(--radius-sm, 6px);
-		color: var(--color-ink, #101828);
-		font-size: 0.8rem;
-		font-weight: 600;
+		gap: 0.5rem 1rem;
+		padding-bottom: 0.6rem;
 	}
-	.ranges a[aria-current='page'] {
-		border-color: var(--color-ink, #101828);
+	.dates {
+		color: var(--color-lead);
+		font-size: 0.9375rem;
+		white-space: nowrap;
 	}
-	.card,
-	.stat {
-		border: 1px solid var(--color-rule, #d0d5dd);
-		border-radius: var(--radius-md, 10px);
-		background: var(--color-surface, #fff);
-	}
-	.card {
+	.stats {
+		display: flex;
+		flex-wrap: wrap;
 		margin: 0;
-		padding: 1rem 1.1rem;
 	}
-	.card-title {
-		color: var(--color-strong, #101828);
-		font-size: 0.95rem;
-		font-weight: 650;
-	}
-	.overview {
+	.stats div {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
-		gap: 0.75rem;
+		gap: 0.15rem;
+		padding-right: 3.5rem;
+	}
+	.stats div + div {
+		padding-left: 3.5rem;
+		border-left: 1px solid var(--color-rule);
+	}
+	.stats dd {
 		margin: 0;
-	}
-	.stat {
-		display: grid;
-		grid-template-columns: auto 1fr;
-		grid-template-rows: auto auto;
-		align-items: center;
-		gap: 0 0.85rem;
-		padding: 0.9rem 1rem;
-	}
-	.stat-icon {
-		display: inline-flex;
-		grid-row: 1 / 3;
-		align-items: center;
-		justify-content: center;
-		width: 2.5rem;
-		height: 2.5rem;
-		border-radius: 50%;
-		background: var(--color-accent-soft, #fff4ed);
-		color: var(--color-accent-ink, #c4561d);
-	}
-	dt {
-		color: var(--color-muted, #667085);
-		font-size: 0.85rem;
-	}
-	dd {
-		margin: 0;
-		color: var(--color-strong, #101828);
-		font-size: 1.5rem;
-		font-weight: 650;
+		color: var(--color-strong);
+		font-size: 2.5rem;
+		font-weight: 750;
+		letter-spacing: -0.04em;
+		line-height: 1.1;
 		font-variant-numeric: tabular-nums;
-		line-height: 1.2;
+	}
+	.stats dt {
+		order: 2;
+		color: var(--color-lead);
+		font-size: 0.875rem;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+	}
+	.chart {
+		margin: 0;
 	}
 	.plot {
 		position: relative;
-		height: 11rem;
-		margin-top: 0.85rem;
-		padding-left: 2.75rem;
+		height: 13rem;
+		margin-left: 2.75rem;
 	}
 	.tick {
 		position: absolute;
-		left: 0;
-		color: var(--color-muted, #667085);
-		font-size: 0.75rem;
+		right: calc(100% + 0.75rem);
+		color: var(--color-lead);
+		font-size: 0.8125rem;
 		font-variant-numeric: tabular-nums;
-		line-height: 1;
 		transform: translateY(-50%);
 	}
 	.area {
-		position: relative;
-		height: 100%;
-		border-bottom: 1px solid var(--color-rule, #d0d5dd);
+		position: absolute;
+		inset: 0;
 	}
 	.grid {
 		position: absolute;
 		right: 0;
 		left: 0;
-		border-top: 1px dashed var(--color-rule, #d0d5dd);
+		border-top: 1px dashed var(--color-rule);
 	}
-	.area svg {
+	.grid.base {
+		border-top-style: solid;
+	}
+	svg {
 		position: absolute;
 		inset: 0;
 		width: 100%;
@@ -454,44 +502,45 @@
 		overflow: visible;
 	}
 	.fill-top {
-		stop-color: var(--color-accent-ink, #c4561d);
-		stop-opacity: 0.22;
+		stop-color: var(--color-accent);
+		stop-opacity: 0.2;
 	}
 	.fill-bottom {
-		stop-color: var(--color-accent-ink, #c4561d);
+		stop-color: var(--color-accent);
 		stop-opacity: 0;
 	}
 	.line {
 		fill: none;
-		stroke: var(--color-accent-ink, #c4561d);
+		stroke: var(--color-accent);
 		stroke-width: 2;
 		stroke-linejoin: round;
+		stroke-linecap: round;
 	}
+	/* One column per day, centred on its point: the first and last columns reach half a column
+	 * past the ends of the line. */
 	.columns {
 		position: absolute;
 		inset: 0;
 		display: flex;
+		margin: 0 calc(-1 * var(--half));
 	}
 	.column {
 		position: relative;
 		flex: 1;
 		min-width: 0;
 	}
-	/* One column per day, centred on its point: the first and last columns reach half a column
-	 * past the ends of the line. */
-	.columns {
-		margin: 0 calc(-1 * var(--half));
-	}
 	.dot {
 		position: absolute;
 		left: 50%;
 		display: none;
-		width: 8px;
-		height: 8px;
-		border: 2px solid var(--color-surface, #fff);
+		width: 7px;
+		height: 7px;
 		border-radius: 50%;
-		background: var(--color-accent-ink, #c4561d);
+		background: var(--color-accent);
 		transform: translate(-50%, 50%);
+	}
+	.dot.always {
+		display: block;
 	}
 	.tip {
 		position: absolute;
@@ -500,10 +549,10 @@
 		z-index: 1;
 		display: none;
 		padding: 0.25rem 0.5rem;
-		border: 1px solid var(--color-rule, #d0d5dd);
-		border-radius: var(--radius-sm, 6px);
-		background: var(--color-paper, #fff);
-		color: var(--color-ink, #101828);
+		border: 1px solid var(--color-rule);
+		border-radius: var(--radius-sm, 0.375rem);
+		background: var(--color-paper);
+		color: var(--color-ink);
 		font-size: 0.75rem;
 		white-space: nowrap;
 		pointer-events: none;
@@ -513,16 +562,19 @@
 	.column:hover .dot {
 		display: block;
 	}
+	.column:hover .dot {
+		box-shadow: 0 0 0 3px var(--color-accent-soft);
+	}
 	.axis {
 		position: relative;
-		height: 1.4rem;
+		height: 1.75rem;
 		margin-left: 2.75rem;
-		color: var(--color-muted, #667085);
-		font-size: 0.75rem;
+		color: var(--color-lead);
+		font-size: 0.8125rem;
 	}
 	.axis span {
 		position: absolute;
-		top: 0.35rem;
+		top: 0.5rem;
 		white-space: nowrap;
 		transform: translateX(-50%);
 	}
@@ -532,92 +584,159 @@
 	.axis span:last-child {
 		transform: translateX(-100%);
 	}
-	.table summary {
-		color: var(--color-muted, #667085);
-		font-size: 0.85rem;
+	.daily {
+		padding-bottom: 1.25rem;
+		border-bottom: 1px solid var(--color-rule);
+	}
+	.daily summary {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.6rem;
+		min-height: 2.25rem;
+		color: var(--color-ink);
+		font-size: 0.9375rem;
+		list-style: none;
 		cursor: pointer;
 	}
+	.daily summary::-webkit-details-marker {
+		display: none;
+	}
+	.daily summary :global(svg) {
+		transition: transform var(--dur-fast, 140ms) var(--ease-out, ease);
+	}
+	.daily:not([open]) summary :global(svg) {
+		transform: rotate(-90deg);
+	}
 	table {
-		margin-top: 0.5rem;
+		width: min(100%, 24rem);
+		margin-top: 0.75rem;
 		border-collapse: collapse;
-		font-size: 0.85rem;
+		font-size: 0.875rem;
+		font-variant-numeric: tabular-nums;
+	}
+	th {
+		color: var(--color-lead);
+		font-weight: 600;
+		text-align: left;
 	}
 	th,
 	td {
-		padding: 0.25rem 1.5rem 0.25rem 0;
-		text-align: left;
+		padding: 0.4rem 0.5rem;
+		border-bottom: 1px solid var(--color-rule);
 	}
-	td + td,
-	th + th {
-		font-variant-numeric: tabular-nums;
+	th:last-child,
+	td:last-child {
 		text-align: right;
 	}
 	.breakdowns {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
-		gap: 0.75rem;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 2rem;
 	}
 	.breakdown {
-		--bar: var(--color-accent-ink, #c4561d);
 		display: grid;
 		align-content: start;
 		gap: 0.75rem;
-		container-type: inline-size;
+		min-width: 0;
 	}
-	.breakdown.devices {
-		--bar: var(--color-tile-blue, #2563eb);
+	h3,
+	.single-title {
+		min-height: 2.25rem;
+		color: var(--color-strong);
+		font-size: 1.1875rem;
+		font-weight: 650;
+		letter-spacing: -0.02em;
 	}
-	.breakdown.browsers {
-		--bar: var(--color-tile-teal, #0f766e);
-	}
-	.breakdown.systems {
-		--bar: var(--color-tile-violet, #6d28d9);
-	}
-	ol {
+	.panel {
 		display: grid;
-		gap: 0.6rem;
+		gap: 0.75rem;
+	}
+	.rows {
 		margin: 0;
 		padding: 0;
 		list-style: none;
 	}
-	li {
+	.rows li {
 		display: grid;
-		grid-template-columns: 20px minmax(0, 1fr) minmax(4rem, 40%) 2.75rem;
+		grid-template-columns: 1.5rem minmax(0, 1fr) 3rem;
 		align-items: center;
-		gap: 0.6rem;
-		font-size: 0.875rem;
+		gap: 0.35rem 0.85rem;
+		padding: 0.6rem 0;
 	}
-	@container (max-width: 22rem) {
-		li {
-			grid-template-columns: 20px minmax(0, 1fr) 2.75rem;
-		}
-		.meter {
-			grid-column: 2 / -1;
-			grid-row: 2;
-		}
+	.rows li + li {
+		border-top: 1px solid var(--color-rule);
+	}
+	.rows.bars li {
+		border-top: 0;
+		padding: 0.45rem 0;
+	}
+	.rows.bars li > :global(:first-child),
+	.rows.bars .share {
+		grid-row: span 2;
 	}
 	.name {
 		overflow: hidden;
-		color: var(--color-ink, #101828);
+		color: var(--color-strong);
+		font-size: 0.9375rem;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 	.share {
-		color: var(--color-muted, #667085);
-		font-variant-numeric: tabular-nums;
+		color: var(--color-strong);
 		text-align: right;
+		font-size: 0.9375rem;
+		font-variant-numeric: tabular-nums;
 	}
 	.meter {
-		height: 8px;
-		border-radius: 4px;
-		background: var(--color-disabled, #f2f4f7);
+		grid-column: 2 / 3;
+		display: block;
+		height: 0.5rem;
+		overflow: hidden;
+		border-radius: var(--radius-pill, 999px);
+		background: var(--color-selected);
 	}
 	.meter span {
 		display: block;
 		height: 100%;
-		min-width: 2px;
-		border-radius: 4px;
-		background: var(--bar);
+		border-radius: inherit;
+		background: var(--color-strong);
+	}
+	.all {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		justify-self: start;
+		min-height: 2.25rem;
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--color-strong);
+		font: inherit;
+		font-size: 0.9375rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.all:hover {
+		text-decoration: underline;
+		text-underline-offset: 3px;
+	}
+	.none,
+	.note {
+		color: var(--color-lead);
+		font-size: 0.875rem;
+	}
+	.as-of {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.6rem;
+		color: var(--color-lead);
+		font-size: 0.875rem;
+	}
+	.as-of :global(svg) {
+		margin-top: 0.1rem;
+	}
+	.sep {
+		margin: 0 0.6rem;
 	}
 	.visually-hidden {
 		position: absolute;
@@ -626,5 +745,48 @@
 		overflow: hidden;
 		clip-path: inset(50%);
 		white-space: nowrap;
+	}
+	/* Two columns with the device tabs across the bottom, then three side by side. */
+	@container (min-width: 38rem) {
+		.breakdowns {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+		.breakdown:nth-child(2) {
+			grid-column: 1 / -1;
+			grid-row: 2;
+		}
+	}
+	@container (min-width: 60rem) {
+		.breakdown:nth-child(2) {
+			grid-column: auto;
+			grid-row: auto;
+		}
+		.breakdowns {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+			gap: 0;
+		}
+		.breakdown {
+			padding: 0 2rem;
+		}
+		.breakdown:first-child {
+			padding-left: 0;
+		}
+		.breakdown:last-child {
+			padding-right: 0;
+		}
+		.breakdown + .breakdown {
+			border-left: 1px solid var(--color-rule);
+		}
+	}
+	@container (max-width: 30rem) {
+		.stats div {
+			padding-right: 1.75rem;
+		}
+		.stats div + div {
+			padding-left: 1.75rem;
+		}
+		.stats dd {
+			font-size: 2rem;
+		}
 	}
 </style>
