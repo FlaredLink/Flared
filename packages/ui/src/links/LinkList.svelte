@@ -3,6 +3,9 @@
 	import EmptyState from '../empty/EmptyState.svelte';
 	import Glyph from '../icons/Glyph.svelte';
 	import SiteIcon from '../icons/SiteIcon.svelte';
+	import IconButton from '../atoms/IconButton.svelte';
+	import Badge from '../atoms/Badge.svelte';
+	import Menu, { type MenuItem } from '../molecules/Menu.svelte';
 	import { iconHostnameOfUrl } from '@flared/contracts/icons';
 	import type { Link, ListedLink } from '@flared/contracts/links';
 	import { blockLabel } from './messages';
@@ -16,9 +19,15 @@
 		highlightId?: string | null;
 		// Address of a site's icon on the app's origin. Without it, rows show a letter tile.
 		iconHref?: (hostname: string) => string;
-		// Search and domain filter in the header. They submit as ?q= and ?domain= to this page,
-		// which passes them to GET /v1/links. Without it, the header shows no filters.
+		// Search and domain filter above the table. They submit as ?q= and ?domain= to this page,
+		// which passes them to GET /v1/links. Without it, the list shows no filters.
 		filters?: { search: string; domainId: string; domains: { id: string; hostname: string }[] };
+		// With a details panel: the open link, and the call that opens one. Without it, a title
+		// opens the analytics page.
+		selectedId?: string | null;
+		onselect?: (link: ListedLink) => void;
+		// The search field, for a shortcut that focuses it.
+		searchInput?: HTMLInputElement;
 	}
 
 	let {
@@ -27,31 +36,21 @@
 		nextHref = null,
 		highlightId = null,
 		iconHref,
-		filters
+		filters,
+		selectedId = null,
+		onselect,
+		searchInput = $bindable()
 	}: Props = $props();
 	const filtered = $derived(Boolean(filters && (filters.search || filters.domainId)));
 	let status = $state('');
 	let copiedId = $state<string | null>(null);
+	let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 
-	const dates = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 	const numbers = new Intl.NumberFormat();
 
 	function clicksText(link: ListedLink): string {
 		if (link.clicksLast30Days === null) return 'Clicks unavailable';
 		return `${numbers.format(link.clicksLast30Days)} ${link.clicksLast30Days === 1 ? 'click' : 'clicks'}`;
-	}
-
-	// A 64 by 20 trend line of the last 30 days, scaled to the busiest day; null without clicks.
-	function trend(link: ListedLink): { line: string; area: string } | null {
-		const daily = link.dailyClicksLast30Days;
-		if (!daily || daily.length < 2) return null;
-		const peak = Math.max(...daily);
-		if (peak === 0) return null;
-		const step = 64 / (daily.length - 1);
-		const points = daily.map(
-			(clicks, index) => `${(index * step).toFixed(1)},${(18 - (clicks / peak) * 16).toFixed(1)}`
-		);
-		return { line: `M${points.join(' L')}`, area: `M0,20 L${points.join(' L')} L64,20 Z` };
 	}
 
 	function clicksNumber(link: ListedLink): string {
@@ -63,125 +62,169 @@
 	}
 
 	async function copy(link: Link) {
+		clearTimeout(copiedTimer);
 		try {
 			await navigator.clipboard.writeText(link.shortUrl);
 			copiedId = link.id;
 			status = `Copied ${display(link.shortUrl)}`;
+			copiedTimer = setTimeout(() => (copiedId = null), 2500);
 		} catch {
 			copiedId = null;
 			status = 'Copy failed. Select the short link and copy it.';
 		}
 	}
+
+	function actions(link: ListedLink): MenuItem[] {
+		return [
+			...(onselect
+				? [{ label: 'Show details', icon: 'info' as const, onselect: () => onselect(link) }]
+				: []),
+			...(analyticsHref
+				? [{ label: 'View analytics', icon: 'chart' as const, href: analyticsHref(link) }]
+				: []),
+			{ label: 'Copy link', icon: 'copy', onselect: () => void copy(link) },
+			{ label: 'Open short link', icon: 'arrowUpRight', href: link.shortUrl, external: true },
+			{ label: 'Open destination', icon: 'external', href: link.destination, external: true }
+		];
+	}
+
+	// A click anywhere on a row opens its details, except on the row's own controls.
+	function rowClick(event: MouseEvent, link: ListedLink) {
+		if (!onselect) return;
+		if ((event.target as HTMLElement).closest('a, button, [popover]')) return;
+		onselect(link);
+	}
 </script>
 
 <section class="link-list" aria-labelledby="link-list-heading">
-	<div class="head">
-		<h2 id="link-list-heading">
-			Your links{#if !nextHref && links.length > 0}<span class="count">{links.length}</span>{/if}
-		</h2>
-		{#if filters}
-			<form class="filters" method="get" role="search" aria-label="Filter links">
-				<label class="search">
-					<span class="visually-hidden">Search links</span>
-					<Glyph name="search" size={18} />
-					<input
-						type="search"
-						name="q"
-						value={filters.search}
-						placeholder="Search links…"
-						maxlength="100"
-						autocomplete="off"
-					/>
+	<h2 id="link-list-heading" class="visually-hidden">Your links</h2>
+	{#if filters}
+		<form class="filters" method="get" role="search" aria-label="Filter links">
+			<label class="search">
+				<span class="visually-hidden">Search links</span>
+				<Glyph name="search" size={20} />
+				<input
+					type="search"
+					name="q"
+					value={filters.search}
+					placeholder="Search links…"
+					maxlength="100"
+					autocomplete="off"
+					bind:this={searchInput}
+				/>
+			</label>
+			{#if filters.domains.length > 1}
+				<label class="domain">
+					<span class="visually-hidden">Domain</span>
+					<select
+						name="domain"
+						value={filters.domainId}
+						onchange={(event) => event.currentTarget.form?.requestSubmit()}
+					>
+						<option value="">All domains</option>
+						{#each filters.domains as domain (domain.id)}
+							<option value={domain.id}>{domain.hostname}</option>
+						{/each}
+					</select>
+					<Glyph name="caretDown" size={16} />
 				</label>
-				{#if filters.domains.length > 1}
-					<label>
-						<span class="visually-hidden">Domain</span>
-						<select
-							name="domain"
-							value={filters.domainId}
-							onchange={(event) => event.currentTarget.form?.requestSubmit()}
-						>
-							<option value="">All domains</option>
-							{#each filters.domains as domain (domain.id)}
-								<option value={domain.id}>{domain.hostname}</option>
-							{/each}
-						</select>
-					</label>
-				{/if}
-			</form>
-		{/if}
-	</div>
-	<p class="status" role="status" aria-live="polite">{status}</p>
+			{/if}
+		</form>
+	{/if}
+	<p class="visually-hidden" role="status" aria-live="polite">{status}</p>
 	{#if links.length === 0}
 		{#if filtered}
 			<p class="empty">No links match. <a href="?">Show all links</a></p>
 		{:else}
-			<EmptyState>No links yet. Create your first short link above.</EmptyState>
+			<EmptyState title="No links yet"
+				>Create your first short link using the field above.</EmptyState
+			>
 		{/if}
 	{:else}
-		<div class="table">
-			<div class="columns" aria-hidden="true">
-				<span>Link</span><span>Clicks (30 days)</span><span>Created</span><span></span>
-			</div>
-			<ul>
-				{#each links as link (link.id)}
-					{@const spark = trend(link)}
-					{@const site = iconHostnameOfUrl(link.destination)}
-					<li class:highlight={link.id === highlightId}>
-						<div class="link">
-							<SiteIcon
-								hostname={site ?? display(link.destination)}
-								src={site && iconHref ? iconHref(site) : null}
-							/>
-							<div class="main">
-								{#if link.title}{#if analyticsHref}<a class="title" href={analyticsHref(link)}
-											>{link.title}</a
-										>{:else}<span class="title">{link.title}</span>{/if}{/if}
-								<span class="short-row">
-									<a class="short" href={link.shortUrl} target="_blank" rel="noopener noreferrer"
-										>{display(link.shortUrl)}</a
-									>
-									{#if link.blocked}<span class="badge blocked"
-											>{blockLabel(link.blocked.reason)}</span
-										>{:else if !link.enabled}<span class="badge">Disabled</span>{/if}
-								</span>
-								<span class="destination" title={link.destination}
-									>{site ?? display(link.destination)}</span
-								>
-							</div>
-						</div>
-						<div class="clicks-cell">
-							{#if analyticsHref}
-								<a
-									class="clicks"
-									href={analyticsHref(link)}
-									title="Clicks in the last 30 days"
-									aria-label={`${clicksText(link)} in the last 30 days for ${display(link.shortUrl)}. Open analytics.`}
-									>{clicksNumber(link)}</a
-								>
-							{:else}
-								<span class="clicks" title="Clicks in the last 30 days">{clicksNumber(link)}</span>
-							{/if}
-							{#if spark}
-								<svg class="trend" viewBox="0 0 64 20" width="64" height="20" aria-hidden="true">
-									<title>Daily clicks, last 30 days</title>
-									<path d={spark.area} class="trend-area" />
-									<path d={spark.line} class="trend-line" />
-								</svg>
-							{/if}
-						</div>
-						<time datetime={link.createdAt}>{dates.format(new Date(link.createdAt))}</time>
-						<button
-							type="button"
-							onclick={() => copy(link)}
-							aria-label={`Copy ${display(link.shortUrl)}`}
-							><Glyph name="copy" size={16} />{copiedId === link.id ? 'Copied' : 'Copy'}</button
-						>
-					</li>
-				{/each}
-			</ul>
+		<div class="columns" aria-hidden="true">
+			<span>Link</span><span class="clicks-head">Clicks · 30d</span>
 		</div>
-		{#if nextHref}<a class="more" href={nextHref}>Next page</a>{/if}
+		<ul class="rows">
+			{#each links as link (link.id)}
+				{@const site = iconHostnameOfUrl(link.destination)}
+				{@const name = link.title ?? display(link.shortUrl)}
+				<!-- The title button is the keyboard path; the row click is a larger target. -->
+				<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+				<li
+					class:selected={link.id === selectedId}
+					class:highlight={link.id === highlightId && link.id !== selectedId}
+					class:clickable={onselect}
+					onclick={(event) => rowClick(event, link)}
+				>
+					<SiteIcon
+						hostname={site ?? display(link.destination)}
+						src={site && iconHref ? iconHref(site) : null}
+						size={36}
+					/>
+					<div class="main">
+						<span class="title-row">
+							{#if onselect}
+								<button
+									type="button"
+									class="title"
+									aria-expanded={link.id === selectedId}
+									aria-controls="link-details"
+									onclick={() => onselect(link)}>{name}</button
+								>
+							{:else if analyticsHref}
+								<a class="title" href={analyticsHref(link)}>{name}</a>
+							{:else}
+								<span class="title">{name}</span>
+							{/if}
+							{#if link.blocked}<Badge tone="danger">{blockLabel(link.blocked.reason)}</Badge
+								>{:else if !link.enabled}<Badge>Disabled</Badge>{/if}
+						</span>
+						<span class="sub">
+							<a class="short" href={link.shortUrl} target="_blank" rel="noopener noreferrer"
+								>{link.hostname}/<strong>{link.slug}</strong></a
+							>
+							<span class="dot" aria-hidden="true">·</span>
+							<span class="destination" title={link.destination}
+								>{site ?? display(link.destination)}</span
+							>
+						</span>
+					</div>
+					{#if analyticsHref}
+						<a
+							class="clicks"
+							href={analyticsHref(link)}
+							aria-label={`${clicksText(link)} in the last 30 days for ${display(link.shortUrl)}. Open analytics.`}
+							>{clicksNumber(link)}</a
+						>
+					{:else}
+						<span class="clicks" title="Clicks in the last 30 days">{clicksNumber(link)}</span>
+					{/if}
+					<span class="copy">
+						{#if copiedId === link.id}
+							<span class="copied"><Glyph name="check" size={18} />Copied</span>
+						{:else}
+							<IconButton
+								icon="copy"
+								size="sm"
+								label={`Copy ${display(link.shortUrl)}`}
+								onclick={() => void copy(link)}
+							/>
+						{/if}
+					</span>
+					<Menu id="link-menu-{link.id}" label="More actions for {name}" items={actions(link)} />
+				</li>
+			{/each}
+		</ul>
+		<div class="foot">
+			<span
+				>{#if nextHref}Showing {numbers.format(links.length)} links{:else}{numbers.format(
+						links.length
+					)}
+					{links.length === 1 ? 'link' : 'links'}{/if}</span
+			>
+			{#if nextHref}<a class="more" href={nextHref}>Next page<Glyph name="arrow" size={16} /></a
+				>{/if}
+		</div>
 	{/if}
 </section>
 
@@ -189,274 +232,253 @@
 	.link-list {
 		display: grid;
 		gap: 0.75rem;
-		margin-top: 1.5rem;
-		padding: 1.25rem 1.5rem;
-		border: 1px solid var(--color-rule, #eaecf0);
-		border-radius: var(--radius-lg, 12px);
-		background: var(--color-surface, #fff);
 		container-type: inline-size;
-	}
-	.head {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.75rem 1rem;
-	}
-	h2 {
-		display: flex;
-		align-items: center;
-		gap: 0.6rem;
-		color: var(--color-strong, #101828);
-		font-size: 1.2rem;
-	}
-	.count {
-		min-width: 1.75rem;
-		padding: 0.1rem 0.5rem;
-		border-radius: 999px;
-		background: var(--color-disabled, #f2f4f7);
-		color: var(--color-ink, #344054);
-		font-size: 0.8rem;
-		font-weight: 600;
-		text-align: center;
 	}
 	.filters {
 		display: flex;
-		flex: 1 1 18rem;
 		flex-wrap: wrap;
-		justify-content: flex-end;
-		gap: 0.5rem;
+		gap: 0.75rem;
+		margin-bottom: 0.75rem;
+	}
+	.search,
+	.domain {
+		position: relative;
+		display: flex;
+		align-items: center;
+		min-height: 3rem;
+		border: 1px solid var(--color-rule);
+		border-radius: var(--radius-control, 0.5rem);
+		background: var(--color-input);
+		color: var(--color-lead);
 	}
 	.search {
-		display: flex;
-		flex: 1 1 14rem;
-		align-items: center;
-		gap: 0.5rem;
-		max-width: 20rem;
-		padding-left: 0.75rem;
-		border: 1px solid var(--color-rule, #d0d5dd);
-		border-radius: var(--radius-sm, 6px);
-		background: var(--color-input, #fff);
-		color: var(--color-muted, #667085);
+		flex: 1 1 18rem;
+		gap: 0.75rem;
+		padding: 0 1rem;
 	}
-	.search:focus-within {
-		border-color: var(--color-muted, #667085);
-		outline: 1px solid var(--color-muted, #667085);
+	.search:focus-within,
+	.domain:focus-within {
+		border-color: var(--color-strong);
+		outline: 1px solid var(--color-strong);
 		outline-offset: -1px;
 	}
 	.search input {
 		flex: 1;
 		min-width: 0;
-		min-height: 42px;
-		padding: 0.5rem 0.75rem 0.5rem 0;
+		align-self: stretch;
+		padding: 0;
 		border: 0;
-		background: none;
-		color: var(--color-ink, #101828);
+		background: transparent;
+		color: var(--color-strong);
 		font: inherit;
-		font-size: 0.9rem;
-	}
-	.search input:focus-visible {
+		font-size: 1rem;
 		outline: none;
 	}
-	select {
-		min-height: 44px;
-		padding: 0.5rem 0.75rem;
-		border: 1px solid var(--color-rule, #d0d5dd);
-		border-radius: var(--radius-sm, 6px);
-		background: var(--color-input, #fff);
-		color: var(--color-ink, #101828);
+	.search input::placeholder {
+		color: var(--color-lead);
+	}
+	.domain {
+		flex: 0 1 12rem;
+		color: var(--color-strong);
+	}
+	.domain select {
+		width: 100%;
+		align-self: stretch;
+		padding: 0 2.5rem 0 1rem;
+		border: 0;
+		background: transparent;
+		color: inherit;
 		font: inherit;
-		font-size: 0.9rem;
+		font-size: 1rem;
+		appearance: none;
+		outline: none;
 	}
-	.status:empty {
-		display: none;
+	.domain select option {
+		background: var(--color-paper);
+		color: var(--color-strong);
 	}
-	.status,
-	.empty {
-		color: var(--color-muted, #667085);
-		font-size: 0.85rem;
+	.domain :global(svg) {
+		position: absolute;
+		right: 0.9rem;
+		pointer-events: none;
 	}
-	.empty a {
-		color: var(--color-strong, #101828);
-		text-decoration: underline;
+	.columns,
+	li {
+		display: grid;
+		grid-template-columns: 2.5rem minmax(0, 1fr) 7.5rem 6.5rem 2.25rem;
+		align-items: center;
+		gap: 0 1rem;
 	}
 	.columns {
-		display: none;
-		padding: 0 0 0.6rem;
-		border-bottom: 1px solid var(--color-rule, #eaecf0);
-		color: var(--color-muted, #667085);
-		font-size: 0.8rem;
-		font-weight: 550;
+		padding: 0 1rem 0 1.25rem;
+		color: var(--color-lead);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
 	}
-	ul {
-		display: grid;
+	.columns span:first-child {
+		grid-column: 1 / 3;
+	}
+	.clicks-head {
+		text-align: center;
+		white-space: nowrap;
+	}
+	.rows {
 		margin: 0;
 		padding: 0;
 		list-style: none;
+		border: 1px solid var(--color-rule);
+		border-radius: var(--radius-md, 0.625rem);
+		background: var(--color-paper);
+		overflow: hidden;
 	}
 	li {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto;
-		align-items: center;
-		gap: 0.5rem 1rem;
-		padding: 0.9rem 0;
+		position: relative;
+		min-height: 4.6rem;
+		padding: 0.75rem 1rem 0.75rem 1.25rem;
 	}
 	li + li {
-		border-top: 1px solid var(--color-rule, #eaecf0);
+		border-top: 1px solid var(--color-rule);
 	}
+	.clickable {
+		cursor: pointer;
+	}
+	.clickable:hover {
+		background: var(--color-hover);
+	}
+	li.selected,
 	li.highlight {
-		margin-inline: -0.75rem;
-		padding-inline: 0.75rem;
-		border-radius: var(--radius-md, 8px);
-		background: var(--color-accent-soft, #fff4ed);
+		background: var(--color-accent-soft);
 	}
-	.link {
-		display: flex;
-		grid-column: 1 / -1;
-		align-items: center;
-		gap: 0.85rem;
-		min-width: 0;
+	li.selected::before {
+		content: '';
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: 0;
+		width: 3px;
+		background: var(--color-accent);
 	}
 	.main {
 		display: grid;
-		gap: 0.1rem;
+		gap: 0.2rem;
+		min-width: 0;
+	}
+	.title-row {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
 		min-width: 0;
 	}
 	.title {
 		overflow: hidden;
-		color: var(--color-strong, #101828);
-		font-weight: 650;
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--color-strong);
+		font: inherit;
+		font-size: 1.0625rem;
+		font-weight: 600;
+		text-align: left;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+		cursor: pointer;
 	}
-	a.title:hover {
+	a.title:hover,
+	button.title:hover {
 		text-decoration: underline;
+		text-underline-offset: 3px;
 	}
-	.short-row {
+	.sub {
 		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.4rem;
+		align-items: baseline;
+		gap: 0.5rem;
+		min-width: 0;
+		color: var(--color-lead);
+		font-size: 0.9375rem;
 	}
 	.short {
-		color: var(--color-accent-ink, #b93815);
-		font-size: 0.9rem;
-		font-weight: 550;
-		overflow-wrap: anywhere;
+		flex: none;
+		color: var(--color-lead);
+	}
+	.short strong {
+		color: var(--color-strong);
+		font-weight: 600;
 	}
 	.short:hover {
 		text-decoration: underline;
+		text-underline-offset: 3px;
 	}
 	.destination {
 		overflow: hidden;
-		color: var(--color-muted, #667085);
-		font-size: 0.8rem;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
-	.badge {
-		padding: 0 0.45rem;
-		border-radius: 999px;
-		background: var(--color-disabled, #eaecf0);
-		color: var(--color-muted, #667085);
-		font-size: 0.75rem;
-	}
-	.badge.blocked {
-		background: var(--color-danger-soft, #fee4e2);
-		color: var(--color-danger, #b42318);
-	}
-	.clicks-cell {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-	}
-	.trend {
-		flex: none;
-		overflow: visible;
-	}
-	.trend-area {
-		fill: var(--color-chart-fill, rgb(255 237 213 / 0.5));
-	}
-	.trend-line {
-		fill: none;
-		stroke: var(--color-accent-ink, #c4561d);
-		stroke-width: 1.5;
-		stroke-linejoin: round;
-	}
 	.clicks {
-		color: var(--color-ink, #101828);
+		color: var(--color-strong);
+		font-size: 1rem;
 		font-variant-numeric: tabular-nums;
-		font-weight: 600;
-		white-space: nowrap;
-	}
-	a.clicks {
-		display: inline-flex;
-		align-items: center;
-		min-width: 2.5rem;
-		min-height: 40px;
-		text-decoration: underline;
-		text-decoration-color: var(--color-rule, #d0d5dd);
-		text-underline-offset: 3px;
+		text-align: center;
 	}
 	a.clicks:hover {
-		text-decoration-color: currentColor;
+		text-decoration: underline;
+		text-underline-offset: 3px;
 	}
-	time {
-		color: var(--color-muted, #667085);
-		font-size: 0.85rem;
-		white-space: nowrap;
+	.copy {
+		display: flex;
+		justify-content: center;
 	}
-	button {
+	.copied {
 		display: inline-flex;
 		align-items: center;
-		justify-content: center;
-		gap: 0.4rem;
-		min-width: 5.5rem;
-		min-height: 40px;
-		padding: 0.4rem 0.8rem;
-		border: 1px solid var(--color-rule, #d0d5dd);
-		border-radius: var(--radius-sm, 6px);
-		background: var(--color-paper, #fff);
-		color: var(--color-ink, #101828);
-		font-size: 0.8rem;
-		font-weight: 600;
+		gap: 0.35rem;
+		color: var(--color-accent-ink);
+		font-size: 0.9375rem;
+		font-weight: 500;
 	}
-	button:hover {
-		border-color: var(--color-muted, #667085);
+	.foot {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		padding: 0.25rem 0.25rem 0;
+		color: var(--color-lead);
+		font-size: 0.9375rem;
 	}
 	.more {
-		justify-self: start;
-		color: var(--color-accent-ink, #b42318);
-		font-size: 0.85rem;
-		font-weight: 600;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		color: var(--color-link);
+	}
+	.empty {
+		padding: 1.5rem 0;
+		color: var(--color-lead);
+	}
+	.empty a {
+		color: var(--color-link);
+		text-decoration: underline;
 	}
 	.visually-hidden {
 		position: absolute;
 		width: 1px;
 		height: 1px;
 		overflow: hidden;
-		clip: rect(0 0 0 0);
+		clip-path: inset(50%);
 		white-space: nowrap;
 	}
-	/* Columns once the list has room: link, clicks, created, copy. */
-	@container (min-width: 46rem) {
-		.columns,
+	/* Narrow lists keep the link and its clicks; copy and the menu stay in reach. */
+	@container (max-width: 34rem) {
+		.columns {
+			display: none;
+		}
 		li {
-			display: grid;
-			grid-template-columns: minmax(0, 1fr) 11rem 8rem 6rem;
-			align-items: center;
-			gap: 1rem;
+			grid-template-columns: 2.25rem minmax(0, 1fr) auto 2.25rem;
+			gap: 0 0.75rem;
+			padding-inline: 0.85rem 0.5rem;
 		}
-		.link {
-			grid-column: auto;
-		}
-		.columns span:last-child,
-		li > button {
-			justify-self: end;
-		}
-	}
-	@container (max-width: 46rem) {
-		li time {
+		.copy {
 			display: none;
 		}
 	}
