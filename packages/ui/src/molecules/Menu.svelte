@@ -14,6 +14,7 @@
 </script>
 
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import Glyph from '../icons/Glyph.svelte';
 
 	interface Props {
@@ -25,8 +26,25 @@
 		// Text beside the icon; without it the trigger is an icon button.
 		text?: string;
 		align?: 'start' | 'end';
+		// A mark that replaces the icon, such as an avatar, and the caret after the text.
+		lead?: Snippet;
+		caret?: GlyphName;
+		// Content above the items, such as the signed-in email.
+		heading?: Snippet;
+		class?: string;
 	}
-	let { items, label, id, icon = 'dots', text, align = 'end' }: Props = $props();
+	let {
+		items,
+		label,
+		id,
+		icon = 'dots',
+		text,
+		align = 'end',
+		lead,
+		caret = 'caret',
+		heading,
+		class: className = ''
+	}: Props = $props();
 	let trigger = $state<HTMLButtonElement>();
 	let menu = $state<HTMLDivElement>();
 	let open = $state(false);
@@ -75,17 +93,16 @@
 <button
 	bind:this={trigger}
 	type="button"
-	class="trigger"
+	class="trigger {className}"
 	class:with-text={text}
 	popovertarget={id}
 	aria-haspopup="menu"
 	aria-expanded={open}
 	aria-label={text ? undefined : label}
 	title={text ? undefined : label}
-	><Glyph name={icon} size={20} />{#if text}<span>{text}</span><Glyph
-			name="caret"
-			size={16}
-		/>{/if}</button
+	>{#if lead}{@render lead()}{:else}<Glyph name={icon} size={20} />{/if}{#if text}<span class="text"
+			>{text}</span
+		><Glyph name={caret} size={16} />{/if}</button
 >
 <div
 	bind:this={menu}
@@ -98,6 +115,7 @@
 	ontoggle={toggled}
 	onkeydown={keydown}
 >
+	{#if heading}<div class="heading">{@render heading()}</div>{/if}
 	{#each items as item (item.label)}
 		{#if 'href' in item}
 			<a
@@ -144,22 +162,27 @@
 		height: auto;
 		min-height: 2.75rem;
 		gap: 0.75rem;
-		padding: 0;
+		padding: 0 0.75rem;
 		font: inherit;
 		font-size: 0.9375rem;
 		text-align: left;
 	}
-	.with-text span {
+	.with-text .text {
 		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.heading {
+		padding: 0.5rem 0.65rem 0.65rem;
+		margin-bottom: 0.25rem;
+		border-bottom: 1px solid var(--color-rule);
 	}
 	.trigger:hover,
 	.trigger[aria-expanded='true'] {
 		background: var(--color-hover);
 		color: var(--color-strong);
-	}
-	.with-text:hover,
-	.with-text[aria-expanded='true'] {
-		background: transparent;
 	}
 	.menu {
 		position: fixed;
