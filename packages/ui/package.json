@@ -91,7 +91,11 @@
 		},
 		"./styles": "./src/styles/index.css",
 		"./navigation": "./src/navigation.ts",
-		"./styles/controls": "./src/styles/controls.css"
+		"./styles/controls": "./src/styles/controls.css",
+		"./*.svelte": {
+			"types": "./src/*.svelte",
+			"svelte": "./src/*.svelte"
+		}
 	},
 	"dependencies": {
 		"@flared/client": "workspace:*",
