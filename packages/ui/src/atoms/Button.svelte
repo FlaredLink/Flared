@@ -155,7 +155,9 @@
 		cursor: not-allowed;
 		opacity: 1;
 	}
-	.link:disabled {
+	.link:disabled,
+	.ghost:disabled,
+	.ghost[aria-disabled='true'] {
 		background: transparent;
 		border-color: transparent;
 	}

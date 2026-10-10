@@ -30,7 +30,7 @@
 		display: grid;
 		grid-template-columns: 2.25rem minmax(0, 1fr);
 		gap: 0.25rem 1rem;
-		align-items: center;
+		align-items: start;
 		padding: 1rem 0;
 		border-bottom: 1px solid var(--color-rule);
 	}
