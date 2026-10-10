@@ -22,12 +22,13 @@ async function errorCode(response: Response): Promise<string> {
 
 export async function createApiToken(
 	apiBase: string,
-	input: CreateTokenInput
+	input: CreateTokenInput,
+	workspace: Record<string, string> = {}
 ): Promise<TokenResult<CreatedApiToken>> {
 	try {
 		const response = await fetch(`${apiBase}/tokens`, {
 			method: 'POST',
-			headers: { 'content-type': 'application/json' },
+			headers: { 'content-type': 'application/json', ...workspace },
 			body: JSON.stringify(input)
 		});
 		if (response.status !== 201) return { ok: false, code: await errorCode(response) };
@@ -40,10 +41,15 @@ export async function createApiToken(
 	}
 }
 
-export async function revokeApiToken(apiBase: string, id: string): Promise<TokenResult<null>> {
+export async function revokeApiToken(
+	apiBase: string,
+	id: string,
+	workspace: Record<string, string> = {}
+): Promise<TokenResult<null>> {
 	try {
 		const response = await fetch(`${apiBase}/tokens/${encodeURIComponent(id)}`, {
-			method: 'DELETE'
+			method: 'DELETE',
+			headers: workspace
 		});
 		return response.status === 204
 			? { ok: true, value: null }
@@ -55,6 +61,8 @@ export async function revokeApiToken(apiBase: string, id: string): Promise<Token
 
 export function tokenErrorMessage(code: string): string {
 	switch (code) {
+		case 'WORKSPACE_CHANGED':
+			return 'You switched workspaces in another tab. Reload the page to continue.';
 		case 'REAUTH_REQUIRED':
 			return 'Confirm it’s you, then create the token again.';
 		case 'TOKEN_LIMIT_REACHED':

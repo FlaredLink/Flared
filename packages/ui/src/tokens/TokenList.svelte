@@ -12,6 +12,7 @@
 		type TokenScope
 	} from '@flared/contracts/tokens';
 	import { createApiToken, revokeApiToken, tokenErrorMessage } from './client';
+	import { shownWorkspace } from '../workspace/shown';
 	import Glyph from '../icons/Glyph.svelte';
 	import Button from '../atoms/Button.svelte';
 	import Badge from '../atoms/Badge.svelte';
@@ -36,6 +37,7 @@
 	}
 
 	let { page, apiBase, onChanged, onReauthRequired }: Props = $props();
+	const workspace = shownWorkspace();
 
 	const scopeLabels: Record<TokenScope, string> = {
 		'links:read': 'Read links',
@@ -124,13 +126,17 @@
 		pending = 'create';
 		error = '';
 		status = '';
-		const result = await createApiToken(apiBase, {
-			name: name.trim(),
-			scopes,
-			expiresInDays:
-				expiryChoices.find((choice) => String(choice.days) === expiry)?.days ??
-				defaultTokenExpiryDays
-		});
+		const result = await createApiToken(
+			apiBase,
+			{
+				name: name.trim(),
+				scopes,
+				expiresInDays:
+					expiryChoices.find((choice) => String(choice.days) === expiry)?.days ??
+					defaultTokenExpiryDays
+			},
+			workspace()
+		);
 		pending = null;
 		if (!result.ok) {
 			if (result.code === 'REAUTH_REQUIRED') onReauthRequired();
@@ -147,7 +153,7 @@
 		pending = `revoke:${id}`;
 		error = '';
 		status = '';
-		const result = await revokeApiToken(apiBase, id);
+		const result = await revokeApiToken(apiBase, id, workspace());
 		pending = null;
 		confirmingId = null;
 		if (!result.ok && result.code !== 'NOT_FOUND') {

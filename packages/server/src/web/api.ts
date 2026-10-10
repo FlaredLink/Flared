@@ -15,12 +15,19 @@ import {
 import { isApiTokenPage, type ApiTokenPage } from '@flared/contracts/tokens';
 import { isConnectedAppPage, type ConnectedAppPage } from '@flared/contracts/oauth';
 import { isDomainPage, type DomainPage } from '@flared/contracts/domains';
-import { isWorkspace, type Workspace } from '@flared/contracts/workspace';
+import {
+	isWorkspace,
+	isWorkspaceList,
+	workspaceField,
+	workspaceHeader,
+	type Workspace,
+	type WorkspaceList
+} from '@flared/contracts/workspace';
 import type { AuthService } from './forward';
 
 // The application side of the product API: typed reads and writes for server-rendered pages.
-// The API runs in the same Worker. Requests carry only the session cookie and, for writes, the
-// browser's own Origin, which the API checks again.
+// The API runs in the same Worker. Requests carry only the session cookie, the workspace the page
+// showed, and, for writes, the browser's own Origin, which the API checks again.
 export type ApiService = AuthService;
 
 export type ApiFailure = { code: string; message: string; status: number; field: string | null };
@@ -31,7 +38,7 @@ function apiRequest(path: string, init: { method: string; headers: Headers; body
 
 function forwardedHeaders(source: Headers, extra: Record<string, string> = {}): Headers {
 	const headers = new Headers(extra);
-	for (const name of ['cookie', 'origin']) {
+	for (const name of ['cookie', 'origin', workspaceHeader]) {
 		const value = source.get(name);
 		if (value !== null) headers.set(name, value);
 	}
@@ -306,6 +313,26 @@ export async function fetchWorkspace(
 	if (!result.ok) return result;
 	const workspace = result.body.workspace;
 	return isWorkspace(workspace) ? { ok: true, workspace } : { ok: false, failure: malformed };
+}
+
+export async function fetchWorkspaces(
+	service: ApiService,
+	headers: Headers
+): Promise<{ ok: true; list: WorkspaceList } | { ok: false; failure: ApiFailure }> {
+	const result = await getJson(service, headers, '/v1/workspaces');
+	if (!result.ok) return result;
+	const list = { workspaces: result.body.workspaces, activeId: result.body.activeId };
+	return isWorkspaceList(list) ? { ok: true, list } : { ok: false, failure: malformed };
+}
+
+// The request headers of a form action, with the workspace that the form's page showed. A
+// form cannot send headers, so the page puts the ID in a field.
+export function withShownWorkspace(headers: Headers, form: FormData): Headers {
+	const shown = form.get(workspaceField);
+	if (typeof shown !== 'string' || !shown) return headers;
+	const result = new Headers(headers);
+	result.set(workspaceHeader, shown);
+	return result;
 }
 
 export async function fetchTokens(

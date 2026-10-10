@@ -12,7 +12,8 @@ const messages: Partial<Record<ErrorCode, string>> = {
 	WORKSPACE_PENDING: 'Your workspace is still being set up. Try again in a minute.',
 	UNAUTHENTICATED: 'Your session ended. Sign in again.',
 	LINK_BLOCKED: 'Flared blocked this link for abuse. You can only turn it off.',
-	WORKSPACE_SUSPENDED: 'Flared suspended this workspace. You can still export your data.'
+	WORKSPACE_SUSPENDED: 'Flared suspended this workspace. You can still export your data.',
+	WORKSPACE_CHANGED: 'You switched workspaces in another tab. Reload the page to continue.'
 };
 
 export function linkErrorMessage(code: string, fallback: string): string {

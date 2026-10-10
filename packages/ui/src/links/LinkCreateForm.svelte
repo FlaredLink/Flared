@@ -16,6 +16,7 @@
 </script>
 
 <script lang="ts">
+	import ShownWorkspaceField from '../workspace/ShownWorkspaceField.svelte';
 	import { onMount } from 'svelte';
 	import type { Action } from 'svelte/action';
 	import Glyph from '../icons/Glyph.svelte';
@@ -116,6 +117,7 @@
 >
 	<h2 id="create-link-heading" class="visually-hidden">Create a short link</h2>
 	<input type="hidden" name="idempotencyKey" value={idempotencyKey} />
+	<ShownWorkspaceField />
 	<div class="bar">
 		<div class="composer" class:invalid={invalid('destination') || invalid('domainId')}>
 			<Glyph name="link" size={22} />

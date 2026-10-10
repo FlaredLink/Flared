@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
+	import ShownWorkspaceField from '../workspace/ShownWorkspaceField.svelte';
 	import type { Action } from 'svelte/action';
 	import type { Link } from '@flared/contracts/links';
 	import Glyph from '../icons/Glyph.svelte';
@@ -133,6 +134,7 @@
 	</div>
 	<form bind:this={toggleForm} method="post" {action} use:enhance hidden>
 		<input type="hidden" name="intent" value={link.enabled ? 'disable' : 'enable'} />
+		<ShownWorkspaceField />
 	</form>
 	<p class="status" role="status" aria-live="polite">{qrStatus || notice}</p>
 	{#if error}

@@ -30,10 +30,15 @@ export async function decideConsent(oauthQuery: string, accept: boolean): Promis
 	}
 }
 
-export async function revokeConnectedApp(apiBase: string, clientId: string): Promise<RevokeResult> {
+export async function revokeConnectedApp(
+	apiBase: string,
+	clientId: string,
+	workspace: Record<string, string> = {}
+): Promise<RevokeResult> {
 	try {
 		const response = await fetch(`${apiBase}/connected-apps/${encodeURIComponent(clientId)}`, {
-			method: 'DELETE'
+			method: 'DELETE',
+			headers: workspace
 		});
 		if (response.status === 204) return { ok: true };
 		const body: unknown = await response.json().catch(() => null);

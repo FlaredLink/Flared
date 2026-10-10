@@ -6,6 +6,8 @@
 		workspaceNameMaxLength
 	} from '@flared/contracts/workspace';
 	import SettingRow from '../molecules/SettingRow.svelte';
+	import { shownWorkspace } from './shown';
+	import { linkErrorMessage } from '../links/messages';
 	import Button from '../atoms/Button.svelte';
 
 	interface Props {
@@ -17,6 +19,13 @@
 	}
 
 	let { apiBase, name, onRenamed }: Props = $props();
+	const workspace = shownWorkspace();
+
+	function errorCodeOf(body: unknown): string {
+		const error = typeof body === 'object' && body !== null ? Reflect.get(body, 'error') : null;
+		const code = typeof error === 'object' && error !== null ? Reflect.get(error, 'code') : null;
+		return typeof code === 'string' ? code : '';
+	}
 
 	// The field starts from the saved name and keeps what the person types.
 	// svelte-ignore state_referenced_locally
@@ -39,17 +48,20 @@
 		try {
 			const response = await fetch(`${apiBase}/workspace`, {
 				method: 'PATCH',
-				headers: { 'content-type': 'application/json' },
+				headers: { 'content-type': 'application/json', ...workspace() },
 				body: JSON.stringify({ name: next })
 			});
 			const body: unknown = await response.json().catch(() => null);
-			const workspace =
+			const saved =
 				typeof body === 'object' && body !== null ? Reflect.get(body, 'workspace') : null;
-			if (!response.ok || !isWorkspace(workspace)) {
-				error = 'We could not rename the workspace. Try again.';
+			if (!response.ok || !isWorkspace(saved)) {
+				error = linkErrorMessage(
+					errorCodeOf(body),
+					'We could not rename the workspace. Try again.'
+				);
 				return;
 			}
-			value = workspace.name;
+			value = saved.name;
 			status = 'Workspace renamed.';
 			await onRenamed();
 		} catch {
@@ -64,7 +76,7 @@
 	icon="user"
 	id="workspace-name-heading"
 	title="Workspace name"
-	description="Shown in your sidebar. Only you see it."
+	description="Shown in your sidebar and on your plan and invoices."
 >
 	<form onsubmit={save} aria-labelledby="workspace-name-heading">
 		<div class="row">

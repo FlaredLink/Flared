@@ -123,6 +123,39 @@ export async function readMembership(
 	};
 }
 
+export interface WorkspaceRow {
+	id: string;
+	name: string;
+	role: MembershipRole;
+	status: 'active' | 'pending' | 'suspended' | 'deleting';
+}
+
+// The user's workspaces, oldest membership first. A user holds a handful; 100 bounds the read.
+export async function listWorkspaces(db: D1Database, userId: string): Promise<WorkspaceRow[]> {
+	const { results } = await db
+		.prepare(
+			`SELECT m.tenant_id, t.name, m.role, t.activated_at, p.suspended_at,
+			EXISTS (SELECT 1 FROM tenant_deletions d WHERE d.tenant_id = m.tenant_id) AS deleting
+			FROM tenant_memberships m JOIN tenants t ON t.id = m.tenant_id LEFT JOIN tenant_policy p ON p.tenant_id = m.tenant_id
+			WHERE m.user_id = ? ORDER BY m.created_at, m.tenant_id LIMIT 100`
+		)
+		.bind(userId)
+		.all<Record<string, unknown>>();
+	return results.map((row) => ({
+		id: text(row.tenant_id, 'tenant'),
+		name: text(row.name, 'name'),
+		role: role(row.role),
+		status:
+			row.deleting === 1
+				? 'deleting'
+				: row.activated_at === null
+					? 'pending'
+					: row.suspended_at === null
+						? 'active'
+						: 'suspended'
+	}));
+}
+
 // Makes the tenant the session's active workspace and the user's choice for new sessions. Both
 // writes check the membership in the same batch, so a membership removed before the batch
 // leaves both pointers unchanged. A workspace being deleted cannot be chosen. Returns false when

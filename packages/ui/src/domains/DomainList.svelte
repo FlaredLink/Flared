@@ -12,6 +12,7 @@
 	import Callout from '../molecules/Callout.svelte';
 	import Menu, { type MenuItem } from '../molecules/Menu.svelte';
 	import DomainAddForm from './DomainAddForm.svelte';
+	import { shownWorkspace } from '../workspace/shown';
 	import DomainSetup from './DomainSetup.svelte';
 	import DomainDetails from './DomainDetails.svelte';
 	import {
@@ -39,6 +40,7 @@
 	}
 
 	let { page, apiBase, onChanged, guideHref, crumbs, createHref, linksHref }: Props = $props();
+	const workspace = shownWorkspace();
 
 	let hostname = $state('');
 	let hostnameInput = $state<HTMLInputElement>();
@@ -174,7 +176,7 @@
 		}
 		begin('add');
 		try {
-			const result = await addDomain(apiBase, normalized);
+			const result = await addDomain(apiBase, normalized, workspace());
 			if (!result.ok) {
 				if (result.failure.field === 'hostname' || result.failure.code === 'DOMAIN_TAKEN')
 					fieldError = domainErrorMessage(result.failure);
@@ -197,7 +199,7 @@
 	async function check(domain: Domain) {
 		begin(`check:${domain.id}`);
 		try {
-			const result = await checkDomain(apiBase, domain.id);
+			const result = await checkDomain(apiBase, domain.id, workspace());
 			if (!result.ok) {
 				if (result.failure.code === 'DOMAIN_CHECK_TOO_SOON')
 					coolDown(domain.id, result.failure.retryAfterSeconds ?? domainCheckIntervalMs / 1000);
@@ -223,7 +225,7 @@
 	async function remove(domain: Domain) {
 		begin(`remove:${domain.id}`);
 		try {
-			const result = await removeDomain(apiBase, domain.id);
+			const result = await removeDomain(apiBase, domain.id, workspace());
 			confirmingId = null;
 			if (!result.ok && result.failure.code !== 'NOT_FOUND') {
 				error = domainErrorMessage(result.failure);

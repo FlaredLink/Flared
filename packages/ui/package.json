@@ -73,6 +73,8 @@
 			"svelte": "./src/domains/DomainList.svelte"
 		},
 		"./domains/client": "./src/domains/client.ts",
+		"./workspace/shown": "./src/workspace/shown.ts",
+		"./workspace/client": "./src/workspace/client.ts",
 		"./usage/UsageBanner.svelte": {
 			"types": "./src/usage/UsageBanner.svelte",
 			"svelte": "./src/usage/UsageBanner.svelte"

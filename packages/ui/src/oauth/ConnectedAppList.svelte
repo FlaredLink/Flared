@@ -8,6 +8,8 @@
 	import SidePanel from '../molecules/SidePanel.svelte';
 	import Callout from '../molecules/Callout.svelte';
 	import { revokeConnectedApp } from './client';
+	import { shownWorkspace } from '../workspace/shown';
+	import { linkErrorMessage } from '../links/messages';
 	import AssistantMark from './AssistantMark.svelte';
 	import ConnectGuide from './ConnectGuide.svelte';
 	import AssistantSetup from './AssistantSetup.svelte';
@@ -28,6 +30,7 @@
 	}
 
 	let { page, apiBase, mcpUrl, onChanged, header, guideHref }: Props = $props();
+	const workspace = shownWorkspace();
 	let pending = $state<string | null>(null);
 	let confirming = $state<string | null>(null);
 	let status = $state('');
@@ -50,14 +53,11 @@
 		pending = clientId;
 		error = '';
 		status = '';
-		const result = await revokeConnectedApp(apiBase, clientId);
+		const result = await revokeConnectedApp(apiBase, clientId, workspace());
 		pending = null;
 		confirming = null;
 		if (!result.ok && result.code !== 'NOT_FOUND') {
-			error =
-				result.code === 'UNAUTHENTICATED'
-					? 'Your session ended. Sign in again.'
-					: 'Something went wrong. Try again.';
+			error = linkErrorMessage(result.code, 'Something went wrong. Try again.');
 			return;
 		}
 		status = `Removed ${name}.`;

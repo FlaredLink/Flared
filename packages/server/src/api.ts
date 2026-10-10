@@ -36,9 +36,16 @@ import {
 	parseRenameWorkspace,
 	parseSelectWorkspace,
 	workspaceHeader,
-	type Workspace
+	type Workspace,
+	type WorkspaceList
 } from '@flared/contracts/workspace';
-import { readTenantName, renameTenant, setActiveWorkspace } from '@flared/data/tenancy';
+import {
+	listWorkspaces,
+	readTenantName,
+	renameTenant,
+	setActiveWorkspace,
+	type MembershipRole
+} from '@flared/data/tenancy';
 import { defaultQrSize, maxQrSize, minQrSize, qrPng, qrSvg } from '@flared/client/qr';
 import { knownAssistant, type ConnectedApp, type ConnectedAppPage } from '@flared/contracts/oauth';
 import { deleteGrant, listGrants } from '@flared/data/oauth';
@@ -148,9 +155,16 @@ export async function authenticateBearer(
 }
 
 const maxBodyBytes = 8192;
-const activeWorkspacePath = '/v1/workspaces/active';
+// The workspace list and the switch work whatever state the active workspace is in, so a
+// person can always move to another workspace.
+const workspacePaths = new Set(['/v1/workspaces', '/v1/workspaces/active']);
 
-type Variables = { requestId: string; tenantId: string; principal: ApiPrincipal };
+type Variables = {
+	requestId: string;
+	tenantId: string;
+	role: MembershipRole;
+	principal: ApiPrincipal;
+};
 type ApiContext = Context<{ Variables: Variables }>;
 
 function respond(result: ApiResult, extra: Record<string, string> = {}): Response {
@@ -274,8 +288,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			context.req.header('origin') !== appOrigin
 		)
 			throw new ApiError('ORIGIN_REJECTED', 'This request must come from the Flared app.');
-		// Choosing a workspace is the one route that does not act in the current one.
-		if (context.req.path === activeWorkspacePath) {
+		if (workspacePaths.has(context.req.path)) {
 			context.set('principal', principal);
 			return next();
 		}
@@ -322,6 +335,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 				'Flared suspended this workspace. You can still export your data.'
 			);
 		context.set('tenantId', tenant.tenantId);
+		context.set('role', tenant.role);
 		context.set('principal', principal);
 		await next();
 	});
@@ -542,6 +556,24 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		return respond({ status: 200, body: JSON.stringify(identity) });
 	});
 
+	// The person's workspaces, for the dashboard's workspace menu.
+	app.get('/workspaces', async (context) => {
+		const principal = sessionOnly(context, 'Choose the workspace in the Flared app.');
+		const workspaces = (await listWorkspaces(identity, principal.userId)).filter(
+			(workspace) =>
+				dependencies.fixedTenantId === undefined || workspace.id === dependencies.fixedTenantId
+		);
+		const active = await resolveTenant(identity, {
+			userId: principal.userId,
+			sessionId: principal.sessionId
+		});
+		const list: WorkspaceList = {
+			workspaces,
+			activeId: active.status === 'none' ? null : active.tenantId
+		};
+		return respond({ status: 200, body: JSON.stringify(list) });
+	});
+
 	// Makes a workspace the session's active one. The membership check, not the request, grants
 	// access; another workspace's ID answers like an unknown one.
 	app.post('/workspaces/active', async (context) => {
@@ -566,17 +598,20 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	// The workspace name, for the dashboard only.
 	app.get('/workspace', async (context) => {
 		sessionOnly(context, 'Rename the workspace from the Flared app.');
-		const name = await readTenantName(identity, context.var.tenantId);
+		const { tenantId, role } = context.var;
+		const name = await readTenantName(identity, tenantId);
 		if (name === null) throw new ApiError('NOT_FOUND', 'Workspace not found.');
-		const workspace: Workspace = { name };
+		const workspace: Workspace = { id: tenantId, name, role };
 		return respond({ status: 200, body: JSON.stringify({ workspace }) });
 	});
 
 	app.patch('/workspace', async (context) => {
 		sessionOnly(context, 'Rename the workspace from the Flared app.');
-		const workspace = parseRenameWorkspace(await readJson(context.req.raw));
-		if (!(await renameTenant(identity, context.var.tenantId, workspace.name)))
+		const { tenantId, role } = context.var;
+		const { name } = parseRenameWorkspace(await readJson(context.req.raw));
+		if (!(await renameTenant(identity, tenantId, name)))
 			throw new ApiError('NOT_FOUND', 'Workspace not found.');
+		const workspace: Workspace = { id: tenantId, name, role };
 		return respond({ status: 200, body: JSON.stringify({ workspace }) });
 	});
 
@@ -694,6 +729,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	app.all('/export/daily-dimensions', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/me', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/workspace', (context) => methodNotAllowed(context, 'GET, PATCH'));
+	app.all('/workspaces', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/workspaces/active', (context) => methodNotAllowed(context, 'POST'));
 	app.all('/icons/:hostname', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/tokens', (context) => methodNotAllowed(context, 'GET, POST'));

@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
+	import ShownWorkspaceField from '../workspace/ShownWorkspaceField.svelte';
 	import type { Action } from 'svelte/action';
 	import type { Link } from '@flared/contracts/links';
 	import Button from '../atoms/Button.svelte';
@@ -40,6 +41,7 @@
 
 <form method="post" {action} class="edit-form" use:enhance aria-label="Edit this link">
 	<input type="hidden" name="intent" value="edit" />
+	<ShownWorkspaceField />
 	<FormField for="edit-destination" label="Destination URL" error={fieldError('destination')}>
 		<TextInput
 			id="edit-destination"

@@ -81,6 +81,7 @@ const sessionOnly = [
 	'DELETE /connected-apps/{clientId}',
 	'GET /workspace',
 	'PATCH /workspace',
+	'GET /workspaces',
 	'POST /workspaces/active',
 	'GET /icons/{hostname}'
 ];

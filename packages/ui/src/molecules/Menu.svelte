@@ -10,7 +10,13 @@
 				onselect: () => void;
 				danger?: boolean;
 				disabled?: boolean;
-		  };
+				// One of a set of choices: true marks the current one with a check.
+				checked?: boolean;
+				// Short text at the end of the item, such as a plan.
+				detail?: string;
+		  }
+		// A line between groups of items.
+		| { divider: true };
 </script>
 
 <script lang="ts">
@@ -66,13 +72,13 @@
 		open = event.newState === 'open';
 		if (!open) return;
 		place();
-		menu?.querySelector<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])')?.focus();
+		menu?.querySelector<HTMLElement>(`${itemRoles}:not([aria-disabled="true"])`)?.focus();
 	}
 
 	function keydown(event: KeyboardEvent) {
 		if (!menu || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
 		event.preventDefault();
-		const entries = [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+		const entries = [...menu.querySelectorAll<HTMLElement>(itemRoles)];
 		const index = entries.indexOf(document.activeElement as HTMLElement);
 		const next =
 			event.key === 'Home'
@@ -82,6 +88,8 @@
 					: (index + (event.key === 'ArrowDown' ? 1 : -1) + entries.length) % entries.length;
 		entries[next]?.focus();
 	}
+
+	const itemRoles = '[role="menuitem"], [role="menuitemradio"]';
 
 	function choose(item: MenuItem) {
 		menu?.hidePopover();
@@ -116,8 +124,10 @@
 	onkeydown={keydown}
 >
 	{#if heading}<div class="heading">{@render heading()}</div>{/if}
-	{#each items as item (item.label)}
-		{#if 'href' in item}
+	{#each items as item, index (index)}
+		{#if 'divider' in item}
+			<div role="separator" class="divider"></div>
+		{:else if 'href' in item}
 			<a
 				role="menuitem"
 				tabindex="-1"
@@ -131,12 +141,18 @@
 		{:else}
 			<button
 				type="button"
-				role="menuitem"
+				role={item.checked === undefined ? 'menuitem' : 'menuitemradio'}
+				aria-checked={item.checked}
 				tabindex="-1"
 				class:danger={item.danger}
 				aria-disabled={item.disabled || undefined}
 				onclick={() => !item.disabled && choose(item)}
-				>{#if item.icon}<Glyph name={item.icon} size={18} />{/if}{item.label}</button
+				>{#if item.icon}<Glyph name={item.icon} size={18} />{/if}<span class="label"
+					>{item.label}</span
+				>{#if item.detail}<span class="detail">{item.detail}</span
+					>{/if}{#if item.checked !== undefined}<span class="check"
+						>{#if item.checked}<Glyph name="check" size={16} />{/if}</span
+					>{/if}</button
 			>
 		{/if}
 	{/each}
@@ -200,7 +216,8 @@
 		display: grid;
 		gap: 2px;
 	}
-	[role='menuitem'] {
+	[role='menuitem'],
+	[role='menuitemradio'] {
 		display: flex;
 		align-items: center;
 		gap: 0.65rem;
@@ -217,7 +234,9 @@
 		cursor: pointer;
 	}
 	[role='menuitem']:hover,
-	[role='menuitem']:focus-visible {
+	[role='menuitem']:focus-visible,
+	[role='menuitemradio']:hover,
+	[role='menuitemradio']:focus-visible {
 		background: var(--color-hover);
 		color: var(--color-strong);
 		outline: none;
@@ -228,5 +247,28 @@
 	[role='menuitem'][aria-disabled='true'] {
 		color: var(--color-muted);
 		cursor: not-allowed;
+	}
+	.label {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.detail {
+		flex: none;
+		color: var(--color-muted);
+		font-size: 0.8125rem;
+	}
+	.check {
+		display: inline-grid;
+		flex: none;
+		width: 1rem;
+		color: var(--color-strong);
+	}
+	.divider {
+		height: 1px;
+		margin: 0.25rem 0;
+		background: var(--color-rule);
 	}
 </style>

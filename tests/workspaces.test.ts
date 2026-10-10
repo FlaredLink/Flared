@@ -21,6 +21,7 @@ import {
 	verifyToken
 } from '../packages/server/src/auth/api-tokens';
 import { createSessionOptions } from '../packages/server/src/auth/options';
+import { withShownWorkspace } from '../packages/server/src/web/api';
 import { projectPolicy, resolveTenant } from '../packages/server/src/tenancy';
 
 const origin = 'https://app.example';
@@ -330,6 +331,45 @@ describe('workspace API', () => {
 		const read = await call('GET', '/workspaces/active', session('sess-1'));
 		expect([read.status, await code(read)]).toEqual([405, 'METHOD_NOT_ALLOWED']);
 		expect(await workspaceName('sess-1')).toBe('Beta');
+	});
+
+	it('lists the person’s workspaces and names the active one with its role', async () => {
+		expect((await choose('sess-1', 'ws-b')).status).toBe(204);
+		const listed = await call('GET', '/workspaces', session('sess-1'));
+		expect(listed.status).toBe(200);
+		expect(await listed.json()).toEqual({
+			workspaces: [
+				{ id: 'ws-a', name: 'Alpha', role: 'owner', status: 'active' },
+				{ id: 'ws-b', name: 'Beta', role: 'owner', status: 'active' }
+			],
+			activeId: 'ws-b'
+		});
+		const active = await call('GET', '/workspace', session('sess-1'));
+		expect(await active.json()).toEqual({
+			workspace: { id: 'ws-b', name: 'Beta', role: 'owner' }
+		});
+		// The list stays readable while the active workspace is suspended, so the person can leave.
+		await setTenantSuspension(identity(), 'ws-b', { reason: 'spam' }, 25);
+		const suspended = (await (await call('GET', '/workspaces', session('sess-1'))).json()) as {
+			workspaces: { id: string; status: string }[];
+		};
+		expect(suspended.workspaces.find((item) => item.id === 'ws-b')?.status).toBe('suspended');
+		await setTenantSuspension(identity(), 'ws-b', null, 26);
+		const other = (await (await call('GET', '/workspaces', session('sess-bo'))).json()) as {
+			workspaces: { id: string }[];
+		};
+		expect(other.workspaces.map((item) => item.id)).toEqual(['ws-c']);
+	});
+
+	it('forwards the workspace a form showed to the API', () => {
+		const form = new FormData();
+		const headers = new Headers({ cookie: 'session=1' });
+		expect(withShownWorkspace(headers, form)).toBe(headers);
+		form.set('workspace', 'ws-a');
+		const named = withShownWorkspace(headers, form);
+		expect(named.get('x-flared-workspace')).toBe('ws-a');
+		expect(named.get('cookie')).toBe('session=1');
+		expect(headers.has('x-flared-workspace')).toBe(false);
 	});
 
 	it('refuses a change from a tab that shows another workspace', async () => {
