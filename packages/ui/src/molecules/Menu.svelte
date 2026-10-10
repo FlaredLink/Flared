@@ -1,0 +1,209 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<script lang="ts" module>
+	import type { GlyphName } from '../icons/Glyph.svelte';
+
+	export type MenuItem =
+		| { label: string; icon?: GlyphName; href: string; external?: boolean; danger?: boolean }
+		| {
+				label: string;
+				icon?: GlyphName;
+				onselect: () => void;
+				danger?: boolean;
+				disabled?: boolean;
+		  };
+</script>
+
+<script lang="ts">
+	import Glyph from '../icons/Glyph.svelte';
+
+	interface Props {
+		items: MenuItem[];
+		// The trigger's accessible name, such as "More actions for Product launch".
+		label: string;
+		id: string;
+		icon?: GlyphName;
+		// Text beside the icon; without it the trigger is an icon button.
+		text?: string;
+		align?: 'start' | 'end';
+	}
+	let { items, label, id, icon = 'dots', text, align = 'end' }: Props = $props();
+	let trigger = $state<HTMLButtonElement>();
+	let menu = $state<HTMLDivElement>();
+	let open = $state(false);
+
+	// The menu is a popover in the top layer, placed under its trigger when it opens.
+	function place() {
+		if (!trigger || !menu) return;
+		const box = trigger.getBoundingClientRect();
+		const width = menu.offsetWidth;
+		const left = align === 'end' ? box.right - width : box.left;
+		const below = box.bottom + 6 + menu.offsetHeight <= window.innerHeight;
+		menu.style.left = `${Math.max(8, Math.min(left, window.innerWidth - width - 8))}px`;
+		menu.style.top = below
+			? `${box.bottom + 6}px`
+			: `${Math.max(8, box.top - 6 - menu.offsetHeight)}px`;
+	}
+
+	function toggled(event: ToggleEvent) {
+		open = event.newState === 'open';
+		if (!open) return;
+		place();
+		menu?.querySelector<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])')?.focus();
+	}
+
+	function keydown(event: KeyboardEvent) {
+		if (!menu || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+		event.preventDefault();
+		const entries = [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+		const index = entries.indexOf(document.activeElement as HTMLElement);
+		const next =
+			event.key === 'Home'
+				? 0
+				: event.key === 'End'
+					? entries.length - 1
+					: (index + (event.key === 'ArrowDown' ? 1 : -1) + entries.length) % entries.length;
+		entries[next]?.focus();
+	}
+
+	function choose(item: MenuItem) {
+		menu?.hidePopover();
+		trigger?.focus();
+		if ('onselect' in item) item.onselect();
+	}
+</script>
+
+<button
+	bind:this={trigger}
+	type="button"
+	class="trigger"
+	class:with-text={text}
+	popovertarget={id}
+	aria-haspopup="menu"
+	aria-expanded={open}
+	aria-label={text ? undefined : label}
+	title={text ? undefined : label}
+	><Glyph name={icon} size={20} />{#if text}<span>{text}</span><Glyph
+			name="caret"
+			size={16}
+		/>{/if}</button
+>
+<div
+	bind:this={menu}
+	{id}
+	popover="auto"
+	class="menu"
+	role="menu"
+	aria-label={label}
+	tabindex="-1"
+	ontoggle={toggled}
+	onkeydown={keydown}
+>
+	{#each items as item (item.label)}
+		{#if 'href' in item}
+			<a
+				role="menuitem"
+				tabindex="-1"
+				class:danger={item.danger}
+				href={item.href}
+				target={item.external ? '_blank' : undefined}
+				rel={item.external ? 'noopener noreferrer' : undefined}
+				onclick={() => menu?.hidePopover()}
+				>{#if item.icon}<Glyph name={item.icon} size={18} />{/if}{item.label}</a
+			>
+		{:else}
+			<button
+				type="button"
+				role="menuitem"
+				tabindex="-1"
+				class:danger={item.danger}
+				aria-disabled={item.disabled || undefined}
+				onclick={() => !item.disabled && choose(item)}
+				>{#if item.icon}<Glyph name={item.icon} size={18} />{/if}{item.label}</button
+			>
+		{/if}
+	{/each}
+</div>
+
+<style>
+	.trigger {
+		display: inline-grid;
+		flex: none;
+		place-items: center;
+		width: 2.25rem;
+		height: 2.25rem;
+		padding: 0;
+		border: 1px solid transparent;
+		border-radius: var(--radius-control, 0.5rem);
+		background: transparent;
+		color: var(--color-ink);
+		cursor: pointer;
+	}
+	.trigger.with-text {
+		display: flex;
+		width: 100%;
+		height: auto;
+		min-height: 2.75rem;
+		gap: 0.75rem;
+		padding: 0;
+		font: inherit;
+		font-size: 0.9375rem;
+		text-align: left;
+	}
+	.with-text span {
+		flex: 1;
+	}
+	.trigger:hover,
+	.trigger[aria-expanded='true'] {
+		background: var(--color-hover);
+		color: var(--color-strong);
+	}
+	.with-text:hover,
+	.with-text[aria-expanded='true'] {
+		background: transparent;
+	}
+	.menu {
+		position: fixed;
+		inset: auto;
+		margin: 0;
+		min-width: 12rem;
+		padding: 0.375rem;
+		border: 1px solid var(--color-rule);
+		border-radius: var(--radius-md, 0.625rem);
+		background: var(--color-paper);
+		color: var(--color-ink);
+		box-shadow: var(--shadow-float);
+	}
+	.menu:popover-open {
+		display: grid;
+		gap: 2px;
+	}
+	[role='menuitem'] {
+		display: flex;
+		align-items: center;
+		gap: 0.65rem;
+		min-height: 2.5rem;
+		padding: 0 0.65rem;
+		border: 0;
+		border-radius: var(--radius-sm, 0.375rem);
+		background: transparent;
+		color: var(--color-ink);
+		font: inherit;
+		font-size: 0.9375rem;
+		text-align: left;
+		text-decoration: none;
+		cursor: pointer;
+	}
+	[role='menuitem']:hover,
+	[role='menuitem']:focus-visible {
+		background: var(--color-hover);
+		color: var(--color-strong);
+		outline: none;
+	}
+	[role='menuitem'].danger {
+		color: var(--color-danger);
+	}
+	[role='menuitem'][aria-disabled='true'] {
+		color: var(--color-muted);
+		cursor: not-allowed;
+	}
+</style>

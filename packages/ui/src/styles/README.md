@@ -15,3 +15,12 @@ Only the `@theme` wrappers are changed to `:root`, so the published semantic var
 Coral (`--color-accent`) marks what is active or chosen: the current navigation item, the selected tab, a checked box, a selected row. Primary actions are ink black with white text, and white with black text in dark mode. Text actions use `--color-link` (blue). Kumo blue remains the accessible focus color.
 
 The main area and panels are white (`--color-paper`). The frame behind them, such as the sidebar and the sign-in pages, uses the cool off-white `--color-canvas`. Separate regions with hairline borders. Text and neutral elements use near-neutral black and grey.
+
+## Atomic layers
+
+- Atoms (`src/atoms/`, `src/icons/Glyph.svelte`): Button, IconButton, Badge, StatusDot, Kbd, Avatar, Checkbox, TextInput, Select, Meter. Each atom styles itself; it needs only the roles above.
+- Molecules (`src/molecules/`): Breadcrumbs, PageHeader, SectionHeader, Tabs, SegmentedControl, SettingRow, CopyButton, CopyField, SidePanel, SplitView, Menu, Callout, Stepper, ChoiceCard, Sparkline, Dialog, FormField.
+- Organisms: the feature folders (`links/`, `domains/`, `tokens/`, `oauth/`, `analytics/`, and the rest). They compose atoms and molecules and talk to the API.
+- Templates and pages: each app's shell and routes.
+
+`Glyph` holds Phosphor regular icons (MIT, `analytics/PHOSPHOR-LICENSE.txt`). Add an icon by copying its regular-weight path from Phosphor.

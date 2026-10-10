@@ -4,6 +4,18 @@
 	"type": "module",
 	"license": "AGPL-3.0-only",
 	"exports": {
+		"./atoms/*.svelte": {
+			"types": "./src/atoms/*.svelte",
+			"svelte": "./src/atoms/*.svelte"
+		},
+		"./molecules/*.svelte": {
+			"types": "./src/molecules/*.svelte",
+			"svelte": "./src/molecules/*.svelte"
+		},
+		"./icons/Glyph.svelte": {
+			"types": "./src/icons/Glyph.svelte",
+			"svelte": "./src/icons/Glyph.svelte"
+		},
 		"./links/LinkCreateForm.svelte": {
 			"types": "./src/links/LinkCreateForm.svelte",
 			"svelte": "./src/links/LinkCreateForm.svelte"
