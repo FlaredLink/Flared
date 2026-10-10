@@ -1,57 +1,54 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import Glyph, { type GlyphName } from '../icons/Glyph.svelte';
 
-	let { children }: { children: Snippet } = $props();
+	interface Props {
+		title?: string;
+		icon?: GlyphName;
+		// Buttons or links under the text.
+		actions?: Snippet;
+		children: Snippet;
+	}
+	let { title, icon = 'link', actions, children }: Props = $props();
 </script>
 
-<!-- A chain link that sends out a spark: neutral lines, one orange accent on a peach disc. -->
 <div class="empty-state">
-	<svg viewBox="0 0 96 72" aria-hidden="true">
-		<circle class="disc" cx="66" cy="24" r="17" />
-		<g class="link">
-			<rect x="10" y="34" width="34" height="18" rx="9" transform="rotate(-30 27 43)" />
-			<rect x="32" y="22" width="34" height="18" rx="9" transform="rotate(-30 49 31)" />
-		</g>
-		<path class="spark" d="M66 11l3 10 10 3-10 3-3 10-3-10-10-3 10-3z" />
-		<path class="ray" d="M84 10l-4 4M88 26h-5M48 8l3 4" />
-	</svg>
-	<p>{@render children()}</p>
+	<span class="icon"><Glyph name={icon} size={44} /></span>
+	{#if title}<p class="title">{title}</p>{/if}
+	<p class="text">{@render children()}</p>
+	{#if actions}<div class="actions">{@render actions()}</div>{/if}
 </div>
 
 <style>
 	.empty-state {
 		display: grid;
 		justify-items: center;
-		gap: 0.6rem;
-		padding: 1.75rem 1rem;
+		gap: 0.4rem;
+		padding: 2rem 1rem;
 		text-align: center;
 	}
-	svg {
-		width: 6rem;
-		height: 4.5rem;
+	.icon {
+		display: grid;
+		margin-bottom: 0.5rem;
+		color: var(--color-lead);
 	}
-	.disc {
-		fill: var(--color-accent-soft, #fff4ed);
+	.title {
+		color: var(--color-strong);
+		font-size: 1.375rem;
+		font-weight: 750;
+		letter-spacing: -0.025em;
 	}
-	.link {
-		fill: none;
-		stroke: var(--color-muted, #667085);
-		stroke-width: 3;
+	.text {
+		max-width: 30rem;
+		color: var(--color-lead);
+		font-size: 1rem;
 	}
-	.spark {
-		fill: var(--color-button-primary, #c94b00);
-	}
-	.ray {
-		fill: none;
-		stroke: var(--color-button-primary, #c94b00);
-		stroke-width: 2.5;
-		stroke-linecap: round;
-	}
-	p {
-		max-width: 28rem;
-		margin: 0;
-		color: var(--color-muted, #667085);
-		font-size: 0.875rem;
+	.actions {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 0.75rem;
+		margin-top: 0.75rem;
 	}
 </style>
