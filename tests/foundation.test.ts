@@ -30,7 +30,11 @@ describe('shared authentication boundaries', () => {
 			async getSession() {
 				return {
 					user: { id: 'user-1', email: 'user@example.com', emailVerified: false },
-					session: { expiresAt: new Date(now + 10000), createdAt: new Date(now - 1000) }
+					session: {
+						id: 'session-1',
+						expiresAt: new Date(now + 10000),
+						createdAt: new Date(now - 1000)
+					}
 				};
 			}
 		};
@@ -39,12 +43,17 @@ describe('shared authentication boundaries', () => {
 			async getSession() {
 				return {
 					user: { id: 'user-1', email: 'user@example.com', emailVerified: true },
-					session: { expiresAt: new Date(now + 10000), createdAt: new Date(now - 1000) }
+					session: {
+						id: 'session-1',
+						expiresAt: new Date(now + 10000),
+						createdAt: new Date(now - 1000)
+					}
 				};
 			}
 		};
 		expect(await readPrincipal(valid, new Headers(), emailRule)).toEqual({
 			user: { id: 'user-1', email: 'user@example.com', name: 'user@example.com' },
+			sessionId: 'session-1',
 			expiresAt: new Date(now + 10000).toISOString(),
 			signedInAt: new Date(now - 1000).toISOString()
 		});
@@ -52,7 +61,11 @@ describe('shared authentication boundaries', () => {
 			async getSession() {
 				return {
 					user: { id: 'user-1', email: 'user@example.com', emailVerified: true },
-					session: { expiresAt: new Date(now - 1), createdAt: new Date(now - 1000) }
+					session: {
+						id: 'session-1',
+						expiresAt: new Date(now - 1),
+						createdAt: new Date(now - 1000)
+					}
 				};
 			}
 		};

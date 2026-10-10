@@ -72,7 +72,12 @@ function api(options: { withProvider?: boolean; provider?: DomainProvider } = {}
 					scopes: scopes.split(' ') as TokenScope[],
 					token: { id: 'token-1', name: 'Test', start: 'flr_test', expiresAt: null }
 				};
-			return { kind: 'session', userId, signedInAt: new Date(clock).toISOString() };
+			return {
+				kind: 'session',
+				sessionId: 'session-test',
+				userId,
+				signedInAt: new Date(clock).toISOString()
+			};
 		},
 		now: () => clock,
 		creationsPerMinute: 1000

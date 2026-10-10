@@ -233,8 +233,9 @@ export async function verifyToken(
 		start,
 		expiresAt: isoOrNull(timeOf(stored?.expiresAt))
 	};
-	const tenant = await resolveTenant(identity, userId);
-	if (tenant.status !== 'active' || tenant.tenantId !== tenantId) return { status: 'invalid' };
+	// The token acts only in its own workspace, and only while its user still belongs to it.
+	const tenant = await resolveTenant(identity, { userId, tenantId });
+	if (tenant.status !== 'active') return { status: 'invalid' };
 	const scopes = toScopes(stored?.permissions).filter(isTokenScope);
 	return { status: 'valid', principal: { userId, tenantId, scopes, token } };
 }

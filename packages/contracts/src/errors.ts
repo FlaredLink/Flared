@@ -23,6 +23,8 @@ export const errorStatus = {
 	WORKSPACE_PENDING: 503,
 	ACCOUNT_DELETING: 409,
 	WORKSPACE_SUSPENDED: 403,
+	// A dashboard tab sent a change for a workspace the session no longer acts in.
+	WORKSPACE_CHANGED: 409,
 	LINK_BLOCKED: 409,
 	NOT_FOUND: 404,
 	METHOD_NOT_ALLOWED: 405,

@@ -193,7 +193,7 @@ export function createOAuthRoutes(dependencies: OAuthRouteDependencies) {
 		return backChannel(request, '/oauth2/register');
 	}
 
-	// The signed-in person's workspace, or a JSON error response.
+	// The signed-in person, with an active workspace to grant, or a JSON error response.
 	async function signedIn(request: Request) {
 		const principal = await readPrincipal(
 			auth().api,
@@ -201,7 +201,10 @@ export function createOAuthRoutes(dependencies: OAuthRouteDependencies) {
 			dependencies.identityRule
 		);
 		if (!principal) return oauthError(401, 'login_required', 'Sign in to continue.');
-		const tenant = await resolveTenant(db, principal.user.id);
+		const tenant = await resolveTenant(db, {
+			userId: principal.user.id,
+			sessionId: principal.sessionId
+		});
 		if (tenant.status !== 'active')
 			return oauthError(409, 'workspace_unavailable', 'Your workspace is not ready.');
 		if (tenant.suspension)

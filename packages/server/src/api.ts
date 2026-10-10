@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The product API at /v1. Applications supply the principal: a dashboard session or an API
-// token. The tenant always comes from the principal's stored membership.
+// token. The tenant always comes from a stored membership: the session's active workspace, or
+// the workspace a token or connected app is bound to.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import type { ErrorCode } from '@flared/contracts/errors';
@@ -31,8 +32,13 @@ import {
 } from '@flared/contracts/tokens';
 import { openApiDocument } from '@flared/contracts/openapi';
 import { parseAddDomain } from '@flared/contracts/domains';
-import { parseRenameWorkspace, type Workspace } from '@flared/contracts/workspace';
-import { readTenantName, renameTenant } from '@flared/data/tenancy';
+import {
+	parseRenameWorkspace,
+	parseSelectWorkspace,
+	workspaceHeader,
+	type Workspace
+} from '@flared/contracts/workspace';
+import { readTenantName, renameTenant, setActiveWorkspace } from '@flared/data/tenancy';
 import { defaultQrSize, maxQrSize, minQrSize, qrPng, qrSvg } from '@flared/client/qr';
 import { knownAssistant, type ConnectedApp, type ConnectedAppPage } from '@flared/contracts/oauth';
 import { deleteGrant, listGrants } from '@flared/data/oauth';
@@ -72,7 +78,7 @@ import {
 
 export type ApiPrincipal =
 	// A dashboard session holds every scope. signedInAt is an ISO time.
-	| { kind: 'session'; userId: string; signedInAt: string }
+	| { kind: 'session'; userId: string; sessionId: string; signedInAt: string }
 	| {
 			kind: 'token';
 			userId: string;
@@ -142,6 +148,7 @@ export async function authenticateBearer(
 }
 
 const maxBodyBytes = 8192;
+const activeWorkspacePath = '/v1/workspaces/active';
 
 type Variables = { requestId: string; tenantId: string; principal: ApiPrincipal };
 type ApiContext = Context<{ Variables: Variables }>;
@@ -267,18 +274,40 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			context.req.header('origin') !== appOrigin
 		)
 			throw new ApiError('ORIGIN_REJECTED', 'This request must come from the Flared app.');
-		const tenant = await resolveTenant(identity, principal.userId);
-		// A token works only while its user still belongs to the token's workspace.
-		if (
-			principal.kind !== 'session' &&
-			(tenant.status !== 'active' || tenant.tenantId !== principal.tenantId)
-		)
+		// Choosing a workspace is the one route that does not act in the current one.
+		if (context.req.path === activeWorkspacePath) {
+			context.set('principal', principal);
+			return next();
+		}
+		// A token or connected app acts only in its own workspace, and only while its user still
+		// belongs to it.
+		const tenant = await resolveTenant(
+			identity,
+			principal.kind === 'session'
+				? { userId: principal.userId, sessionId: principal.sessionId }
+				: { userId: principal.userId, tenantId: principal.tenantId }
+		);
+		if (principal.kind !== 'session' && tenant.status !== 'active')
 			throw new ApiError('UNAUTHENTICATED', 'Sign in to continue.');
 		if (
 			tenant.status === 'none' ||
 			(dependencies.fixedTenantId !== undefined && tenant.tenantId !== dependencies.fixedTenantId)
 		)
 			throw new ApiError('NO_WORKSPACE', 'Your account has no workspace.');
+		// A dashboard tab names the workspace it shows. After a switch in another tab, its changes
+		// would land in the other workspace, so they are refused.
+		const shown = context.req.header(workspaceHeader);
+		if (
+			principal.kind === 'session' &&
+			method !== 'GET' &&
+			method !== 'HEAD' &&
+			shown !== undefined &&
+			shown !== tenant.tenantId
+		)
+			throw new ApiError(
+				'WORKSPACE_CHANGED',
+				'You switched workspaces in another tab. Reload the page to continue.'
+			);
 		if (tenant.status === 'pending')
 			throw new ApiError(
 				'WORKSPACE_PENDING',
@@ -513,6 +542,27 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		return respond({ status: 200, body: JSON.stringify(identity) });
 	});
 
+	// Makes a workspace the session's active one. The membership check, not the request, grants
+	// access; another workspace's ID answers like an unknown one.
+	app.post('/workspaces/active', async (context) => {
+		const principal = sessionOnly(context, 'Choose the workspace in the Flared app.');
+		const { tenantId } = parseSelectWorkspace(await readJson(context.req.raw));
+		const allowed =
+			dependencies.fixedTenantId === undefined || tenantId === dependencies.fixedTenantId;
+		if (
+			!allowed ||
+			!(await setActiveWorkspace(identity, {
+				userId: principal.userId,
+				sessionId: principal.sessionId,
+				tenantId,
+				now: now()
+			}))
+		)
+			throw new ApiError('NOT_FOUND', 'Workspace not found.');
+		console.log(JSON.stringify({ event: 'workspace_selected', requestId: context.var.requestId }));
+		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
+	});
+
 	// The workspace name, for the dashboard only.
 	app.get('/workspace', async (context) => {
 		sessionOnly(context, 'Rename the workspace from the Flared app.');
@@ -644,6 +694,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	app.all('/export/daily-dimensions', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/me', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/workspace', (context) => methodNotAllowed(context, 'GET, PATCH'));
+	app.all('/workspaces/active', (context) => methodNotAllowed(context, 'POST'));
 	app.all('/icons/:hostname', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/tokens', (context) => methodNotAllowed(context, 'GET, POST'));
 	app.all('/tokens/:id', (context) => methodNotAllowed(context, 'DELETE'));

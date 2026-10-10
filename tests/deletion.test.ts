@@ -224,15 +224,21 @@ describe('workspace deletion', () => {
 	it('ends every credential at once and refuses the API, once per workspace', async () => {
 		// An outstanding projection must not bring the routing policy back later.
 		await updateTenantPolicy(identity(), 't-gone', { ...limits, activeLinkLimit: 50 }, 2);
-		expect(await requestDeletion(identity(), 'user-gone', start)).toEqual({
+		expect(
+			await requestDeletion(identity(), { userId: 'user-gone', tenantId: 't-gone' }, start)
+		).toEqual({
 			status: 'started',
 			tenantId: 't-gone'
 		});
-		expect(await requestDeletion(identity(), 'user-gone', start)).toEqual({
+		expect(
+			await requestDeletion(identity(), { userId: 'user-gone', tenantId: 't-gone' }, start)
+		).toEqual({
 			status: 'already_deleting',
 			tenantId: 't-gone'
 		});
-		expect(await requestDeletion(identity(), 'user-nobody', start)).toEqual({
+		expect(
+			await requestDeletion(identity(), { userId: 'user-nobody', tenantId: 't-gone' }, start)
+		).toEqual({
 			status: 'no_workspace'
 		});
 		for (const table of ['"session"', '"apikey"', '"oauthConsent"'])
@@ -254,6 +260,7 @@ describe('workspace deletion', () => {
 			authenticate: async (request) => ({
 				kind: 'session',
 				userId: request.headers.get('x-test-user') ?? '',
+				sessionId: 'session-test',
 				signedInAt: ''
 			})
 		});
@@ -359,7 +366,7 @@ describe('workspace deletion', () => {
 	it('sends each email once even when a send fails, and keeps the ledger for 90 days', async () => {
 		await addWorkspace('quiet');
 		failEmail = true;
-		await requestDeletion(identity(), 'user-quiet', start);
+		await requestDeletion(identity(), { userId: 'user-quiet', tenantId: 't-quiet' }, start);
 		await runDeletions(deps(start), { tenantId: 't-quiet' });
 		await identity().prepare('UPDATE tenant_deletions SET next_attempt_at = 0').run();
 		await runDeletions(deps(start + routeSettleMs), { tenantId: 't-quiet' });

@@ -223,7 +223,7 @@ describe('token API', () => {
 					return authenticateBearer(tokenAuth, identity(), request);
 				const userId = request.headers.get('x-test-user');
 				const signedInAt = request.headers.get('x-test-signed-in') ?? new Date().toISOString();
-				return userId ? { kind: 'session', userId, signedInAt } : null;
+				return userId ? { kind: 'session', sessionId: 'session-test', userId, signedInAt } : null;
 			}
 		});
 	}

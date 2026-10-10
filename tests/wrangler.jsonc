@@ -297,6 +297,26 @@
 			"binding": "ICONS_ANALYTICS",
 			"database_name": "icons-analytics",
 			"database_id": "00000000-0000-0000-0000-000000000068"
+		},
+		{
+			"binding": "WORKSPACES_IDENTITY",
+			"database_name": "workspaces-identity",
+			"database_id": "00000000-0000-0000-0000-000000000069"
+		},
+		{
+			"binding": "WORKSPACES_ROUTING",
+			"database_name": "workspaces-routing",
+			"database_id": "00000000-0000-0000-0000-000000000070"
+		},
+		{
+			"binding": "WORKSPACES_ANALYTICS",
+			"database_name": "workspaces-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000071"
+		},
+		{
+			"binding": "MIGRATION_IDENTITY",
+			"database_name": "migration-identity",
+			"database_id": "00000000-0000-0000-0000-000000000072"
 		}
 	]
 }

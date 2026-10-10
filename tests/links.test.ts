@@ -22,7 +22,14 @@ function api(options: { creationsPerMinute?: number } = {}) {
 		// Test-only principal: a session for the user ID in a header the tests set.
 		authenticate: async (request) => {
 			const userId = request.headers.get('x-test-user');
-			return userId ? { kind: 'session', userId, signedInAt: new Date(clock).toISOString() } : null;
+			return userId
+				? {
+						kind: 'session',
+						sessionId: 'session-test',
+						userId,
+						signedInAt: new Date(clock).toISOString()
+					}
+				: null;
 		},
 		now: () => clock,
 		creationsPerMinute: options.creationsPerMinute ?? 1000

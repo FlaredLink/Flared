@@ -60,8 +60,9 @@ function toJob(row: Record<string, unknown>): DeletionJob {
 const jobColumns =
 	'tenant_id, user_id, analytics_shard_id, contact_email, step, requested_at, routes_stopped_at, attempts';
 
-// One batch: the job, and the end of every credential of the user, so nothing can act for the
-// workspace once the request returns. Returns false when a deletion already exists or the
+// One batch: the job; every API token and connected app bound to the workspace; and, when it is
+// the user's last workspace, the user's sessions and remaining credentials. Nothing can act for
+// the workspace once the request returns. Returns false when a deletion already exists or the
 // operator suspended the tenant; a suspended tenant keeps its credentials too.
 export async function createDeletion(
 	db: D1Database,
@@ -74,7 +75,9 @@ export async function createDeletion(
 	}
 ): Promise<boolean> {
 	const { tenantId, userId, now } = request;
-	const hasJob = 'EXISTS (SELECT 1 FROM tenant_deletions WHERE tenant_id = ?)';
+	const hasJob = 'EXISTS (SELECT 1 FROM tenant_deletions WHERE tenant_id = ?1)';
+	const lastWorkspace =
+		'NOT EXISTS (SELECT 1 FROM tenant_memberships WHERE user_id = ?2 AND tenant_id <> ?1)';
 	const [job] = await db.batch([
 		db
 			.prepare(
@@ -82,12 +85,20 @@ export async function createDeletion(
 			)
 			.bind(tenantId, userId, request.analyticsShardId, request.contactEmail, now),
 		...[
-			'DELETE FROM "session" WHERE "userId" = ?',
-			'DELETE FROM "apikey" WHERE "referenceId" = ?',
-			'DELETE FROM "oauthAccessToken" WHERE "userId" = ?',
-			'DELETE FROM "oauthRefreshToken" WHERE "userId" = ?',
-			'DELETE FROM "oauthConsent" WHERE "userId" = ?'
-		].map((statement) => db.prepare(`${statement} AND ${hasJob}`).bind(userId, tenantId))
+			`DELETE FROM "apikey" WHERE json_extract("metadata", '$.tenantId') = ?1`,
+			'DELETE FROM "oauthAccessToken" WHERE "referenceId" = ?1',
+			'DELETE FROM "oauthRefreshToken" WHERE "referenceId" = ?1',
+			'DELETE FROM "oauthConsent" WHERE "referenceId" = ?1'
+		].map((statement) => db.prepare(`${statement} AND ${hasJob}`).bind(tenantId)),
+		...[
+			'DELETE FROM "session" WHERE "userId" = ?2',
+			'DELETE FROM "apikey" WHERE "referenceId" = ?2',
+			'DELETE FROM "oauthAccessToken" WHERE "userId" = ?2',
+			'DELETE FROM "oauthRefreshToken" WHERE "userId" = ?2',
+			'DELETE FROM "oauthConsent" WHERE "userId" = ?2'
+		].map((statement) =>
+			db.prepare(`${statement} AND ${lastWorkspace} AND ${hasJob}`).bind(tenantId, userId)
+		)
 	]);
 	return job.meta.changes === 1;
 }

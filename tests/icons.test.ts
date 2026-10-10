@@ -367,7 +367,12 @@ describe('icon route', () => {
 			appOrigin: origin,
 			authenticate: async () =>
 				kind === 'session'
-					? { kind: 'session', userId: 'icon-user', signedInAt: new Date(now).toISOString() }
+					? {
+							kind: 'session',
+							sessionId: 'session-test',
+							userId: 'icon-user',
+							signedInAt: new Date(now).toISOString()
+						}
 					: {
 							kind: 'oauth',
 							userId: 'icon-user',

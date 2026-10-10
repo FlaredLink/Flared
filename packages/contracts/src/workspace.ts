@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The workspace's display name: the sidebar tile and Settings show it, and its owner renames it.
+// The workspace's display name, which the sidebar tile and Settings show and its owner renames,
+// and the choice of a session's active workspace.
 import { LinkInputError } from './links';
 
 export interface Workspace {
@@ -7,6 +8,10 @@ export interface Workspace {
 }
 
 export const workspaceNameMaxLength = 60;
+
+// The dashboard sends the ID of the workspace a page shows with each change. The API refuses the
+// change with WORKSPACE_CHANGED when the session has since switched to another workspace.
+export const workspaceHeader = 'x-flared-workspace';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -30,6 +35,18 @@ export function parseRenameWorkspace(body: unknown): Workspace {
 	if (name === null)
 		throw new LinkInputError('name', `Use a name of 1 to ${workspaceNameMaxLength} characters.`);
 	return { name };
+}
+
+// The body of POST /v1/workspaces/active. The server checks the membership; the ID alone grants
+// nothing.
+export function parseSelectWorkspace(body: unknown): { tenantId: string } {
+	if (!isRecord(body)) throw new LinkInputError('body', 'Send a JSON object.');
+	for (const key of Object.keys(body))
+		if (key !== 'tenantId') throw new LinkInputError(key, `Unknown field: ${key}.`);
+	const { tenantId } = body;
+	if (typeof tenantId !== 'string' || tenantId.length === 0 || tenantId.length > 64)
+		throw new LinkInputError('tenantId', 'Send the ID of one of your workspaces.');
+	return { tenantId };
 }
 
 export function isWorkspace(value: unknown): value is Workspace {

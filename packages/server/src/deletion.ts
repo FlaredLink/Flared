@@ -55,14 +55,15 @@ export type DeletionRequest =
 	| { status: 'suspended'; tenantId: string }
 	| { status: 'no_workspace' };
 
-// Starts the deletion of the user's workspace. The caller has checked the session, a recent
-// sign-in, the confirmation, and its own conditions. Safe to repeat.
+// Starts the deletion of one of the user's workspaces. The caller has checked the session, a
+// recent sign-in, the owner role, the confirmation, and its own conditions. Safe to repeat.
 export async function requestDeletion(
 	identity: D1Database,
-	userId: string,
+	request: { userId: string; tenantId: string },
 	now: number
 ): Promise<DeletionRequest> {
-	const tenant = await resolveTenant(identity, userId);
+	const { userId } = request;
+	const tenant = await resolveTenant(identity, request);
 	if (tenant.status === 'none') return { status: 'no_workspace' };
 	if (tenant.status === 'deleting')
 		return { status: 'already_deleting', tenantId: tenant.tenantId };
@@ -85,7 +86,7 @@ export async function requestDeletion(
 	});
 	if (!created) {
 		// A concurrent request started the deletion, or a suspension landed after the check.
-		const current = await resolveTenant(identity, userId);
+		const current = await resolveTenant(identity, request);
 		return current.status === 'deleting'
 			? { status: 'already_deleting', tenantId: tenant.tenantId }
 			: { status: 'suspended', tenantId: tenant.tenantId };

@@ -91,7 +91,10 @@ export async function handleLimits(
 		return failure('ORIGIN_REJECTED', 403, 'This request must come from the Flared app.');
 	const principal = await sessionPrincipal(request, auth, config.origin);
 	if (principal?.kind !== 'session') return failure('UNAUTHENTICATED', 401, 'Sign in to continue.');
-	const tenant = await resolveTenant(config.identity, principal.userId);
+	const tenant = await resolveTenant(config.identity, {
+		userId: principal.userId,
+		sessionId: principal.sessionId
+	});
 	if (tenant.status !== 'active' || tenant.tenantId !== fixedTenantId)
 		return failure('NO_WORKSPACE', 403, 'Your account has no workspace.');
 	if (request.method === 'GET') return view(config, tenant.tenantId);

@@ -45,10 +45,17 @@ export async function sessionPrincipal(
 	if (response.status !== 200) throw new Error('Session lookup unavailable');
 	const principal: unknown = await response.json();
 	const userId = field(field(principal, 'user'), 'id');
+	const sessionId = field(principal, 'sessionId');
 	const signedInAt = field(principal, 'signedInAt');
-	if (typeof userId !== 'string' || !userId || typeof signedInAt !== 'string')
+	if (
+		typeof userId !== 'string' ||
+		!userId ||
+		typeof sessionId !== 'string' ||
+		!sessionId ||
+		typeof signedInAt !== 'string'
+	)
 		throw new Error('Session lookup returned no user');
-	return { kind: 'session', userId, signedInAt };
+	return { kind: 'session', userId, sessionId, signedInAt };
 }
 
 // The authenticate function of an API mode.

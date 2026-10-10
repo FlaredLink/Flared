@@ -84,7 +84,14 @@ const api = () =>
 		appOrigin: origin,
 		authenticate: async (request) => {
 			const userId = request.headers.get('x-test-user');
-			return userId ? { kind: 'session', userId, signedInAt: new Date(start).toISOString() } : null;
+			return userId
+				? {
+						kind: 'session',
+						sessionId: 'session-test',
+						userId,
+						signedInAt: new Date(start).toISOString()
+					}
+				: null;
 		},
 		now: () => start
 	});

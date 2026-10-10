@@ -9,8 +9,7 @@ import {
 	projectPolicy,
 	projectRoutingPolicy,
 	resolveTenant,
-	retryProjections,
-	TenancyError
+	retryProjections
 } from '../packages/server/src/tenancy';
 
 const limits = { activeLinkLimit: 100, monthlyClickLimit: 5000, retentionDays: 30, domainLimit: 1 };
@@ -23,6 +22,9 @@ async function addUser(db: D1Database, id: string): Promise<void> {
 		.bind(id, '', `${id}@example.com`)
 		.run();
 }
+
+// A request from a session that never chose a workspace.
+const user = (userId: string) => ({ userId, sessionId: 'session-none' });
 
 function tenant(id: string, ownerUserId: string): NewTenant {
 	return { id, name: 'Workspace', ownerUserId, analyticsShardId: 'analytics-1', limits, now: 1 };
@@ -78,7 +80,7 @@ describe('installation guard', () => {
 		await expect(createTenant(db, tenant('t-unconfigured', 'user-unconfigured'))).rejects.toThrow(
 			'installation is not configured'
 		);
-		expect(await resolveTenant(db, 'user-unconfigured')).toEqual({ status: 'none' });
+		expect(await resolveTenant(db, user('user-unconfigured'))).toEqual({ status: 'none' });
 	});
 
 	it('keeps one installation row with a fixed mode', async () => {
@@ -115,20 +117,22 @@ describe('single mode', () => {
 });
 
 describe('multi mode', () => {
-	it('gives one user one tenant when two creations race', async () => {
+	it('creates one first workspace when two first visits race', async () => {
 		const db = env.MULTI_IDENTITY;
 		await addUser(db, 'race');
-		const results = await Promise.allSettled([
-			createTenant(db, tenant('race-1', 'race')),
-			createTenant(db, tenant('race-2', 'race'))
+		const created = await Promise.all([
+			createTenant(db, tenant('race-1', 'race'), { firstForOwner: true }),
+			createTenant(db, tenant('race-2', 'race'), { firstForOwner: true })
 		]);
-		expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
-		const resolved = await resolveTenant(db, 'race');
+		expect(created.filter(Boolean)).toHaveLength(1);
+		const resolved = await resolveTenant(db, user('race'));
 		expect(resolved.status).toBe('pending');
 		const rows = await db
-			.prepare("SELECT COUNT(*) AS n FROM tenants WHERE id IN ('race-1', 'race-2')")
-			.first<{ n: number }>();
-		expect(rows?.n).toBe(1);
+			.prepare(
+				"SELECT (SELECT COUNT(*) FROM tenants WHERE id IN ('race-1', 'race-2')) AS tenants, (SELECT COUNT(*) FROM tenant_memberships WHERE user_id = 'race') AS memberships, (SELECT COUNT(*) FROM tenant_policy WHERE tenant_id IN ('race-1', 'race-2')) AS policies"
+			)
+			.first();
+		expect(rows).toEqual({ tenants: 1, memberships: 1, policies: 1 });
 	});
 
 	it('keeps different users in different tenants', async () => {
@@ -137,9 +141,17 @@ describe('multi mode', () => {
 		await addUser(db, 'owner-b');
 		await createTenant(db, tenant('tenant-a', 'owner-a'));
 		await createTenant(db, tenant('tenant-b', 'owner-b'));
-		expect(await resolveTenant(db, 'owner-a')).toEqual({ status: 'pending', tenantId: 'tenant-a' });
-		expect(await resolveTenant(db, 'owner-b')).toEqual({ status: 'pending', tenantId: 'tenant-b' });
-		expect(await resolveTenant(db, 'nobody')).toEqual({ status: 'none' });
+		expect(await resolveTenant(db, user('owner-a'))).toEqual({
+			status: 'pending',
+			tenantId: 'tenant-a',
+			role: 'owner'
+		});
+		expect(await resolveTenant(db, user('owner-b'))).toEqual({
+			status: 'pending',
+			tenantId: 'tenant-b',
+			role: 'owner'
+		});
+		expect(await resolveTenant(db, user('nobody'))).toEqual({ status: 'none' });
 	});
 
 	it('rejects invalid limits and blocks deleting a user who owns a tenant', async () => {
@@ -163,22 +175,23 @@ describe('policy projection', () => {
 		await expect(
 			projectRoutingPolicy(db, unavailableRouting, 'tenant-project', 10)
 		).rejects.toThrow();
-		expect((await resolveTenant(db, 'owner-project')).status).toBe('pending');
+		expect((await resolveTenant(db, user('owner-project'))).status).toBe('pending');
 		await projectRoutingPolicy(db, env.ROUTING, 'tenant-project', 11);
-		expect((await resolveTenant(db, 'owner-project')).status).toBe('pending');
+		expect((await resolveTenant(db, user('owner-project'))).status).toBe('pending');
 		await expect(projectAnalyticsPolicy(db, {}, 'tenant-project', 11)).rejects.toThrow(
 			'Analytics shard is not bound'
 		);
-		expect((await resolveTenant(db, 'owner-project')).status).toBe('pending');
+		expect((await resolveTenant(db, user('owner-project'))).status).toBe('pending');
 		await projectAnalyticsPolicy(db, shards(), 'tenant-project', 11);
 		expect(await analyticsRow('tenant-project')).toEqual({
 			revision: 1,
 			monthly_click_limit: 5000,
 			retention_days: 30
 		});
-		expect(await resolveTenant(db, 'owner-project')).toEqual({
+		expect(await resolveTenant(db, user('owner-project'))).toEqual({
 			status: 'active',
 			tenantId: 'tenant-project',
+			role: 'owner',
 			suspension: null
 		});
 		expect(await routingRow('tenant-project')).toEqual({
@@ -205,7 +218,7 @@ describe('policy projection', () => {
 			monthly_click_limit: 100000,
 			retention_days: 365
 		});
-		expect((await resolveTenant(db, 'owner-project')).status).toBe('active');
+		expect((await resolveTenant(db, user('owner-project'))).status).toBe('active');
 		await applyRoutingPolicy(env.ROUTING, {
 			tenantId: 'tenant-project',
 			revision: 1,
@@ -227,27 +240,10 @@ describe('policy projection', () => {
 		const partial = await retryProjections(db, { routing: env.ROUTING, analytics: {} }, 30, 100);
 		// race winner, tenant-a, tenant-b: routing succeeds, analytics fails
 		expect(partial).toEqual({ projected: 3, failed: 3 });
-		expect((await resolveTenant(db, 'owner-a')).status).toBe('pending');
+		expect((await resolveTenant(db, user('owner-a'))).status).toBe('pending');
 		expect(await retryProjections(db, stores(), 31, 100)).toEqual({ projected: 3, failed: 0 });
-		expect((await resolveTenant(db, 'owner-a')).status).toBe('active');
+		expect((await resolveTenant(db, user('owner-a'))).status).toBe('active');
 		expect(await retryProjections(db, stores(), 32, 100)).toEqual({ projected: 0, failed: 0 });
 		await expect(retryProjections(db, stores(), 33, 101)).rejects.toThrow();
-	});
-
-	it('fails closed when a user has two memberships', async () => {
-		const db = env.MULTI_IDENTITY;
-		// Simulates the later team schema, which removes the one-workspace index.
-		await db.prepare('DROP INDEX tenant_memberships_one_per_user').run();
-		await db
-			.prepare(
-				"INSERT INTO tenants (id, name, analytics_shard_id, created_at) VALUES ('tenant-extra', 'x', 'analytics-1', 5)"
-			)
-			.run();
-		await db
-			.prepare(
-				"INSERT INTO tenant_memberships (tenant_id, user_id, role, created_at) VALUES ('tenant-extra', 'owner-a', 'owner', 5)"
-			)
-			.run();
-		await expect(resolveTenant(db, 'owner-a')).rejects.toBeInstanceOf(TenancyError);
 	});
 });

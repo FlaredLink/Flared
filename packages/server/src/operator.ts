@@ -110,8 +110,8 @@ export async function reinstateTenant(
 	return result;
 }
 
-// Signs every member out and ends their API tokens and connected apps. The members can sign in
-// again; a suspension decides what they can then do.
+// Signs every member out and ends the workspace's API tokens and connected apps. The members can
+// sign in again; a suspension decides what they can then do.
 export async function revokeCustomerAccess(
 	identity: D1Database,
 	operator: OperatorPrincipal,

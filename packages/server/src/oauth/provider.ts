@@ -66,9 +66,15 @@ export async function hashOAuthToken(token: string, type: string): Promise<strin
 	return `${label}:${btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
 }
 
-function sessionUserId(context: { user: { id?: unknown } }): string {
-	if (typeof context.user.id !== 'string') throw new Error('Session without a user');
-	return context.user.id;
+function sessionOf(context: { user: { id?: unknown }; session: { id?: unknown } }): {
+	userId: string;
+	sessionId: string;
+} {
+	const userId = context.user.id;
+	const sessionId = context.session.id;
+	if (typeof userId !== 'string' || typeof sessionId !== 'string')
+		throw new Error('Session without a user');
+	return { userId, sessionId };
 }
 
 export function createOAuthServer(db: D1Database, config: OAuthServerConfig) {
@@ -99,12 +105,12 @@ export function createOAuthServer(db: D1Database, config: OAuthServerConfig) {
 				allowDynamicClientRegistration: true,
 				allowUnauthenticatedClientRegistration: true,
 				clientRegistrationDefaultScopes: [...oauthScopes],
-				// The grant belongs to the signed-in user's workspace, never to a request parameter.
+				// The grant belongs to the session's active workspace, never to a request parameter.
 				postLogin: {
 					page: config.consentPath,
 					shouldRedirect: () => false,
 					async consentReferenceId(context) {
-						const tenant = await resolveTenant(db, sessionUserId(context));
+						const tenant = await resolveTenant(db, sessionOf(context));
 						if (tenant.status !== 'active' || tenant.suspension)
 							throw new Error('No active workspace');
 						return tenant.tenantId;

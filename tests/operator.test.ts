@@ -67,7 +67,12 @@ function api() {
 						scopes: ['links:read', 'links:write', 'analytics:read'],
 						token: { id: 'token-1', name: '', start: 'fl_', expiresAt: null }
 					}
-				: { kind: 'session', userId, signedInAt: new Date(start).toISOString() };
+				: {
+						kind: 'session',
+						sessionId: 'session-test',
+						userId,
+						signedInAt: new Date(start).toISOString()
+					};
 		}
 	});
 }
@@ -387,7 +392,7 @@ describe('deletion during a suspension', () => {
 			reason: 'phishing',
 			now: start
 		});
-		expect(await requestDeletion(identity(), userId, start)).toEqual({
+		expect(await requestDeletion(identity(), { userId, tenantId }, start)).toEqual({
 			status: 'suspended',
 			tenantId
 		});
@@ -407,7 +412,7 @@ describe('deletion during a suspension', () => {
 		expect(await count(identity(), '"session" WHERE "userId" = ?', userId)).toBe(1);
 
 		await reinstateTenant(identity(), stores(), operator, { tenantId, now: start });
-		expect(await requestDeletion(identity(), userId, start)).toEqual({
+		expect(await requestDeletion(identity(), { userId, tenantId }, start)).toEqual({
 			status: 'started',
 			tenantId
 		});
@@ -432,9 +437,9 @@ describe('access revocation', () => {
 					.bind(`session-${userId}`, start + 86400000, `token-${userId}`, userId),
 				identity()
 					.prepare(
-						'INSERT INTO "apikey" (id, referenceId, key, createdAt, updatedAt) VALUES (?, ?, ?, 0, 0)'
+						'INSERT INTO "apikey" (id, referenceId, key, createdAt, updatedAt, metadata) VALUES (?, ?, ?, 0, 0, json_object(\'tenantId\', ?))'
 					)
-					.bind(`key-${userId}`, userId, `hash-${userId}`),
+					.bind(`key-${userId}`, userId, `hash-${userId}`, tenantId),
 				identity()
 					.prepare(
 						'INSERT INTO "oauthClient" (id, clientId, redirectUris) VALUES (?, ?, \'["https://app.example/cb"]\')'

@@ -5,10 +5,12 @@ import { applyAnalyticsPolicy } from '@flared/data/analytics';
 import { applyRoutingPolicy } from '@flared/data/routing-policy';
 import {
 	acknowledgeProjection,
-	listMemberships,
 	listPendingProjections,
+	readMembership,
 	readPolicyProjection,
 	updateTenantPolicy,
+	type MembershipQuery,
+	type MembershipRole,
 	type PolicyLimits,
 	type PolicyStore
 } from '@flared/data/tenancy';
@@ -16,33 +18,35 @@ import { resolveShard, type AnalyticsShards } from './shards';
 
 export type TenantResolution =
 	// suspension is set while the operator suspends the workspace for abuse.
-	| { status: 'active'; tenantId: string; suspension: { reason: BlockReason } | null }
-	| { status: 'pending'; tenantId: string }
+	| {
+			status: 'active';
+			tenantId: string;
+			role: MembershipRole;
+			suspension: { reason: BlockReason } | null;
+	  }
+	| { status: 'pending'; tenantId: string; role: MembershipRole }
 	// The workspace is being deleted: nothing may act in it.
-	| { status: 'deleting'; tenantId: string }
+	| { status: 'deleting'; tenantId: string; role: MembershipRole }
 	| { status: 'none' };
 
 export class TenancyError extends Error {
-	constructor(readonly code: 'MULTIPLE_MEMBERSHIPS' | 'POLICY_MISSING') {
+	constructor(readonly code: 'POLICY_MISSING') {
 		super('Tenant state is inconsistent');
 	}
 }
 
-// The tenant always comes from the user's stored membership, never from the request.
+// The tenant always comes from a stored membership: the session's active workspace, or the
+// workspace a credential is bound to. A request never chooses it.
 export async function resolveTenant(
 	identity: D1Database,
-	userId: string
+	query: MembershipQuery
 ): Promise<TenantResolution> {
-	const memberships = await listMemberships(identity, userId);
-	if (memberships.length === 0) return { status: 'none' };
-	if (memberships.length > 1) {
-		console.error(JSON.stringify({ event: 'tenant_multiple_memberships' }));
-		throw new TenancyError('MULTIPLE_MEMBERSHIPS');
-	}
-	const [{ tenantId, activated, deleting, suspension }] = memberships;
-	if (deleting) return { status: 'deleting', tenantId };
-	if (!activated) return { status: 'pending', tenantId };
-	return { status: 'active', tenantId, suspension };
+	const membership = await readMembership(identity, query);
+	if (!membership) return { status: 'none' };
+	const { tenantId, role, activated, deleting, suspension } = membership;
+	if (deleting) return { status: 'deleting', tenantId, role };
+	if (!activated) return { status: 'pending', tenantId, role };
+	return { status: 'active', tenantId, role, suspension };
 }
 
 // Safe to repeat: routing keeps the newest revision, and the acknowledgement only moves forward.

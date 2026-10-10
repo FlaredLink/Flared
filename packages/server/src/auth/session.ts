@@ -5,6 +5,9 @@ import { freshSessionSeconds } from './options';
 export interface AuthPrincipal {
 	// name is what the person signs in with: the email in the cloud, the username in standalone.
 	user: { id: string; email: string; name: string };
+	// The session row ID, which keys the session's active workspace. It is no credential: the
+	// session token is.
+	sessionId: string;
 	expiresAt: string;
 	// When this session's sign-in happened.
 	signedInAt: string;
@@ -43,10 +46,12 @@ export async function readPrincipal(
 	const result = await auth.getSession({ headers, query: { disableCookieCache: true } });
 	if (!record(result) || !record(result.user) || !record(result.session)) return null;
 	const { id, email, emailVerified } = result.user;
-	const { expiresAt, createdAt } = result.session;
+	const { id: sessionId, expiresAt, createdAt } = result.session;
 	if (
 		typeof id !== 'string' ||
 		!id ||
+		typeof sessionId !== 'string' ||
+		!sessionId ||
 		typeof email !== 'string' ||
 		!email ||
 		!(expiresAt instanceof Date) ||
@@ -62,6 +67,7 @@ export async function readPrincipal(
 	if (name === null) return null;
 	return {
 		user: { id, email, name },
+		sessionId,
 		expiresAt: expiresAt.toISOString(),
 		signedInAt: createdAt.toISOString()
 	};

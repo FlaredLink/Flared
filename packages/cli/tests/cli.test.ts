@@ -363,6 +363,8 @@ describe('flared CLI', () => {
 			DOMAIN_LIMIT_REACHED: 7,
 			ACCOUNT_DELETING: 4,
 			WORKSPACE_SUSPENDED: 4,
+			// Only the dashboard receives it; a token never does.
+			WORKSPACE_CHANGED: 1,
 			LINK_BLOCKED: 4,
 			DOMAINS_UNAVAILABLE: 9,
 			DOMAIN_CHECK_TOO_SOON: 8,

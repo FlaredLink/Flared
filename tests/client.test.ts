@@ -60,7 +60,14 @@ function api() {
 			if (request.headers.has('authorization'))
 				return authenticateBearer(auth, identity(), request);
 			const userId = request.headers.get('x-test-user');
-			return userId ? { kind: 'session', userId, signedInAt: new Date().toISOString() } : null;
+			return userId
+				? {
+						kind: 'session',
+						sessionId: 'session-test',
+						userId,
+						signedInAt: new Date().toISOString()
+					}
+				: null;
 		}
 	});
 }
@@ -74,6 +81,7 @@ const sessionOnly = [
 	'DELETE /connected-apps/{clientId}',
 	'GET /workspace',
 	'PATCH /workspace',
+	'POST /workspaces/active',
 	'GET /icons/{hostname}'
 ];
 const document = openApiDocument(baseUrl);

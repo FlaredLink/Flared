@@ -390,7 +390,12 @@ describe('account deletion route', () => {
 			{
 				identity: identity(),
 				appOrigin: origin,
-				authenticate: async () => ({ kind: 'session', userId, signedInAt: fresh }),
+				authenticate: async () => ({
+					kind: 'session',
+					sessionId: 'session-test',
+					userId,
+					signedInAt: fresh
+				}),
 				start: (tenantId) => started.push(tenantId),
 				edition
 			}
@@ -468,6 +473,7 @@ describe('discovery documents', () => {
 describe('API authentication', () => {
 	const session = {
 		user: { id: 'user-1', email: 'a@example.com', name: 'a@example.com' },
+		sessionId: 'session-1',
 		expiresAt: 'x',
 		signedInAt: '2026-10-07T00:00:00.000Z'
 	};
@@ -482,6 +488,7 @@ describe('API authentication', () => {
 		expect(await sessionPrincipal(withCookie, auth, origin)).toEqual({
 			kind: 'session',
 			userId: 'user-1',
+			sessionId: 'session-1',
 			signedInAt: session.signedInAt
 		});
 		expect(await sessionPrincipal(new Request(`${origin}/v1/me`), auth, origin)).toBeNull();

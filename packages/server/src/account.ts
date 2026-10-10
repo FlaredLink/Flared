@@ -118,14 +118,13 @@ export async function deleteAccount(
 	if (!body.ok) return failure(body.code, 'Send the confirmation as JSON.');
 	const confirmation = body.value;
 
-	const tenant = await resolveTenant(identity, principal.userId);
+	const tenant = await resolveTenant(identity, {
+		userId: principal.userId,
+		sessionId: principal.sessionId
+	});
 	if (tenant.status === 'none') return failure('NO_WORKSPACE', 'Your account has no workspace.');
-	const owner = await identity
-		.prepare('SELECT role FROM tenant_memberships WHERE tenant_id = ? AND user_id = ?')
-		.bind(tenant.tenantId, principal.userId)
-		.first<{ role: unknown }>();
 	const expected =
-		owner?.role === 'owner' ? await edition.confirmation(identity, principal.userId) : null;
+		tenant.role === 'owner' ? await edition.confirmation(identity, principal.userId) : null;
 	if (expected === null)
 		return failure('OWNER_REQUIRED', 'Only the workspace owner can delete it.');
 	if (confirmation.toLowerCase() !== expected.toLowerCase())
@@ -135,7 +134,11 @@ export async function deleteAccount(
 		if (refusal) return refuse(refusal);
 	}
 
-	const result = await requestDeletion(identity, principal.userId, now);
+	const result = await requestDeletion(
+		identity,
+		{ userId: principal.userId, tenantId: tenant.tenantId },
+		now
+	);
 	if (result.status === 'no_workspace')
 		return failure('NO_WORKSPACE', 'Your account has no workspace.');
 	if (result.status === 'suspended')

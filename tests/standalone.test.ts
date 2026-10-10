@@ -634,7 +634,12 @@ describe('owner sign-in', () => {
 
 describe('single-workspace binding', () => {
 	it('refuses other tenants in the API, redirects, and the click consumer', async () => {
-		const principal = { kind: 'session' as const, userId, signedInAt: new Date().toISOString() };
+		const principal = {
+			kind: 'session' as const,
+			sessionId: 'session-test',
+			userId,
+			signedInAt: new Date().toISOString()
+		};
 		const api = (fixedTenantId: string) =>
 			createApi({
 				identity: db(),

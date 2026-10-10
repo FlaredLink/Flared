@@ -596,9 +596,12 @@ export function createMcpEndpoint(options: McpEndpointOptions) {
 		// belong to the workspace the grant is for.
 		const tenant =
 			stored && stored.resources.includes(options.resource)
-				? await resolveTenant(options.identity, stored.userId)
+				? await resolveTenant(options.identity, {
+						userId: stored.userId,
+						tenantId: stored.tenantId
+					})
 				: null;
-		if (!stored || tenant?.status !== 'active' || tenant.tenantId !== stored.tenantId)
+		if (!stored || tenant?.status !== 'active')
 			return jsonRpcError(401, 'The access token is not valid.', {
 				'www-authenticate': challenge(', error="invalid_token"')
 			});

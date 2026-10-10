@@ -547,7 +547,12 @@ describe('analytics API', () => {
 			authenticate: async (request) => {
 				const userId = request.headers.get('x-test-user');
 				return userId
-					? { kind: 'session', userId, signedInAt: new Date(clock).toISOString() }
+					? {
+							kind: 'session',
+							sessionId: 'session-test',
+							userId,
+							signedInAt: new Date(clock).toISOString()
+						}
 					: null;
 			},
 			now: () => clock

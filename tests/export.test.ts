@@ -91,7 +91,13 @@ const api = (scopes: TokenScope[] | null = null) =>
 		authenticate: async (request) => {
 			const name = request.headers.get('x-test-user');
 			if (!name) return null;
-			if (!scopes) return { kind: 'session', userId: `user-${name}`, signedInAt: '' };
+			if (!scopes)
+				return {
+					kind: 'session',
+					sessionId: 'session-test',
+					userId: `user-${name}`,
+					signedInAt: ''
+				};
 			return {
 				kind: 'oauth',
 				userId: `user-${name}`,

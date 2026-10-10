@@ -709,6 +709,7 @@ describe('connected apps API', () => {
 		const session = (userId: string): ApiPrincipal => ({
 			kind: 'session',
 			userId,
+			sessionId: 'session-test',
 			signedInAt: new Date().toISOString()
 		});
 		const list = await api(session('user-3')).fetch(new Request(`${origin}/v1/connected-apps`));

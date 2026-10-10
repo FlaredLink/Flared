@@ -37,6 +37,8 @@ function safePrincipal(value: unknown): AuthPrincipal | null {
 	if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
 	const record = value as Record<string, unknown>;
 	if (
+		typeof record.sessionId !== 'string' ||
+		!record.sessionId ||
 		typeof record.expiresAt !== 'string' ||
 		typeof record.signedInAt !== 'string' ||
 		typeof record.user !== 'object' ||
@@ -55,6 +57,7 @@ function safePrincipal(value: unknown): AuthPrincipal | null {
 		return null;
 	return {
 		user: { id: user.id, email: user.email, name: user.name },
+		sessionId: record.sessionId,
 		expiresAt: record.expiresAt,
 		signedInAt: record.signedInAt
 	};
