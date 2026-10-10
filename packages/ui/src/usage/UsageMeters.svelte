@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
-	import { usageLevel, type Usage } from '@flared/contracts/analytics';
+	import type { Usage } from '@flared/contracts/analytics';
+	import Glyph, { type GlyphName } from '../icons/Glyph.svelte';
+	import Meter from '../atoms/Meter.svelte';
 
 	// A null heading leaves the title to the surrounding card; the section keeps its name.
 	let { usage, heading = 'Usage' }: { usage: Usage; heading?: string | null } = $props();
@@ -18,21 +20,31 @@
 	});
 	const period = $derived(months.format(new Date(`${usage.month}-01T00:00:00Z`)));
 
-	const meters = $derived([
-		{ id: 'links', label: 'Active links', used: usage.links.used, limit: usage.links.limit },
-		{ id: 'clicks', label: 'Recorded clicks', used: usage.clicks, limit: usage.clickLimit },
+	const meters = $derived<
+		{ id: string; label: string; icon: GlyphName; used: number; limit: number }[]
+	>([
+		{
+			id: 'links',
+			label: 'active links',
+			icon: 'link',
+			used: usage.links.used,
+			limit: usage.links.limit
+		},
+		{
+			id: 'clicks',
+			label: 'recorded clicks this month',
+			icon: 'chart',
+			used: usage.clicks,
+			limit: usage.clickLimit
+		},
 		{
 			id: 'domains',
-			label: 'Custom domains',
+			label: 'custom domains',
+			icon: 'globe',
 			used: usage.domains.used,
 			limit: usage.domains.limit
 		}
 	]);
-
-	// A limit of 0 shows an empty bar: the resource is turned off.
-	function share(used: number, limit: number): number {
-		return limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
-	}
 </script>
 
 <section
@@ -43,21 +55,18 @@
 	{#if heading}<h2 id="usage-meters-heading">{heading}</h2>{/if}
 	<ul>
 		{#each meters as meter (meter.id)}
-			{@const level = usageLevel(meter.used, meter.limit)}
-			<li class:near={level === 80} class:full={level === 100}>
-				<span class="label" id="usage-{meter.id}">{meter.label}</span>
-				<span class="count">{numbers.format(meter.used)} / {numbers.format(meter.limit)}</span>
-				<div
-					class="bar"
-					role="meter"
-					aria-labelledby="usage-{meter.id}"
-					aria-valuemin={0}
-					aria-valuemax={meter.limit}
-					aria-valuenow={Math.min(meter.used, meter.limit)}
-					aria-valuetext="{numbers.format(meter.used)} of {numbers.format(meter.limit)}"
-				>
-					<span style:width="{share(meter.used, meter.limit)}%"></span>
-				</div>
+			{@const ratio = meter.limit > 0 ? meter.used / meter.limit : 0}
+			<li class:near={ratio >= 0.8 && ratio < 1} class:full={meter.limit > 0 && ratio >= 1}>
+				<span class="icon"><Glyph name={meter.icon} size={28} /></span>
+				<span class="body">
+					<span class="count">{numbers.format(meter.used)} / {numbers.format(meter.limit)}</span>
+					<Meter
+						value={meter.used}
+						max={meter.limit}
+						label="{numbers.format(meter.used)} of {numbers.format(meter.limit)} {meter.label}"
+					/>
+					<span class="label">{meter.label}</span>
+				</span>
 			</li>
 		{/each}
 	</ul>
@@ -81,7 +90,9 @@
 		container-type: inline-size;
 	}
 	h2 {
-		font-size: 1rem;
+		font-size: 1.125rem;
+		font-weight: 700;
+		letter-spacing: -0.02em;
 	}
 	ul {
 		display: grid;
@@ -92,60 +103,51 @@
 	}
 	li {
 		display: grid;
-		gap: 0.35rem;
+		grid-template-columns: auto minmax(0, 1fr);
+		align-items: start;
+		gap: 1rem;
 		min-width: 0;
 	}
-	.label {
-		color: var(--color-ink, #101828);
-		font-size: 0.875rem;
+	.icon {
+		display: grid;
+		margin-top: 0.1rem;
+		color: var(--color-ink);
+	}
+	.body {
+		display: grid;
+		gap: 0.45rem;
+		min-width: 0;
 	}
 	.count {
-		color: var(--color-strong, #101828);
-		font-size: 1.35rem;
-		font-weight: 650;
+		color: var(--color-strong);
+		font-size: 1.0625rem;
+		font-weight: 600;
 		font-variant-numeric: tabular-nums;
-		letter-spacing: -0.01em;
 	}
-	.bar {
-		height: 0.5rem;
-		margin-top: 0.4rem;
-		overflow: hidden;
-		border-radius: 999px;
-		background: var(--color-disabled, #f2f4f7);
-	}
-	/* Orange in use, amber from 80%, red when full; the count above it says the same. */
-	.bar span {
-		display: block;
-		height: 100%;
-		border-radius: inherit;
-		background: var(--color-button-primary, #c94b00);
-	}
-	.near .bar span {
-		background: var(--color-warning, #b54708);
-	}
-	.full .bar span {
-		background: var(--color-button-danger, #b42318);
+	.label {
+		color: var(--color-lead);
+		font-size: 0.875rem;
 	}
 	.near .count {
-		color: var(--color-warning, #b54708);
+		color: var(--color-warning);
 	}
 	.full .count {
-		color: var(--color-danger, #b42318);
+		color: var(--color-danger);
 	}
 	.foot {
 		display: flex;
 		flex-wrap: wrap;
 		justify-content: space-between;
 		gap: 0.25rem 1rem;
-		padding-top: 1rem;
-		border-top: 1px solid var(--color-rule, #eaecf0);
+		padding-top: 0.9rem;
+		border-top: 1px solid var(--color-rule);
 	}
 	.note {
-		color: var(--color-muted, #667085);
-		font-size: 0.85rem;
+		color: var(--color-lead);
+		font-size: 0.875rem;
 	}
 	/* Side by side once each meter has room for its count. */
-	@container (min-width: 34rem) {
+	@container (min-width: 36rem) {
 		ul {
 			grid-template-columns: repeat(3, minmax(0, 1fr));
 			gap: 0;
@@ -160,7 +162,7 @@
 			padding-right: 0;
 		}
 		li + li {
-			border-left: 1px solid var(--color-rule, #eaecf0);
+			border-left: 1px solid var(--color-rule);
 		}
 	}
 </style>

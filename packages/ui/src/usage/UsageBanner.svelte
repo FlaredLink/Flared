@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
 	import type { Usage, UsageWarning } from '@flared/contracts/analytics';
+	import Glyph from '../icons/Glyph.svelte';
 
 	// href leads to where the limits can change, such as a plan page. Without it, no link shows.
 	let { usage, href }: { usage: Usage; href?: string } = $props();
@@ -37,47 +38,70 @@
 
 {#if usage.warnings.length > 0}
 	<section class="usage-banner" class:full aria-labelledby="usage-banner-heading">
-		<h2 id="usage-banner-heading">
-			{full ? 'A workspace limit is full' : 'A workspace limit is almost full'}
-		</h2>
-		<ul>
-			{#each usage.warnings as warning (warning.resource)}<li>{message(warning)}</li>{/each}
-		</ul>
-		{#if href}<a {href}>See plans and usage</a>{/if}
+		<span class="icon"><Glyph name={full ? 'warning' : 'warningCircle'} size={20} /></span>
+		<div class="text">
+			<h2 id="usage-banner-heading">
+				{full ? 'A workspace limit is full' : 'A workspace limit is almost full'}
+			</h2>
+			{#each usage.warnings as warning (warning.resource)}<p>{message(warning)}</p>{/each}
+		</div>
+		{#if href}<a {href}>See plans and usage<Glyph name="arrow" size={16} /></a>{/if}
 	</section>
 {/if}
 
 <style>
 	.usage-banner {
-		display: grid;
-		gap: 0.4rem;
-		max-width: 44rem;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-start;
+		gap: 0.5rem 0.75rem;
 		margin-bottom: 1.5rem;
-		padding: 1rem 1.25rem;
-		border: 1px solid var(--color-warning, #b54708);
-		border-radius: var(--radius-md, 0.75rem);
-		background: var(--color-warning-soft, #fffaeb);
-		color: var(--color-ink, #101828);
+		padding: 0.75rem 1rem;
+		border: 1px solid color-mix(in oklch, var(--color-warning) 35%, transparent);
+		border-radius: var(--radius-md, 0.625rem);
+		background: var(--color-warning-soft);
+		color: var(--color-ink);
 	}
-	.usage-banner.full {
-		border-color: var(--color-danger, #b42318);
-		background: var(--color-danger-soft, #fef3f2);
+	.full {
+		border-color: color-mix(in oklch, var(--color-danger) 35%, transparent);
+		background: var(--color-danger-soft);
+	}
+	.icon {
+		display: grid;
+		margin-top: 0.1rem;
+		color: var(--color-warning);
+	}
+	.full .icon {
+		color: var(--color-danger);
+	}
+	.text {
+		display: grid;
+		flex: 1 1 20rem;
+		gap: 0.15rem;
+		min-width: 0;
 	}
 	h2 {
-		font-size: 1rem;
+		color: var(--color-strong);
+		font-size: 0.9375rem;
+		font-weight: 600;
+		letter-spacing: 0;
 	}
-	ul {
-		display: grid;
-		gap: 0.3rem;
-		margin: 0;
-		padding-left: 1.1rem;
-		font-size: 0.9rem;
+	p {
+		color: var(--color-ink);
+		font-size: 0.875rem;
 	}
 	a {
-		justify-self: start;
-		color: var(--color-strong, #101828);
-		font-size: 0.9rem;
-		font-weight: 600;
+		display: inline-flex;
+		flex: none;
+		align-items: center;
+		gap: 0.35rem;
+		align-self: center;
+		color: var(--color-link);
+		font-size: 0.875rem;
+		font-weight: 500;
+	}
+	a:hover {
 		text-decoration: underline;
+		text-underline-offset: 3px;
 	}
 </style>
