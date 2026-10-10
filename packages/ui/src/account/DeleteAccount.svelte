@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
-	import Panel from '../layout/Panel.svelte';
+	import SettingRow from '../molecules/SettingRow.svelte';
+	import Button from '../atoms/Button.svelte';
 
 	interface Props {
 		// The edition's deletion route. It receives { confirmation } as JSON.
@@ -62,28 +63,31 @@
 	}
 </script>
 
-<Panel
-	id="delete-heading"
-	title="Delete account"
-	lead="Stops every short link at once and removes your links, domains, analytics, API tokens, and connected apps. It cannot be undone."
-	icon="warning"
-	tone="danger"
-	plain
->
-	{#snippet actions()}
-		{#if !blocked && !open}
-			<button type="button" class="outline" onclick={() => (open = true)}>Delete account…</button>
+<section class="delete" aria-labelledby="delete-heading">
+	<SettingRow
+		icon="trash"
+		id="delete-heading"
+		title="Delete account"
+		description="Permanently removes your account and stops your links."
+		danger
+	>
+		{#if blocked}
+			<p class="blocked">{blocked.message} <a href={blocked.href}>{blocked.action}</a></p>
+		{:else if !open}
+			<Button variant="danger" onclick={() => (open = true)}>Delete account…</Button>
 		{/if}
-	{/snippet}
-	{#if blocked}
-		<p class="blocked">{blocked.message} <a href={blocked.href}>{blocked.action}</a></p>
-	{:else if open}
+	</SettingRow>
+	{#if open && !blocked}
 		<form
 			onsubmit={(event) => {
 				event.preventDefault();
 				void remove();
 			}}
 		>
+			<p class="lead">
+				Deletion stops every short link at once and removes your links, domains, analytics, API
+				tokens, and connected apps. It cannot be undone.
+			</p>
 			<ul>
 				<li>Export your data first if you want to keep it.</li>
 				<li>Your short links stop redirecting within a minute.</li>
@@ -102,107 +106,94 @@
 			/>
 			{#if error}<p class="error" role="alert">{error}</p>{/if}
 			<div class="actions">
-				<button type="submit" class="danger" disabled={!matches || pending}
-					>{pending ? 'Deleting…' : 'Delete my account permanently'}</button
+				<Button type="submit" variant="danger" disabled={!matches || pending}
+					>{pending ? 'Deleting…' : 'Delete my account permanently'}</Button
 				>
-				<button
-					type="button"
-					class="quiet"
+				<Button
+					variant="ghost"
 					disabled={pending}
 					onclick={() => {
 						open = false;
 						typed = '';
 						error = '';
-					}}>Keep my account</button
+					}}>Keep my account</Button
 				>
 			</div>
 		</form>
 	{/if}
-</Panel>
+</section>
 
 <style>
-	li {
-		color: var(--color-muted, #667085);
-		font-size: 0.85rem;
-	}
 	.blocked {
-		color: var(--color-ink, #101828);
-		font-size: 0.9rem;
+		max-width: 30rem;
+		color: var(--color-ink);
+		font-size: 0.9375rem;
+		text-align: right;
 	}
 	.blocked a {
-		color: var(--color-strong, #101828);
-		font-weight: 600;
+		color: var(--color-link);
 		text-decoration: underline;
+		text-underline-offset: 3px;
 	}
 	form {
 		display: grid;
 		gap: 0.6rem;
-		max-width: 28rem;
+		max-width: 34rem;
+		margin: 1rem 0 0 3.25rem;
+		padding: 1rem 1.25rem 1.25rem;
+		border: 1px solid color-mix(in oklch, var(--color-danger) 30%, transparent);
+		border-radius: var(--radius-md, 0.625rem);
+		background: var(--color-danger-soft);
+	}
+	.lead {
+		color: var(--color-strong);
+		font-size: 0.9375rem;
 	}
 	ul {
 		display: grid;
-		gap: 0.3rem;
+		gap: 0.2rem;
 		margin: 0;
-		padding-left: 1.1rem;
+		padding-left: 1.2rem;
+	}
+	li {
+		color: var(--color-ink);
+		font-size: 0.875rem;
 	}
 	label {
-		color: var(--color-strong, #101828);
-		font-size: 0.85rem;
-		font-weight: 650;
-		overflow-wrap: anywhere;
+		margin-top: 0.4rem;
+		color: var(--color-strong);
+		font-size: 0.9375rem;
 	}
 	input {
-		width: 100%;
-		min-width: 0;
-		min-height: 44px;
-		padding: 0.6rem 0.8rem;
-		color: var(--color-ink, #101828);
-		border: 1px solid var(--color-rule, #d0d5dd);
-		border-radius: var(--radius-sm, 6px);
-		background: var(--color-paper, #fff);
+		min-height: 2.75rem;
+		padding: 0 0.9rem;
+		border: 1px solid var(--color-rule);
+		border-radius: var(--radius-control, 0.5rem);
+		background: var(--color-input);
+		color: var(--color-strong);
+		font: inherit;
 	}
-	input:focus-visible {
-		border-color: var(--color-muted, #667085);
-		outline: 1px solid var(--color-muted, #667085);
+	input:focus {
+		border-color: var(--color-strong);
+		outline: 1px solid var(--color-strong);
 		outline-offset: -1px;
 	}
 	.error {
-		color: var(--color-danger, #b42318);
-		font-size: 0.85rem;
+		color: var(--color-danger);
+		font-size: 0.875rem;
 	}
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.5rem;
+		margin-top: 0.25rem;
 	}
-	button {
-		justify-self: start;
-		min-height: 44px;
-		padding: 0.65rem 1.15rem;
-		border-radius: var(--radius-sm, 6px);
-		font-weight: 620;
-	}
-	button.danger {
-		border: 1px solid var(--color-button-danger, #b42318);
-		background: var(--color-button-danger, #b42318);
-		color: var(--color-on-primary, #fff);
-	}
-	button:disabled {
-		color: var(--color-muted, #667085);
-		background: var(--color-disabled, #eaecf0);
-		border-color: var(--color-disabled, #eaecf0);
-	}
-	button.outline {
-		border: 1px solid var(--color-danger, #b42318);
-		background: var(--color-paper, #fff);
-		color: var(--color-danger, #b42318);
-	}
-	button.outline:hover {
-		background: var(--color-danger-soft, #fef3f2);
-	}
-	button.quiet {
-		border: 1px solid var(--color-rule, #d0d5dd);
-		background: var(--color-paper, #fff);
-		color: var(--color-ink, #101828);
+	@media (max-width: 52rem) {
+		.blocked {
+			text-align: left;
+		}
+		form {
+			margin-left: 0;
+		}
 	}
 </style>

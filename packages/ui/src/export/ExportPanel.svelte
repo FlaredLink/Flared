@@ -2,8 +2,8 @@
 <script lang="ts">
 	import type { ExportProgress } from '@flared/client/export';
 	import { buildExport, buildLinksCsv, exportErrorMessage, ExportFailure } from './client';
-	import Panel from '../layout/Panel.svelte';
-	import Tile from '../layout/Tile.svelte';
+	import SettingRow from '../molecules/SettingRow.svelte';
+	import Button from '../atoms/Button.svelte';
 
 	interface Props {
 		// The path of the /v1 API for this browser, such as "/api/v1".
@@ -24,6 +24,22 @@
 	const history = $derived(
 		retentionDays === null ? 'the click history you still have' : `${retentionDays} days of clicks`
 	);
+	const files = $derived([
+		{
+			kind: 'csv' as const,
+			icon: 'file' as const,
+			title: 'Export links',
+			description: 'Download your links as a spreadsheet.',
+			label: 'Download CSV'
+		},
+		{
+			kind: 'json' as const,
+			icon: 'chart' as const,
+			title: 'Export links and clicks',
+			description: `Includes your links and ${history}.`,
+			label: 'Download JSON'
+		}
+	]);
 
 	function save(blob: Blob, filename: string) {
 		const href = URL.createObjectURL(blob);
@@ -61,117 +77,50 @@
 	}
 </script>
 
-<Panel
-	id="export-heading"
-	title="Export your data"
-	lead="Download your links as CSV, or your links and {history} as JSON. The file is built in this browser."
-	icon="download"
-	tone="blue"
->
-	<ul>
-		<li>
-			<Tile icon="file" />
-			<div class="main">
-				<span class="name">Links</span>
-				<span class="meta">CSV spreadsheet</span>
-			</div>
-			{#if pending === 'csv'}
-				<button type="button" class="quiet" onclick={() => controller?.abort()}
-					>Cancel export</button
-				>
+<section class="export" aria-labelledby="export-heading">
+	<h3 id="export-heading" class="visually-hidden">Export your data</h3>
+	{#each files as file (file.kind)}
+		<SettingRow icon={file.icon} title={file.title} description={file.description}>
+			{#if pending === file.kind}
+				<Button onclick={() => controller?.abort()}>Cancel export</Button>
 			{:else}
-				<button
-					type="button"
-					class="quiet"
-					disabled={pending !== null}
-					onclick={() => void start('csv')}>Download CSV</button
+				<Button icon="download" disabled={pending !== null} onclick={() => void start(file.kind)}
+					>{file.label}</Button
 				>
 			{/if}
-		</li>
-		<li>
-			<Tile icon="code" />
-			<div class="main">
-				<span class="name">Links and clicks</span>
-				<span class="meta">JSON file</span>
-			</div>
-			{#if pending === 'json'}
-				<button type="button" class="quiet" onclick={() => controller?.abort()}
-					>Cancel export</button
-				>
-			{:else}
-				<button
-					type="button"
-					class="quiet"
-					disabled={pending !== null}
-					onclick={() => void start('json')}>Download JSON</button
-				>
-			{/if}
-		</li>
-	</ul>
+		</SettingRow>
+	{/each}
 	<p class="status" role="status" aria-live="polite">
 		{#if progress}Fetched {numbers.format(progress.links)} links and {numbers.format(
 				progress.dailyTotals + progress.dailyDimensions
 			)} analytics rows…{:else}{status}{/if}
 	</p>
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
-</Panel>
+</section>
 
 <style>
-	ul {
+	.export {
 		display: grid;
-		margin: 0;
-		padding: 0;
-		list-style: none;
-		border-top: 1px solid var(--color-rule, #eaecf0);
 	}
-	li {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.75rem 1rem;
-		padding: 0.9rem 0;
-	}
-	li + li {
-		border-top: 1px solid var(--color-rule, #eaecf0);
-	}
-	.main {
-		display: grid;
-		flex: 1 1 10rem;
-		gap: 0.15rem;
-		min-width: 0;
-	}
-	.name {
-		color: var(--color-strong, #101828);
-		font-weight: 650;
-	}
-	.meta,
 	.status {
-		color: var(--color-muted, #667085);
-		font-size: 0.85rem;
+		padding-top: 0.6rem;
+		color: var(--color-lead);
+		font-size: 0.875rem;
 	}
 	.status:empty {
 		display: none;
 	}
 	.error {
-		color: var(--color-danger, #b42318);
-		font-size: 0.85rem;
+		padding-top: 0.6rem;
+		color: var(--color-danger);
+		font-size: 0.875rem;
 	}
-	button {
-		min-height: 44px;
-		padding: 0.6rem 1.15rem;
-		border: 1px solid var(--color-rule, #d0d5dd);
-		border-radius: var(--radius-sm, 6px);
-		background: var(--color-paper, #fff);
-		color: var(--color-ink, #101828);
-		font-weight: 620;
-	}
-	button:hover:not(:disabled) {
-		background: var(--color-surface, #f9fafb);
-		border-color: var(--color-muted, #667085);
-	}
-	button:disabled {
-		color: var(--color-muted, #667085);
-		background: var(--color-disabled, #eaecf0);
-		border-color: var(--color-disabled, #eaecf0);
+	.visually-hidden {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
 	}
 </style>
