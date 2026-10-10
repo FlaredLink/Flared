@@ -7,7 +7,12 @@
 	// The official mark where Flared has it; a glyph tile for the rest.
 	let { assistant, size = 44 }: { assistant: AssistantId; size?: number } = $props();
 	const mark = $derived(
-		assistant === 'claude' || assistant === 'chatgpt' || assistant === 'cursor' ? assistant : null
+		assistant === 'claude' ||
+			assistant === 'chatgpt' ||
+			assistant === 'cursor' ||
+			assistant === 'grok'
+			? assistant
+			: null
 	);
 </script>
 
@@ -18,8 +23,6 @@
 		<Glyph name="terminal" size={Math.round(size * 0.6)} />
 	{:else if assistant === 'vscode'}
 		<Glyph name="code" size={Math.round(size * 0.6)} />
-	{:else if assistant === 'grok'}
-		<span class="letter">G</span>
 	{:else}
 		<Glyph name="share" size={Math.round(size * 0.66)} />
 	{/if}
@@ -47,9 +50,5 @@
 	.other {
 		border: 0;
 		background: none;
-	}
-	.letter {
-		font-size: calc(var(--size) * 0.45);
-		font-weight: 750;
 	}
 </style>
