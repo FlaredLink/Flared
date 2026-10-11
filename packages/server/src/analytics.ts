@@ -37,7 +37,7 @@ import {
 import { recentClickDays } from '@flared/contracts/links';
 import { isTombstoned } from '@flared/data/deletions';
 import { readLimitUsage } from '@flared/data/routing-policy';
-import { readTenantShard } from '@flared/data/tenancy';
+import { readTenantName, readTenantShard } from '@flared/data/tenancy';
 import { ApiError } from './links';
 import { resolveShard, UnknownShardError, type AnalyticsShards } from './shards';
 
@@ -274,11 +274,12 @@ export async function getUsage(
 ): Promise<Usage> {
 	const { db, policy } = await tenantShard(identity, shards, tenantId);
 	const month = utcMonth(now);
-	const [monthly, limits] = await Promise.all([
+	const [monthly, limits, name] = await Promise.all([
 		readMonthlyUsage(db, tenantId, month),
-		readLimitUsage(routing, tenantId)
+		readLimitUsage(routing, tenantId),
+		readTenantName(identity, tenantId)
 	]);
-	if (!limits) throw new AnalyticsUnavailableError();
+	if (!limits || name === null) throw new AnalyticsUnavailableError();
 	const counts = {
 		clicks: monthly.clicks,
 		clickLimit: policy.monthlyClickLimit,
@@ -286,6 +287,7 @@ export async function getUsage(
 		domains: limits.domains
 	};
 	return {
+		workspace: { id: tenantId, name },
 		month,
 		...counts,
 		unrecordedClicks: monthly.skippedClicks,

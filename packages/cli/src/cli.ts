@@ -186,7 +186,7 @@ const commands: Record<string, Command> = {
 	},
 	whoami: {
 		usage: 'flared whoami [--api-url URL]',
-		summary: 'Show the token in use, its scopes, and the API URL.',
+		summary: 'Show the workspace, the token in use, its scopes, and the API URL.',
 		options: [],
 		args: 0,
 		async run({ client, apiUrl, print }) {

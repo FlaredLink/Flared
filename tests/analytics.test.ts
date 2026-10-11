@@ -674,6 +674,7 @@ describe('analytics API', () => {
 		expect(response.status).toBe(200);
 		expect(await response.json()).toEqual({
 			usage: {
+				workspace: { id: 'api-b', name: 'Workspace' },
 				month: '2026-10',
 				clicks: 1,
 				clickLimit: 5000,

@@ -92,6 +92,7 @@ export function usageReport(usage: Usage): string {
 	const warning = (resource: UsageWarning['resource']) =>
 		usage.warnings.find((item) => item.resource === resource);
 	const rows = [
+		...(usage.workspace ? [['Workspace', usage.workspace.name]] : []),
 		[`Clicks in ${usage.month}`, used(usage.clicks, usage.clickLimit, warning('clicks'))],
 		['Active links', used(usage.links.used, usage.links.limit, warning('links'))],
 		['Custom domains', used(usage.domains.used, usage.domains.limit, warning('domains'))],
@@ -114,7 +115,10 @@ export function identityReport(identity: ApiIdentity, apiUrl: string): string {
 					['Expires', identity.token.expiresAt ? utc(identity.token.expiresAt) : 'never']
 				]
 			: [['Session', 'browser session']];
-	return table([...rows, ['Scopes', identity.scopes.join(', ')], ['API', apiUrl]]);
+	const workspace = identity.workspace
+		? [['Workspace', `${identity.workspace.name} (${identity.workspace.role})`]]
+		: [];
+	return table([...workspace, ...rows, ['Scopes', identity.scopes.join(', ')], ['API', apiUrl]]);
 }
 
 function domainKind(domain: Domain): string {

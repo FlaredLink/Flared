@@ -301,6 +301,7 @@ describe('usage API', () => {
 		await clicks(tenantId, 12);
 		await clicks(other, 1);
 		expect(await usageOf(tenantId)).toEqual({
+			workspace: { id: tenantId, name: 'Workspace' },
 			month: '2026-10',
 			clicks: 10,
 			clickLimit: 10,

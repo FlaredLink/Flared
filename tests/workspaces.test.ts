@@ -412,6 +412,11 @@ describe('workspace API', () => {
 			{ destination: 'https://example.com/alpha' }
 		);
 		expect(created.status).toBe(201);
+		// The CLI's whoami names the token's workspace, not the dashboard's.
+		const me = async (headers: Record<string, string>) =>
+			((await (await call('GET', '/me', headers)).json()) as { workspace: unknown }).workspace;
+		expect(await me(bearer(secret))).toEqual({ id: 'ws-a', name: 'Alpha', role: 'owner' });
+		expect(await me(session('sess-1'))).toEqual({ id: 'ws-b', name: 'Beta', role: 'owner' });
 		expect(await linkCount(bearer(secret))).toBe(1);
 		expect(await linkCount(session('sess-2'))).toBe(1);
 		expect(await linkCount(session('sess-1'))).toBe(0);

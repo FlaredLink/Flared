@@ -561,15 +561,18 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	});
 
 	// Who is calling. Needs no scope, so a client can check any token.
-	app.get('/me', (context) => {
-		const { principal } = context.var;
+	app.get('/me', async (context) => {
+		const { principal, tenantId, role } = context.var;
 		if (principal.kind === 'oauth')
 			throw new ApiError('INSUFFICIENT_SCOPE', 'Connected apps cannot read this.');
-		const identity: ApiIdentity =
+		const name = await readTenantName(identity, tenantId);
+		if (name === null) throw new ApiError('NOT_FOUND', 'Workspace not found.');
+		const workspace: Workspace = { id: tenantId, name, role };
+		const me: ApiIdentity =
 			principal.kind === 'token'
-				? { kind: 'token', scopes: [...principal.scopes], token: principal.token }
-				: { kind: 'session', scopes: [...tokenScopes] };
-		return respond({ status: 200, body: JSON.stringify(identity) });
+				? { kind: 'token', scopes: [...principal.scopes], token: principal.token, workspace }
+				: { kind: 'session', scopes: [...tokenScopes], workspace };
+		return respond({ status: 200, body: JSON.stringify(me) });
 	});
 
 	// The person's workspaces, for the dashboard's workspace menu.

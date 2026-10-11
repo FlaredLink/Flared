@@ -237,6 +237,9 @@ export interface UsageWarning {
 }
 
 export interface Usage {
+	// The workspace the usage belongs to. Servers before this field omit it, so clients accept
+	// usage without it.
+	workspace?: { id: string; name: string };
 	month: string;
 	// Clicks recorded this UTC month and the monthly allowance.
 	clicks: number;
@@ -317,6 +320,7 @@ export function isUsage(value: unknown): value is Usage {
 	if (typeof value !== 'object' || value === null) return false;
 	const usage = value as Record<string, unknown>;
 	return (
+		(usage.workspace === undefined || isUsageWorkspace(usage.workspace)) &&
 		typeof usage.month === 'string' &&
 		isCount(usage.clicks) &&
 		isCount(usage.clickLimit) &&
@@ -329,6 +333,12 @@ export function isUsage(value: unknown): value is Usage {
 		usage.warnings.every(isUsageWarning) &&
 		typeof usage.asOf === 'string'
 	);
+}
+
+function isUsageWorkspace(value: unknown): value is Usage['workspace'] {
+	if (typeof value !== 'object' || value === null) return false;
+	const workspace = value as Record<string, unknown>;
+	return typeof workspace.id === 'string' && typeof workspace.name === 'string';
 }
 
 function isLimitUsage(value: unknown): value is LimitUsage {

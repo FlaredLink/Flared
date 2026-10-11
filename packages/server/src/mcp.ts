@@ -385,10 +385,11 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 		{
 			title: 'Get usage',
 			description:
-				'Gets usage against the workspace limits: clicks recorded this calendar month (UTC), clicks not recorded after the allowance was full, active links, custom domains, days of history, and a warning for each limit at 80% or 100%.',
+				'Gets usage against the limits of the workspace this app may use, with its name: clicks recorded this calendar month (UTC), clicks not recorded after the allowance was full, active links, custom domains, days of history, and a warning for each limit at 80% or 100%.',
 			inputSchema: z.object({}),
 			outputSchema: z.object({
 				usage: z.object({
+					workspace: z.object({ id: z.string(), name: z.string() }),
 					month: z.string(),
 					clicks: z.number(),
 					clickLimit: z.number(),

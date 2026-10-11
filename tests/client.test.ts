@@ -210,7 +210,11 @@ describe('API client', () => {
 		const session = await api().fetch(
 			new Request(`${baseUrl}/me`, { headers: { 'x-test-user': 'user-1' } })
 		);
-		expect(await session.json()).toEqual({ kind: 'session', scopes: [...tokenScopes] });
+		expect(await session.json()).toEqual({
+			kind: 'session',
+			scopes: [...tokenScopes],
+			workspace: { id: 'tenant-1', name: 'Workspace', role: 'owner' }
+		});
 	});
 
 	it('creates, replays, lists, reads, edits, and measures links', async () => {

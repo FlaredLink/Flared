@@ -114,7 +114,8 @@ function fakeApi(state: { failWith?: ErrorCode; links?: object[]; domains?: obje
 			return Response.json({
 				kind: 'token',
 				scopes: ['links:read'],
-				token: { id: 't1', name: 'CI', start: token.slice(0, 8), expiresAt: null }
+				token: { id: 't1', name: 'CI', start: token.slice(0, 8), expiresAt: null },
+				workspace: { id: 'ws-1', name: 'Launch team', role: 'owner' }
 			});
 		if (path === '/links' && request.method === 'GET')
 			return Response.json({ links, nextCursor: null });
@@ -164,6 +165,7 @@ function fakeApi(state: { failWith?: ErrorCode; links?: object[]; domains?: obje
 		if (path === '/usage')
 			return Response.json({
 				usage: {
+					workspace: { id: 'ws-1', name: 'Launch team' },
 					month: '2026-10',
 					clicks: 3,
 					clickLimit: 5000,
@@ -312,8 +314,10 @@ describe('flared CLI', () => {
 		expect(accepted.code).toBe(exitCodes.ok);
 		expect(JSON.parse(accepted.stdout)).toMatchObject({
 			apiUrl: 'https://api.flared.page/v1',
-			kind: 'token'
+			kind: 'token',
+			workspace: { name: 'Launch team', role: 'owner' }
 		});
+		expect((await cli(['whoami'], { dir })).stdout).toContain('Workspace  Launch team (owner)');
 		const file = join(dir, 'config.json');
 		if (process.platform !== 'win32') {
 			expect((await stat(file)).mode & 0o777).toBe(0o600);
@@ -453,6 +457,7 @@ describe('flared CLI', () => {
 		expect(report.stdout).toContain('3 clicks from 2026-09-03 to 2026-10-02');
 		expect(report.stdout).toContain('US 3');
 		const usage = (await cli(['usage'], { env: signedIn })).stdout;
+		expect(usage).toContain('Workspace          Launch team');
 		expect(usage).toContain('Clicks in 2026-10  3 of 5000');
 		expect(usage).toContain('Active links       4 of 5 (80%)');
 		expect(usage).toContain('History            30 days');

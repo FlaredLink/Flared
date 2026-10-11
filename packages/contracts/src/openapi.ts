@@ -18,7 +18,7 @@ import { tokenScopes, type TokenScope } from './tokens';
 // Duplicated from the client's QR module, which this package cannot import.
 const qrSizes = { minimum: 128, maximum: 2048, default: 512 };
 
-export const openApiVersion = '1.0.0';
+export const openApiVersion = '1.1.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const dateTime = { type: 'string', format: 'date-time' };
@@ -155,6 +155,10 @@ const schemas = {
 		}
 	}),
 	Usage: object({
+		workspace: {
+			...object({ id: { type: 'string' }, name: { type: 'string' } }),
+			description: 'The workspace the usage belongs to.'
+		},
 		month: { type: 'string', pattern: '^\\d{4}-\\d{2}$' },
 		clicks: { ...count, description: 'Clicks recorded this UTC month.' },
 		clickLimit: { ...count, description: 'Clicks that can be recorded each UTC month.' },
@@ -250,15 +254,22 @@ const schemas = {
 		used: { ...count, description: 'Workspace domains that count against the limit.' },
 		limit: count
 	}),
+	Workspace: object({
+		id: { type: 'string' },
+		name: { type: 'string' },
+		role: { type: 'string', enum: ['owner', 'member'] }
+	}),
 	Identity: {
 		oneOf: [
 			object({
 				kind: { const: 'session' },
-				scopes: { type: 'array', items: ref('Scope') }
+				scopes: { type: 'array', items: ref('Scope') },
+				workspace: { ...ref('Workspace'), description: 'The workspace the session acts in.' }
 			}),
 			object({
 				kind: { const: 'token' },
 				scopes: { type: 'array', items: ref('Scope') },
+				workspace: { ...ref('Workspace'), description: 'The workspace the token acts in.' },
 				token: object({
 					id: { type: 'string' },
 					name: { type: 'string' },
@@ -315,8 +326,11 @@ export function openApiDocument(serverUrl: string) {
 		security: [{ bearerAuth: [] }],
 		paths: {
 			'/me': {
-				get: operation('Describe the calling token', null, {
-					'200': { description: 'The credential.', content: json(ref('Identity')) }
+				get: operation('Describe the calling token and its workspace', null, {
+					'200': {
+						description: 'The credential and the workspace it acts in.',
+						content: json(ref('Identity'))
+					}
 				})
 			},
 			'/links': {

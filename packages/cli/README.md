@@ -17,7 +17,7 @@ Create an API token in the Flared app under Settings. `flared login` asks for it
 | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | `flared login [--token-stdin]`                                                            | Save an API token after the API accepts it.                         |
 | `flared logout`                                                                           | Delete the saved token. Revoke it in Settings to stop it working.   |
-| `flared whoami`                                                                           | Show the token, its scopes, and the API URL.                        |
+| `flared whoami`                                                                           | Show the workspace, the token, its scopes, and the API URL.         |
 | `flared link create URL [--slug S] [--title T] [--domain HOSTNAME] [--idempotency-key K]` | Create a link and print its short URL. Reuse a key to retry safely. |
 | `flared link list [--search Q] [--limit N] [--cursor C] [--all]`                          | List links, newest first.                                           |
 | `flared link get LINK`                                                                    | Show one link.                                                      |
