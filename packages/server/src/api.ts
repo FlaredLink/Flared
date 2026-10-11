@@ -33,11 +33,12 @@ import {
 import { openApiDocument } from '@flared/contracts/openapi';
 import { parseAddDomain } from '@flared/contracts/domains';
 import {
-	parseRenameWorkspace,
+	parseWorkspaceName,
 	parseSelectWorkspace,
 	workspaceHeader,
 	type Workspace,
-	type WorkspaceList
+	type WorkspaceList,
+	type WorkspaceSummary
 } from '@flared/contracts/workspace';
 import {
 	listWorkspaces,
@@ -129,7 +130,21 @@ export interface ApiDependencies {
 	// Site icons for the dashboard. Without a store, every icon answers 404 and the dashboard
 	// shows a letter tile.
 	icons?: IconSettings;
+	// Creates a workspace that the user owns. A single-workspace installation has none, and
+	// POST /v1/workspaces answers 404.
+	createWorkspace?: (input: {
+		userId: string;
+		name: string;
+		now: number;
+	}) => Promise<WorkspaceCreation>;
 }
+
+// limit: the person cannot create another workspace now, for the reason in message.
+// unavailable: the installation cannot take a new workspace at the moment.
+export type WorkspaceCreation =
+	| { status: 'created'; tenantId: string }
+	| { status: 'limit'; message: string }
+	| { status: 'unavailable' };
 
 export interface IconSettings {
 	store: IconStore;
@@ -574,6 +589,36 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		return respond({ status: 200, body: JSON.stringify(list) });
 	});
 
+	// Creates a workspace and makes it the session's active one, so the next page shows it.
+	app.post('/workspaces', async (context) => {
+		const principal = sessionOnly(context, 'Create workspaces in the Flared app.');
+		const create = dependencies.createWorkspace;
+		if (!create) throw new ApiError('NOT_FOUND', 'Route not found.');
+		const { name } = parseWorkspaceName(await readJson(context.req.raw));
+		const result = await create({ userId: principal.userId, name, now: now() });
+		if (result.status === 'limit') throw new ApiError('WORKSPACE_LIMIT_REACHED', result.message);
+		if (result.status === 'unavailable')
+			throw new ApiError(
+				'SERVICE_UNAVAILABLE',
+				'Flared cannot open a new workspace right now. Try again later.'
+			);
+		const selected = await setActiveWorkspace(identity, {
+			userId: principal.userId,
+			sessionId: principal.sessionId,
+			tenantId: result.tenantId,
+			now: now()
+		});
+		const workspace = (await listWorkspaces(identity, principal.userId)).find(
+			(item) => item.id === result.tenantId
+		);
+		if (!workspace) throw new ApiError('NOT_FOUND', 'Workspace not found.');
+		console.log(
+			JSON.stringify({ event: 'workspace_created', requestId: context.var.requestId, selected })
+		);
+		const body: { workspace: WorkspaceSummary; active: boolean } = { workspace, active: selected };
+		return respond({ status: 201, body: JSON.stringify(body) });
+	});
+
 	// Makes a workspace the session's active one. The membership check, not the request, grants
 	// access; another workspace's ID answers like an unknown one.
 	app.post('/workspaces/active', async (context) => {
@@ -608,7 +653,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	app.patch('/workspace', async (context) => {
 		sessionOnly(context, 'Rename the workspace from the Flared app.');
 		const { tenantId, role } = context.var;
-		const { name } = parseRenameWorkspace(await readJson(context.req.raw));
+		const { name } = parseWorkspaceName(await readJson(context.req.raw));
 		if (!(await renameTenant(identity, tenantId, name)))
 			throw new ApiError('NOT_FOUND', 'Workspace not found.');
 		const workspace: Workspace = { id: tenantId, name, role };
@@ -729,7 +774,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	app.all('/export/daily-dimensions', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/me', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/workspace', (context) => methodNotAllowed(context, 'GET, PATCH'));
-	app.all('/workspaces', (context) => methodNotAllowed(context, 'GET'));
+	app.all('/workspaces', (context) => methodNotAllowed(context, 'GET, POST'));
 	app.all('/workspaces/active', (context) => methodNotAllowed(context, 'POST'));
 	app.all('/icons/:hostname', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/tokens', (context) => methodNotAllowed(context, 'GET, POST'));

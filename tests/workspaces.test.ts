@@ -14,7 +14,7 @@ import {
 	setActiveWorkspace,
 	setTenantSuspension
 } from '../packages/data/src/tenancy';
-import { authenticateBearer, createApi } from '../packages/server/src/api';
+import { authenticateBearer, createApi, type ApiDependencies } from '../packages/server/src/api';
 import {
 	createApiTokenPlugin,
 	createToken,
@@ -83,9 +83,10 @@ async function count(table: string, ...values: string[]): Promise<number> {
 }
 
 // The test session in x-test-session, or the bearer token.
-function api() {
+function api(extra: Pick<ApiDependencies, 'createWorkspace'> = {}) {
 	const tokenAuth = auth();
 	return createApi({
+		...extra,
 		identity: identity(),
 		routing: env.WORKSPACES_ROUTING,
 		analytics: { 'analytics-1': env.WORKSPACES_ANALYTICS },
@@ -459,6 +460,66 @@ describe('workspace API', () => {
 		expect((await choose('sess-1', 'ws-b')).status).toBe(204);
 		expect((await call('GET', '/workspace', session('sess-1'))).status).toBe(200);
 		await setTenantSuspension(identity(), 'ws-b', null, 31);
+	});
+
+	it('creates a workspace through the installation’s hook and opens it', async () => {
+		await addUser('fay');
+		await addSession('sess-fay', 'fay');
+		await addWorkspace('ws-fay', 'Fay', 'fay', 40);
+		const calls: { userId: string; name: string }[] = [];
+		const created = api({
+			createWorkspace: async ({ userId, name, now }) => {
+				calls.push({ userId, name });
+				if (name === 'Full') return { status: 'limit', message: 'Choose a plan for Side first.' };
+				if (name === 'Busy') return { status: 'unavailable' };
+				await createTenant(identity(), {
+					id: 'ws-side',
+					name,
+					ownerUserId: userId,
+					analyticsShardId: 'analytics-1',
+					limits,
+					now
+				});
+				return { status: 'created', tenantId: 'ws-side' };
+			}
+		});
+		const post = (deps: ReturnType<typeof api>, headers: Record<string, string>, body: unknown) =>
+			deps.fetch(
+				new Request(`${origin}/v1/workspaces`, {
+					method: 'POST',
+					headers: { ...headers, 'content-type': 'application/json' },
+					body: JSON.stringify(body)
+				})
+			);
+
+		// A single-workspace installation has no hook.
+		const none = await post(api(), session('sess-fay'), { name: 'Side' });
+		expect([none.status, await code(none)]).toEqual([404, 'NOT_FOUND']);
+		const crossSite = await post(created, { 'x-test-session': 'sess-fay' }, { name: 'Side' });
+		expect([crossSite.status, await code(crossSite)]).toEqual([403, 'ORIGIN_REJECTED']);
+		const invalid = await post(created, session('sess-fay'), { name: ' ' });
+		expect([invalid.status, await code(invalid)]).toEqual([422, 'INVALID_INPUT']);
+		const limit = await post(created, session('sess-fay'), { name: 'Full' });
+		expect(limit.status).toBe(403);
+		expect(await limit.json()).toMatchObject({
+			error: { code: 'WORKSPACE_LIMIT_REACHED', message: 'Choose a plan for Side first.' }
+		});
+		const busy = await post(created, session('sess-fay'), { name: 'Busy' });
+		expect([busy.status, await code(busy)]).toEqual([503, 'SERVICE_UNAVAILABLE']);
+
+		const response = await post(created, session('sess-fay'), { name: '  Side   project ' });
+		expect(response.status).toBe(201);
+		expect(await response.json()).toEqual({
+			workspace: { id: 'ws-side', name: 'Side project', role: 'owner', status: 'pending' },
+			active: true
+		});
+		expect(calls.at(-1)).toEqual({ userId: 'fay', name: 'Side project' });
+		const listed = (await (await call('GET', '/workspaces', session('sess-fay'))).json()) as {
+			workspaces: { id: string }[];
+			activeId: string;
+		};
+		expect(listed.workspaces.map((item) => item.id)).toEqual(['ws-fay', 'ws-side']);
+		expect(listed.activeId).toBe('ws-side');
 	});
 });
 

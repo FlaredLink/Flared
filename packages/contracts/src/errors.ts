@@ -25,6 +25,8 @@ export const errorStatus = {
 	WORKSPACE_SUSPENDED: 403,
 	// A dashboard tab sent a change for a workspace the session no longer acts in.
 	WORKSPACE_CHANGED: 409,
+	// The person cannot create another workspace now; the message says why.
+	WORKSPACE_LIMIT_REACHED: 403,
 	LINK_BLOCKED: 409,
 	NOT_FOUND: 404,
 	METHOD_NOT_ALLOWED: 405,

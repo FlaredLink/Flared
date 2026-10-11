@@ -47,7 +47,8 @@ export function normalizeWorkspaceName(value: unknown): string | null {
 	return name;
 }
 
-export function parseRenameWorkspace(body: unknown): { name: string } {
+// The body of PATCH /v1/workspace and POST /v1/workspaces.
+export function parseWorkspaceName(body: unknown): { name: string } {
 	if (!isRecord(body)) throw new LinkInputError('body', 'Send a JSON object.');
 	for (const key of Object.keys(body))
 		if (key !== 'name') throw new LinkInputError(key, `Unknown field: ${key}.`);

@@ -82,6 +82,7 @@ const sessionOnly = [
 	'GET /workspace',
 	'PATCH /workspace',
 	'GET /workspaces',
+	'POST /workspaces',
 	'POST /workspaces/active',
 	'GET /icons/{hostname}'
 ];
