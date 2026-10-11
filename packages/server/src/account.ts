@@ -186,12 +186,13 @@ export async function deleteAccount(
 			return failure('NO_WORKSPACE', 'Your account has no workspace.');
 		return accepted();
 	}
-	// Members would lose a workspace they use. The owner removes them or deletes that workspace.
+	// Members would lose a workspace they use. The owner makes a member the owner, removes the
+	// members, or deletes that workspace.
 	const shared = await ownedWorkspacesWithMembers(identity, principal.userId);
 	if (shared.length > 0)
 		return failure(
 			'WORKSPACE_HAS_MEMBERS',
-			`${shared.map((name) => `“${name}”`).join(', ')} ${shared.length === 1 ? 'has' : 'have'} other members. Remove them in Settings, or delete ${shared.length === 1 ? 'that workspace' : 'those workspaces'}, before you delete your account.`
+			`${shared.map((name) => `“${name}”`).join(', ')} ${shared.length === 1 ? 'has' : 'have'} other members. In Settings, make a member the owner or remove the members, or delete ${shared.length === 1 ? 'that workspace' : 'those workspaces'}, before you delete your account.`
 		);
 	for (const workspace of owned) {
 		if (workspace.status === 'suspended')

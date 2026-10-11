@@ -19,13 +19,21 @@ export interface WorkspaceInvite {
 	expiresAt: string;
 }
 
+// The owner's open offer to make a member the owner.
+export interface OwnershipOffer {
+	userId: string;
+	email: string;
+	expiresAt: string;
+}
+
 // invites is empty for a member: only the owner sees and manages them. used counts members and
-// open invites against limit.
+// open invites against limit. transfer is shown to the owner and to the member it names only.
 export interface MemberPage {
 	members: WorkspaceMember[];
 	invites: WorkspaceInvite[];
 	used: number;
 	limit: number;
+	transfer: OwnershipOffer | null;
 }
 
 // What an invite page shows before the person accepts.
@@ -43,6 +51,7 @@ export interface AcceptedInvite {
 }
 
 export const inviteLifetimeDays = 7;
+export const transferLifetimeDays = 7;
 export const maxEmailLength = 254;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -84,6 +93,16 @@ export function parseInviteToken(body: unknown): { token: string } {
 	return { token };
 }
 
+// The body of POST /v1/workspace/transfer: the member who would become the owner.
+export function parseTransfer(body: unknown): { userId: string } {
+	if (!isRecord(body)) throw new LinkInputError('body', 'Send a JSON object.');
+	onlyKeys(body, 'userId');
+	const { userId } = body;
+	if (typeof userId !== 'string' || userId.length < 1 || userId.length > 64)
+		throw new LinkInputError('userId', 'Choose a member.');
+	return { userId };
+}
+
 const roles: readonly string[] = ['owner', 'member'] satisfies WorkspaceRole[];
 
 function isMember(value: unknown): value is WorkspaceMember {
@@ -108,6 +127,15 @@ export function isWorkspaceInvite(value: unknown): value is WorkspaceInvite {
 	);
 }
 
+export function isOwnershipOffer(value: unknown): value is OwnershipOffer {
+	return (
+		isRecord(value) &&
+		typeof value.userId === 'string' &&
+		typeof value.email === 'string' &&
+		typeof value.expiresAt === 'string'
+	);
+}
+
 export function isMemberPage(value: unknown): value is MemberPage {
 	return (
 		isRecord(value) &&
@@ -116,7 +144,8 @@ export function isMemberPage(value: unknown): value is MemberPage {
 		Array.isArray(value.invites) &&
 		value.invites.every(isWorkspaceInvite) &&
 		typeof value.used === 'number' &&
-		typeof value.limit === 'number'
+		typeof value.limit === 'number' &&
+		(value.transfer === null || isOwnershipOffer(value.transfer))
 	);
 }
 

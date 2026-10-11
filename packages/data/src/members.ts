@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Identity-store records for a workspace's members and the invites that add them.
-import type { D1Database } from '@cloudflare/workers-types/index.ts';
+import type { D1Database, D1PreparedStatement, D1Result } from '@cloudflare/workers-types/index.ts';
 import type { MembershipRole } from './tenancy';
 
 export interface MemberRow {
@@ -278,7 +278,8 @@ export async function acceptInvite(
 }
 
 // Removes a member, never the owner, in one batch: the member's tokens and connected apps for
-// the workspace, the session and sign-in pointers to it, then the membership. Every statement
+// the workspace, the session and sign-in pointers to it, an offer of the workspace to them, then
+// the membership. Every statement
 // checks the member role first, so a batch for the owner changes nothing. The member's other
 // workspaces and credentials stay.
 export async function removeMember(
@@ -295,6 +296,7 @@ export async function removeMember(
 			`DELETE FROM "oauthConsent" WHERE "referenceId" = ?1 AND "userId" = ?2 AND ${isMember}`,
 			`DELETE FROM session_workspaces WHERE tenant_id = ?1 AND session_id IN (SELECT id FROM "session" WHERE "userId" = ?2) AND ${isMember}`,
 			`DELETE FROM user_workspace_preferences WHERE user_id = ?2 AND tenant_id = ?1 AND ${isMember}`,
+			`DELETE FROM tenant_transfers WHERE tenant_id = ?1 AND to_user_id = ?2 AND ${isMember}`,
 			"DELETE FROM tenant_memberships WHERE tenant_id = ?1 AND user_id = ?2 AND role = 'member'"
 		].map((statement) => db.prepare(statement).bind(input.tenantId, input.userId))
 	);
@@ -317,4 +319,129 @@ export async function ownedWorkspacesWithMembers(
 		.bind(userId)
 		.all<{ name: unknown }>();
 	return results.map((row) => text(row.name, 'name'));
+}
+
+export interface TransferOffer {
+	// The member the owner offered the workspace to.
+	userId: string;
+	email: string;
+	expiresAt: number;
+}
+
+// An offer counts only while its sender owns the workspace and its receiver is a member of it.
+const openOffer = `FROM tenant_transfers x
+	JOIN tenant_memberships o ON o.tenant_id = x.tenant_id AND o.user_id = x.from_user_id AND o.role = 'owner'
+	JOIN tenant_memberships n ON n.tenant_id = x.tenant_id AND n.user_id = x.to_user_id AND n.role = 'member'`;
+
+// The workspace's open offer of ownership, or null.
+export async function readTransfer(
+	db: D1Database,
+	tenantId: string,
+	now: number
+): Promise<TransferOffer | null> {
+	const row = await db
+		.prepare(
+			`SELECT x.to_user_id, u.email, x.expires_at ${openOffer} JOIN "user" u ON u.id = x.to_user_id
+			WHERE x.tenant_id = ? AND x.expires_at > ?`
+		)
+		.bind(tenantId, now)
+		.first<Record<string, unknown>>();
+	if (!row) return null;
+	return {
+		userId: text(row.to_user_id, 'user'),
+		email: text(row.email, 'email'),
+		expiresAt: count(row.expires_at, 'expiry')
+	};
+}
+
+// Records the owner's offer of the workspace to a member, in place of an earlier offer. False
+// when the sender is not the owner, the receiver is not a member, or the workspace is being
+// deleted.
+export async function offerTransfer(
+	db: D1Database,
+	input: { tenantId: string; fromUserId: string; toUserId: string; now: number; expiresAt: number }
+): Promise<boolean> {
+	const row = await db
+		.prepare(
+			`INSERT INTO tenant_transfers (tenant_id, from_user_id, to_user_id, created_at, expires_at)
+			SELECT ?1, ?2, ?3, ?4, ?5
+			WHERE EXISTS (SELECT 1 FROM tenant_memberships WHERE tenant_id = ?1 AND user_id = ?2 AND role = 'owner')
+			AND EXISTS (SELECT 1 FROM tenant_memberships WHERE tenant_id = ?1 AND user_id = ?3 AND role = 'member')
+			AND NOT EXISTS (SELECT 1 FROM tenant_deletions WHERE tenant_id = ?1)
+			ON CONFLICT (tenant_id) DO UPDATE SET from_user_id = excluded.from_user_id,
+				to_user_id = excluded.to_user_id, created_at = excluded.created_at, expires_at = excluded.expires_at
+			RETURNING tenant_id`
+		)
+		.bind(input.tenantId, input.fromUserId, input.toUserId, input.now, input.expiresAt)
+		.first();
+	return row !== null;
+}
+
+// Ends the workspace's offer: the owner withdraws it, or the member it names declines it.
+export async function cancelTransfer(
+	db: D1Database,
+	input: { tenantId: string; userId: string; owner: boolean }
+): Promise<boolean> {
+	const result = await db
+		.prepare(
+			`DELETE FROM tenant_transfers WHERE tenant_id = ?1 AND ${input.owner ? 'from_user_id' : 'to_user_id'} = ?2`
+		)
+		.bind(input.tenantId, input.userId)
+		.run();
+	return result.meta.changes === 1;
+}
+
+export interface TransferInput {
+	tenantId: string;
+	// The member who accepts the offer.
+	toUserId: string;
+	now: number;
+}
+
+// The statements that hand the workspace to the member its open offer names, for one batch. The
+// first demotes the owner who made the offer, while the offer is open, the workspace is active,
+// and condition holds. The second promotes the member only once the workspace has no owner, so
+// the two happen together or not at all, and the one-owner index never sees two owners. The
+// third deletes the offer. condition is SQL over the same parameters (?1 the tenant, ?2 the
+// member, ?3 the time), so an edition adds its own rules to the same check; it is read once,
+// before anything changes.
+export function ownershipTransferStatements(
+	db: D1Database,
+	input: TransferInput,
+	condition = '1'
+): D1PreparedStatement[] {
+	const open = `EXISTS (SELECT 1 ${openOffer} JOIN tenant_policy p ON p.tenant_id = x.tenant_id
+		WHERE x.tenant_id = ?1 AND x.to_user_id = ?2 AND x.expires_at > ?3 AND p.suspended_at IS NULL
+		AND NOT EXISTS (SELECT 1 FROM tenant_deletions d WHERE d.tenant_id = ?1)) AND (${condition})`;
+	const { tenantId, toUserId, now } = input;
+	return [
+		db
+			.prepare(
+				`UPDATE tenant_memberships SET role = 'member' WHERE tenant_id = ?1 AND role = 'owner'
+				AND user_id = (SELECT from_user_id FROM tenant_transfers WHERE tenant_id = ?1) AND ${open}`
+			)
+			.bind(tenantId, toUserId, now),
+		db
+			.prepare(
+				`UPDATE tenant_memberships SET role = 'owner' WHERE tenant_id = ?1 AND user_id = ?2 AND role = 'member'
+				AND NOT EXISTS (SELECT 1 FROM tenant_memberships WHERE tenant_id = ?1 AND role = 'owner')
+				AND EXISTS (SELECT 1 FROM tenant_transfers WHERE tenant_id = ?1 AND to_user_id = ?2)`
+			)
+			.bind(tenantId, toUserId),
+		db
+			.prepare(
+				`DELETE FROM tenant_transfers WHERE tenant_id = ?1 AND to_user_id = ?2
+				AND EXISTS (SELECT 1 FROM tenant_memberships WHERE tenant_id = ?1 AND user_id = ?2 AND role = 'owner')`
+			)
+			.bind(tenantId, toUserId)
+	];
+}
+
+// True when the batch handed over the workspace: the promotion changed one row.
+export function transferred(results: D1Result[], offset = 0): boolean {
+	return results[offset + 1]?.meta.changes === 1;
+}
+
+export async function transferOwnership(db: D1Database, input: TransferInput): Promise<boolean> {
+	return transferred(await db.batch(ownershipTransferStatements(db, input)));
 }

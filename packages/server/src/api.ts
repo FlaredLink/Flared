@@ -51,22 +51,30 @@ import {
 	inviteLifetimeDays,
 	parseInvite,
 	parseInviteToken,
+	parseTransfer,
+	transferLifetimeDays,
 	type AcceptedInvite,
 	type InvitePreview,
 	type MemberPage,
+	type OwnershipOffer,
 	type WorkspaceInvite
 } from '@flared/contracts/members';
 import {
 	acceptInvite,
 	cancelInvite,
+	cancelTransfer,
 	removeMember,
 	countInviteEmail,
 	createInvite,
 	listInvites,
 	listMembers,
+	offerTransfer,
 	readInvite,
 	readInviteEmail,
-	readMemberCount
+	readMemberCount,
+	readTransfer,
+	transferOwnership,
+	type TransferInput
 } from '@flared/data/members';
 import { defaultQrSize, maxQrSize, minQrSize, qrPng, qrSvg } from '@flared/client/qr';
 import { knownAssistant, type ConnectedApp, type ConnectedAppPage } from '@flared/contracts/oauth';
@@ -85,7 +93,13 @@ import {
 } from './auth/api-tokens';
 import { freshUntil } from './auth/session';
 import { noteLimitUsage } from './notices';
-import { hashInviteToken, inviteEmail, newInviteToken, type InviteSettings } from './members';
+import {
+	hashInviteToken,
+	inviteEmail,
+	newInviteToken,
+	transferEmail,
+	type InviteSettings
+} from './members';
 import { resolveTenant } from './tenancy';
 import {
 	addDomain,
@@ -153,16 +167,25 @@ export interface ApiDependencies {
 	// Site icons for the dashboard. Without a store, every icon answers 404 and the dashboard
 	// shows a letter tile.
 	icons?: IconSettings;
+	// Invites by email. Without them, the invite routes answer 404; members are still listed,
+	// and an offer of the workspace goes out without an email.
+	invites?: InviteSettings;
 	// Creates a workspace that the user owns. A single-workspace installation has none, and
 	// POST /v1/workspaces answers 404.
-	// Invites by email. Without them, the invite routes answer 404; members are still listed.
-	invites?: InviteSettings;
 	createWorkspace?: (input: {
 		userId: string;
 		name: string;
 		now: number;
 	}) => Promise<WorkspaceCreation>;
+	// Hands the workspace to the member who accepts the owner's offer, with the edition's own
+	// rules. Without it, the core transfer runs with none.
+	transferOwnership?: (input: TransferInput) => Promise<OwnershipTransfer>;
 }
+
+// invalid: no open offer names the member. limit: the member cannot own this workspace now, for
+// the reason in message.
+export type OwnershipTransfer =
+	{ status: 'transferred' } | { status: 'invalid' } | { status: 'limit'; message: string };
 
 // limit: the person cannot create another workspace now, for the reason in message.
 // unavailable: the installation cannot take a new workspace at the moment.
@@ -812,10 +835,11 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		const principal = sessionOnly(context, 'See members in the Flared app.');
 		const { tenantId, role } = context.var;
 		const time = now();
-		const [members, invites, counted] = await Promise.all([
+		const [members, invites, counted, offer] = await Promise.all([
 			listMembers(identity, tenantId),
 			role === 'owner' ? listInvites(identity, tenantId, time) : Promise.resolve([]),
-			readMemberCount(identity, tenantId, time)
+			readMemberCount(identity, tenantId, time),
+			readTransfer(identity, tenantId, time)
 		]);
 		if (!counted) throw new ApiError('NOT_FOUND', 'Workspace not found.');
 		const page: MemberPage = {
@@ -830,7 +854,11 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 				inviteSummary(invite.id, invite.email, invite.createdAt, invite.expiresAt)
 			),
 			used: counted.used,
-			limit: counted.limit
+			limit: counted.limit,
+			transfer:
+				offer && (role === 'owner' || offer.userId === principal.userId)
+					? offerSummary(offer.userId, offer.email, offer.expiresAt)
+					: null
 		};
 		return respond({ status: 200, body: JSON.stringify(page) });
 	});
@@ -938,11 +966,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	app.post('/workspace/leave', async (context) => {
 		const principal = sessionOnly(context, 'Leave the workspace in the Flared app.');
 		const { tenantId, role, requestId } = context.var;
-		if (context.req.header(workspaceHeader) !== tenantId)
-			throw new ApiError(
-				'WORKSPACE_CHANGED',
-				'You switched workspaces in another tab. Reload the page to continue.'
-			);
+		requireShown(context);
 		if (role === 'owner')
 			throw new ApiError(
 				'OWNER_CANNOT_LEAVE',
@@ -952,6 +976,103 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			throw new ApiError('NOT_FOUND', 'Workspace not found.');
 		console.log(JSON.stringify({ event: 'workspace_left', requestId }));
 		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
+	});
+
+	// The owner offers the workspace to a member, who accepts it on the members page. A new offer
+	// replaces an open one. Giving the workspace away needs a recent sign-in, as deleting it does.
+	app.post('/workspace/transfer', async (context) => {
+		const principal = sessionOnly(context, 'Transfer the workspace in the Flared app.');
+		ownerOnly(context, 'Only the workspace owner can make a member the owner.');
+		const { tenantId, requestId } = context.var;
+		requireShown(context);
+		const time = now();
+		if (freshUntil(principal, time) === null)
+			throw new ApiError('REAUTH_REQUIRED', 'Sign in again to make a member the owner.');
+		const { userId } = parseTransfer(await readJson(context.req.raw));
+		const expiresAt = time + transferLifetimeDays * dayMs;
+		if (
+			!(await offerTransfer(identity, {
+				tenantId,
+				fromUserId: principal.userId,
+				toUserId: userId,
+				now: time,
+				expiresAt
+			}))
+		)
+			throw new ApiError('NOT_FOUND', 'Member not found.');
+		const [workspaceName, people] = await Promise.all([
+			readTenantName(identity, tenantId),
+			identity
+				.prepare('SELECT id, email FROM "user" WHERE id IN (?, ?)')
+				.bind(principal.userId, userId)
+				.all<{ id: unknown; email: unknown }>()
+		]);
+		const emailOf = (id: string) => {
+			const email = people.results.find((row) => row.id === id)?.email;
+			return typeof email === 'string' ? email : null;
+		};
+		const [from, to] = [emailOf(principal.userId), emailOf(userId)];
+		if (to === null) throw new ApiError('NOT_FOUND', 'Member not found.');
+		// The offer stands without the email: the member also sees it on the members page.
+		let emailSent = false;
+		const settings = dependencies.invites;
+		if (settings && workspaceName !== null && from !== null)
+			try {
+				if (await countInviteEmail(identity, tenantId, time, settings.emailsPerDay ?? 20)) {
+					await settings.email.send(
+						transferEmail({ to, workspaceName, from, url: settings.membersUrl, expiresAt })
+					);
+					emailSent = true;
+				}
+			} catch {
+				console.error(JSON.stringify({ event: 'transfer_email_failed', requestId }));
+			}
+		console.log(JSON.stringify({ event: 'transfer_offered', requestId, emailSent }));
+		const body: { transfer: OwnershipOffer; emailSent: boolean } = {
+			transfer: offerSummary(userId, to, expiresAt),
+			emailSent
+		};
+		return respond({ status: 201, body: JSON.stringify(body) });
+	});
+
+	// The owner withdraws the offer, or the member it names declines it.
+	app.delete('/workspace/transfer', async (context) => {
+		const principal = sessionOnly(context, 'Transfer the workspace in the Flared app.');
+		const { tenantId, role, requestId } = context.var;
+		requireShown(context);
+		if (
+			!(await cancelTransfer(identity, {
+				tenantId,
+				userId: principal.userId,
+				owner: role === 'owner'
+			}))
+		)
+			throw new ApiError('NOT_FOUND', 'Offer not found.');
+		console.log(JSON.stringify({ event: 'transfer_cancelled', requestId }));
+		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
+	});
+
+	// The member the offer names becomes the owner, and the owner becomes a member.
+	app.post('/workspace/transfer/accept', async (context) => {
+		const principal = sessionOnly(context, 'Accept the workspace in the Flared app.');
+		const { tenantId, requestId } = context.var;
+		requireShown(context);
+		if (await accountDeletionRunning(identity, principal.userId))
+			throw new ApiError('ACCOUNT_DELETING', 'This account is being deleted.');
+		const input: TransferInput = { tenantId, toUserId: principal.userId, now: now() };
+		const result = dependencies.transferOwnership
+			? await dependencies.transferOwnership(input)
+			: (await transferOwnership(identity, input))
+				? ({ status: 'transferred' } as const)
+				: ({ status: 'invalid' } as const);
+		if (result.status === 'limit') throw new ApiError('WORKSPACE_LIMIT_REACHED', result.message);
+		if (result.status === 'invalid')
+			throw new ApiError('NOT_FOUND', 'This offer has ended or was withdrawn.');
+		const name = await readTenantName(identity, tenantId);
+		if (name === null) throw new ApiError('NOT_FOUND', 'Workspace not found.');
+		console.log(JSON.stringify({ event: 'transfer_accepted', requestId }));
+		const workspace: Workspace = { id: tenantId, name, role: 'owner' };
+		return respond({ status: 200, body: JSON.stringify({ workspace }) });
 	});
 
 	function inviteSettings(): InviteSettings {
@@ -1057,6 +1178,8 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	app.all('/members', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/members/:userId', (context) => methodNotAllowed(context, 'DELETE'));
 	app.all('/workspace/leave', (context) => methodNotAllowed(context, 'POST'));
+	app.all('/workspace/transfer', (context) => methodNotAllowed(context, 'POST, DELETE'));
+	app.all('/workspace/transfer/accept', (context) => methodNotAllowed(context, 'POST'));
 	app.all('/invites', (context) => methodNotAllowed(context, 'POST'));
 	app.all('/invites/lookup', (context) => methodNotAllowed(context, 'POST'));
 	app.all('/invites/accept', (context) => methodNotAllowed(context, 'POST'));
@@ -1116,6 +1239,20 @@ function sessionOnly(
 
 function ownerOnly(context: ApiContext, message: string): void {
 	if (context.var.role !== 'owner') throw new ApiError('OWNER_REQUIRED', message);
+}
+
+// Changes to who belongs to a workspace must name the workspace the page shows, so a tab left on
+// another workspace cannot make them here.
+function requireShown(context: ApiContext): void {
+	if (context.req.header(workspaceHeader) !== context.var.tenantId)
+		throw new ApiError(
+			'WORKSPACE_CHANGED',
+			'You switched workspaces in another tab. Reload the page to continue.'
+		);
+}
+
+function offerSummary(userId: string, email: string, expiresAt: number): OwnershipOffer {
+	return { userId, email, expiresAt: new Date(expiresAt).toISOString() };
 }
 
 function inviteSummary(

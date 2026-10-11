@@ -222,3 +222,89 @@ export async function removeMember(
 		return { ok: false, message: failed };
 	}
 }
+
+export type TransferOutcome =
+	{ ok: true; emailSent: boolean } | { ok: false; reauth: boolean; message: string };
+
+// Messages the API writes for the person: what to change before the transfer can go on.
+const transferCodes = new Set([
+	'NOT_FOUND',
+	'OWNER_REQUIRED',
+	'WORKSPACE_CHANGED',
+	'WORKSPACE_SUSPENDED',
+	'WORKSPACE_LIMIT_REACHED',
+	'ACCOUNT_DELETING'
+]);
+
+function transferFailure(body: unknown, failed: string): TransferOutcome {
+	const { code, message } = errorOf(body);
+	if (code === 'REAUTH_REQUIRED') return { ok: false, reauth: true, message: '' };
+	return {
+		ok: false,
+		reauth: false,
+		message:
+			typeof code === 'string' && transferCodes.has(code) && typeof message === 'string'
+				? message
+				: failed
+	};
+}
+
+// The owner offers the workspace to a member. A new offer replaces an open one.
+export async function offerTransfer(
+	apiBase: string,
+	userId: string,
+	workspace: Record<string, string>
+): Promise<TransferOutcome> {
+	const failed = 'We could not send the offer. Try again.';
+	try {
+		const response = await fetch(`${apiBase}/workspace/transfer`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json', ...workspace },
+			body: JSON.stringify({ userId })
+		});
+		const body: unknown = await response.json().catch(() => null);
+		if (response.status === 201) {
+			const emailSent: unknown =
+				typeof body === 'object' && body !== null ? Reflect.get(body, 'emailSent') : null;
+			return { ok: true, emailSent: emailSent === true };
+		}
+		return transferFailure(body, failed);
+	} catch {
+		return { ok: false, reauth: false, message: failed };
+	}
+}
+
+// The owner withdraws the offer, or the member it names declines it. An offer that already
+// ended counts as done.
+export async function cancelTransfer(
+	apiBase: string,
+	workspace: Record<string, string>
+): Promise<boolean> {
+	try {
+		const response = await fetch(`${apiBase}/workspace/transfer`, {
+			method: 'DELETE',
+			headers: workspace
+		});
+		return response.status === 204 || response.status === 404;
+	} catch {
+		return false;
+	}
+}
+
+// The member the offer names becomes the owner of the workspace the page shows.
+export async function acceptTransfer(
+	apiBase: string,
+	workspace: Record<string, string>
+): Promise<TransferOutcome> {
+	const failed = 'We could not make you the owner. Try again.';
+	try {
+		const response = await fetch(`${apiBase}/workspace/transfer/accept`, {
+			method: 'POST',
+			headers: workspace
+		});
+		if (response.ok) return { ok: true, emailSent: false };
+		return transferFailure(await response.json().catch(() => null), failed);
+	} catch {
+		return { ok: false, reauth: false, message: failed };
+	}
+}

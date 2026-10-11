@@ -5,8 +5,9 @@ import { env } from 'cloudflare:workers';
 import { applyD1Migrations } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { deleteIdentityRecords, deleteMemberOnlyUser } from '../packages/data/src/deletions';
+import { ownershipTransferStatements, transferred } from '../packages/data/src/members';
 import { createTenant, type PolicyLimits } from '../packages/data/src/tenancy';
-import { createApi } from '../packages/server/src/api';
+import { createApi, type ApiDependencies } from '../packages/server/src/api';
 import { workspaceHeader } from '../packages/contracts/src/workspace';
 import type { EmailContent } from '../packages/server/src/email/transport';
 import { projectPolicy } from '../packages/server/src/tenancy';
@@ -60,7 +61,7 @@ async function addWorkspace(tenantId: string, name: string, ownerUserId: string,
 	);
 }
 
-function api(emailsPerDay?: number) {
+function api(emailsPerDay?: number, extra: Partial<ApiDependencies> = {}) {
 	return createApi({
 		identity: identity(),
 		routing: env.MEMBERS_ROUTING,
@@ -75,6 +76,7 @@ function api(emailsPerDay?: number) {
 				}
 			},
 			inviteUrl: (token) => `${origin}/app/invite#${token}`,
+			membersUrl: `${origin}/app/settings?tab=members`,
 			emailsPerDay
 		},
 		authenticate: async (request) => {
@@ -90,9 +92,10 @@ function api(emailsPerDay?: number) {
 				kind: 'session',
 				userId: row.userId,
 				sessionId,
-				signedInAt: new Date().toISOString()
+				signedInAt: request.headers.get('x-test-signed-in') ?? new Date(clock).toISOString()
 			};
-		}
+		},
+		...extra
 	});
 }
 
@@ -356,5 +359,145 @@ describe('removal and leaving', () => {
 		expect(await rows("tenant_memberships WHERE user_id = 'oli'")).toBe(0);
 		expect(await rows('"session" WHERE "userId" = \'oli\'')).toBe(0);
 		expect(await rows("tenant_memberships WHERE tenant_id = 'ws-team'")).toBe(1);
+	});
+});
+
+describe('ownership transfer', () => {
+	const shown = { [workspaceHeader]: 'ws-move' };
+	const offer = (
+		userId: string,
+		target: string,
+		app = api(),
+		extra: Record<string, string> = shown
+	) => call(userId, 'POST', '/workspace/transfer', { userId: target }, app, extra);
+	const acceptOffer = (userId: string, app = api()) =>
+		call(userId, 'POST', '/workspace/transfer/accept', undefined, app, shown);
+	const endOffer = (userId: string) =>
+		call(userId, 'DELETE', '/workspace/transfer', undefined, api(), shown);
+	const role = async (userId: string) =>
+		(
+			await identity()
+				.prepare("SELECT role FROM tenant_memberships WHERE tenant_id = 'ws-move' AND user_id = ?")
+				.bind(userId)
+				.first<{ role: string }>()
+		)?.role ?? null;
+	const members = (userId: string) => call(userId, 'GET', '/members', undefined, api(), shown);
+
+	beforeAll(async () => {
+		for (const userId of ['ava', 'ben', 'cal']) await addUser(userId);
+		await addWorkspace('ws-move', 'Move', 'ava', 5);
+		await identity()
+			.prepare(
+				"INSERT INTO tenant_memberships (tenant_id, user_id, role, created_at) VALUES ('ws-move', 'ben', 'member', 2), ('ws-move', 'cal', 'member', 3)"
+			)
+			.run();
+		for (const userId of ['ava', 'ben', 'cal'])
+			await identity()
+				.prepare(
+					'INSERT OR REPLACE INTO session_workspaces (session_id, tenant_id, updated_at) VALUES (?, ?, 1)'
+				)
+				.bind(`sess-${userId}`, 'ws-move')
+				.run();
+	});
+
+	it('makes the member who accepts the owner, and the owner a member', async () => {
+		const byMember = await offer('cal', 'ben');
+		expect([byMember.status, byMember.body.error.code]).toEqual([403, 'OWNER_REQUIRED']);
+		const unnamed = await offer('ava', 'ben', api(), {});
+		expect([unnamed.status, unnamed.body.error.code]).toEqual([409, 'WORKSPACE_CHANGED']);
+		const stale = await offer('ava', 'ben', api(), {
+			...shown,
+			'x-test-signed-in': new Date(clock - dayMs).toISOString()
+		});
+		expect([stale.status, stale.body.error.code]).toEqual([403, 'REAUTH_REQUIRED']);
+		expect((await offer('ava', 'nobody')).status).toBe(404);
+		expect((await offer('ava', 'ava')).status).toBe(404);
+
+		const offered = await offer('ava', 'ben');
+		expect(offered.status).toBe(201);
+		expect(offered.body).toMatchObject({
+			transfer: { userId: 'ben', email: 'ben@example.com' },
+			emailSent: true
+		});
+		expect(sent.at(-1)).toMatchObject({
+			to: 'ben@example.com',
+			subject: 'Become the owner of "Move" on Flared'
+		});
+		expect(sent.at(-1)?.text).toContain(`${origin}/app/settings?tab=members`);
+		// The owner and the member it names see the offer; other members do not.
+		expect((await members('ava')).body.transfer.userId).toBe('ben');
+		expect((await members('ben')).body.transfer.userId).toBe('ben');
+		expect((await members('cal')).body.transfer).toBeNull();
+		// Only the member it names can accept it.
+		expect((await acceptOffer('cal')).status).toBe(404);
+		expect((await acceptOffer('ava')).status).toBe(404);
+
+		const accepted = await acceptOffer('ben');
+		expect(accepted.status).toBe(200);
+		expect(accepted.body.workspace).toEqual({ id: 'ws-move', name: 'Move', role: 'owner' });
+		expect([await role('ava'), await role('ben'), await role('cal')]).toEqual([
+			'member',
+			'owner',
+			'member'
+		]);
+		expect((await members('ben')).body.transfer).toBeNull();
+		expect((await acceptOffer('ben')).status).toBe(404);
+		// The roles apply at once: the former owner can no longer rename the workspace.
+		const rename = await call('ava', 'PATCH', '/workspace', { name: 'Mine' }, api(), shown);
+		expect([rename.status, rename.body.error.code]).toEqual([403, 'OWNER_REQUIRED']);
+		// The new owner can give it back.
+		expect((await offer('ben', 'ava')).status).toBe(201);
+		expect((await acceptOffer('ava')).status).toBe(200);
+		expect([await role('ava'), await role('ben')]).toEqual(['owner', 'member']);
+	});
+
+	it('ends an offer that is withdrawn, declined, expired, or for a removed member', async () => {
+		expect((await offer('ava', 'ben')).status).toBe(201);
+		expect((await endOffer('cal')).status).toBe(404);
+		expect((await endOffer('ava')).status).toBe(204);
+		expect((await acceptOffer('ben')).status).toBe(404);
+
+		expect((await offer('ava', 'ben')).status).toBe(201);
+		expect((await endOffer('ben')).status).toBe(204);
+		expect((await acceptOffer('ben')).status).toBe(404);
+
+		// A new offer replaces the open one.
+		expect((await offer('ava', 'ben')).status).toBe(201);
+		expect((await offer('ava', 'cal')).status).toBe(201);
+		expect((await acceptOffer('ben')).status).toBe(404);
+		clock += 7 * dayMs + 1;
+		expect((await acceptOffer('cal')).status).toBe(404);
+		expect((await members('ava')).body.transfer).toBeNull();
+
+		// A removed member's offer does not come back when they join again.
+		expect((await offer('ava', 'cal')).status).toBe(201);
+		expect((await call('ava', 'DELETE', '/members/cal')).status).toBe(204);
+		await identity()
+			.prepare(
+				"INSERT INTO tenant_memberships (tenant_id, user_id, role, created_at) VALUES ('ws-move', 'cal', 'member', 4)"
+			)
+			.run();
+		expect((await members('ava')).body.transfer).toBeNull();
+		expect([await role('ava'), await role('cal')]).toEqual(['owner', 'member']);
+	});
+
+	it('changes nothing when the edition’s condition fails', async () => {
+		expect((await offer('ava', 'ben')).status).toBe(201);
+		const db = identity();
+		const input = { tenantId: 'ws-move', toUserId: 'ben', now: clock };
+		expect(transferred(await db.batch(ownershipTransferStatements(db, input, '0')))).toBe(false);
+		expect([await role('ava'), await role('ben')]).toEqual(['owner', 'member']);
+		expect((await members('ben')).body.transfer.userId).toBe('ben');
+
+		const limited = api(undefined, {
+			transferOwnership: async () => ({ status: 'limit', message: 'You own a Free workspace.' })
+		});
+		const refused = await acceptOffer('ben', limited);
+		expect([refused.status, refused.body.error]).toMatchObject([
+			403,
+			{ code: 'WORKSPACE_LIMIT_REACHED', message: 'You own a Free workspace.' }
+		]);
+		expect(await role('ava')).toBe('owner');
+		expect((await endOffer('ava')).status).toBe(204);
 	});
 });

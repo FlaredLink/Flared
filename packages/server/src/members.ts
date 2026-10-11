@@ -8,6 +8,9 @@ export interface InviteSettings {
 	// The page that accepts an invite, with the token in the fragment, such as
 	// https://example.com/app/invite#<token>.
 	inviteUrl(token: string): string;
+	// The page that lists the members, where a member accepts an offer of the workspace, such as
+	// https://example.com/app/settings?tab=members.
+	membersUrl: string;
 	// Invite emails each workspace may send in a UTC day. 20 when absent.
 	emailsPerDay?: number;
 }
@@ -63,6 +66,40 @@ export function inviteEmail(input: {
 	return {
 		to,
 		subject: `Join the workspace "${workspaceName}" on Flared`,
+		text: lines.join('\n\n'),
+		html
+	};
+}
+
+// Tells a member that the owner offered them the workspace. The member accepts on the members
+// page while the workspace is the one shown, so the email says how to get there.
+export function transferEmail(input: {
+	to: string;
+	workspaceName: string;
+	// The owner's address.
+	from: string;
+	url: string;
+	expiresAt: number;
+}): EmailContent {
+	const { to, workspaceName, from, url } = input;
+	const until = new Date(input.expiresAt).toUTCString().replace(/:\d\d GMT$/, ' UTC');
+	const lines = [
+		`${from} wants to make you the owner of the workspace "${workspaceName}" on Flared.`,
+		'The owner manages billing, domains, and members. If you accept, they stay as a member.',
+		`Open the members page: ${url}`,
+		`Choose "${workspaceName}" in the workspace menu, then accept or decline. The offer is open until ${until}.`,
+		'If you did not expect this, ignore this email or decline the offer.'
+	];
+	const html = lines
+		.map((line) =>
+			line.startsWith('Open the members page')
+				? `<p><a href="${escape(url)}">Open the members page</a></p>`
+				: `<p>${escape(line)}</p>`
+		)
+		.join('');
+	return {
+		to,
+		subject: `Become the owner of "${workspaceName}" on Flared`,
 		text: lines.join('\n\n'),
 		html
 	};

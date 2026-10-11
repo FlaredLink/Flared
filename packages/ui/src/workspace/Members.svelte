@@ -1,13 +1,21 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
 	import { maxEmailLength, normalizeEmail, type MemberPage } from '@flared/contracts/members';
-	import { cancelInvite, removeMember, sendInvite } from './client';
+	import {
+		acceptTransfer,
+		cancelInvite,
+		cancelTransfer,
+		offerTransfer,
+		removeMember,
+		sendInvite
+	} from './client';
 	import { shownWorkspace } from './shown';
 	import Glyph from '../icons/Glyph.svelte';
 	import Badge from '../atoms/Badge.svelte';
 	import Button from '../atoms/Button.svelte';
 	import TextInput from '../atoms/TextInput.svelte';
 	import SectionHeader from '../molecules/SectionHeader.svelte';
+	import Callout from '../molecules/Callout.svelte';
 
 	interface Props {
 		page: MemberPage;
@@ -20,19 +28,38 @@
 		owner: boolean;
 		// Called after the person leaves, so the app opens another workspace.
 		onLeft: () => void | Promise<void>;
+		// Called when the owner must sign in again before offering the workspace.
+		onReauthRequired: () => void;
+		// What a change of owner means for billing, for the edition that bills; shown with the
+		// offer to both people.
+		billingNote?: string;
 	}
 
-	let { page, apiBase, onChanged, workspaceName, owner, onLeft }: Props = $props();
+	let {
+		page,
+		apiBase,
+		onChanged,
+		workspaceName,
+		owner,
+		onLeft,
+		onReauthRequired,
+		billingNote
+	}: Props = $props();
 	const workspace = shownWorkspace();
 	const dates = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 
 	let email = $state('');
-	// "invite", "resend:<id>", or "cancel:<id>" while a request runs.
+	// "invite", "resend:<id>", "cancel:<id>", "remove:<userId>", "leave", "offer:<userId>",
+	// "withdraw", or "accept" while a request runs.
 	let pending = $state<string | null>(null);
 	let status = $state('');
 	let error = $state('');
 	let confirmingId = $state<string | null>(null);
 	const full = $derived(page.used >= page.limit);
+	const offeredToYou = $derived(
+		page.transfer !== null &&
+			page.members.some((member) => member.you && member.userId === page.transfer?.userId)
+	);
 
 	async function invite(event: SubmitEvent) {
 		event.preventDefault();
@@ -87,6 +114,53 @@
 		}
 		if (userId === null) return onLeft();
 		status = `Removed ${address}. Their tokens and connected apps for ${workspaceName} stopped working.`;
+		await onChanged();
+	}
+
+	async function offer(userId: string, address: string) {
+		pending = `offer:${userId}`;
+		status = '';
+		error = '';
+		const result = await offerTransfer(apiBase, userId, workspace());
+		pending = null;
+		confirmingId = null;
+		if (!result.ok) {
+			if (result.reauth) onReauthRequired();
+			else error = result.message;
+			return;
+		}
+		status = result.emailSent
+			? `We emailed ${address}. ${workspaceName} changes owner when they accept.`
+			: `${workspaceName} changes owner when ${address} accepts on this page.`;
+		await onChanged();
+	}
+
+	// The owner withdraws the offer, or the member it names declines it.
+	async function endOffer() {
+		pending = 'withdraw';
+		status = '';
+		error = '';
+		const done = await cancelTransfer(apiBase, workspace());
+		pending = null;
+		if (!done) {
+			error = 'We could not end the offer. Try again.';
+			return;
+		}
+		status = owner ? 'You withdrew the offer.' : 'You declined the offer.';
+		await onChanged();
+	}
+
+	async function accept() {
+		pending = 'accept';
+		status = '';
+		error = '';
+		const result = await acceptTransfer(apiBase, workspace());
+		pending = null;
+		if (!result.ok) {
+			error = result.message;
+			return;
+		}
+		status = `You are now the owner of ${workspaceName}.`;
 		await onChanged();
 	}
 
@@ -147,6 +221,44 @@
 			</p>
 		</form>
 	{/if}
+	{#if page.transfer && owner}
+		<Callout tone="info" icon="crown" title="Waiting for {page.transfer.email}">
+			<p>
+				They become the owner when they accept. The offer is open until
+				<time datetime={page.transfer.expiresAt}
+					>{dates.format(new Date(page.transfer.expiresAt))}</time
+				>.
+			</p>
+			<p class="callout-actions">
+				<Button size="sm" disabled={pending !== null} onclick={() => void endOffer()}
+					>{pending === 'withdraw' ? 'Withdrawing…' : 'Withdraw the offer'}</Button
+				>
+			</p>
+		</Callout>
+	{:else if page.transfer && offeredToYou}
+		<Callout tone="info" icon="crown" title="Become the owner of {workspaceName}?">
+			<p>
+				The owner offered you {workspaceName}. The owner manages billing, domains, and members, and
+				can delete the workspace. The current owner stays as a member.
+				{billingNote ?? ''}
+			</p>
+			<p class="callout-actions">
+				<Button
+					size="sm"
+					variant="primary"
+					disabled={pending !== null}
+					onclick={() => void accept()}>{pending === 'accept' ? 'Working…' : 'Accept'}</Button
+				>
+				<Button
+					size="sm"
+					variant="ghost"
+					disabled={pending !== null}
+					onclick={() => void endOffer()}
+					>{pending === 'withdraw' ? 'Declining…' : 'Decline'}</Button
+				>
+			</p>
+		</Callout>
+	{/if}
 	<p class="status" role="status" aria-live="polite">{status}</p>
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
 
@@ -166,7 +278,19 @@
 				</span>
 				{#if member.role === 'member' && (owner || member.you)}
 					<span class="actions">
-						{#if confirmingId === member.userId}
+						{#if confirmingId === `owner:${member.userId}`}
+							<span class="confirm"
+								>Make {member.email} the owner? You become a member. {billingNote ?? ''}</span
+							>
+							<Button
+								size="sm"
+								variant="primary"
+								disabled={pending !== null}
+								onclick={() => void offer(member.userId, member.email)}
+								>{pending === `offer:${member.userId}` ? 'Sending…' : 'Send offer'}</Button
+							>
+							<Button size="sm" variant="ghost" onclick={() => (confirmingId = null)}>Keep</Button>
+						{:else if confirmingId === member.userId}
 							<span class="confirm"
 								>{member.you ? `Leave ${workspaceName}?` : `Remove ${member.email}?`}</span
 							>
@@ -179,6 +303,14 @@
 							>
 							<Button size="sm" variant="ghost" onclick={() => (confirmingId = null)}>Keep</Button>
 						{:else}
+							{#if owner && page.transfer?.userId !== member.userId}
+								<Button
+									size="sm"
+									disabled={pending !== null}
+									aria-label={`Make ${member.email} the owner`}
+									onclick={() => (confirmingId = `owner:${member.userId}`)}>Make owner…</Button
+								>
+							{/if}
 							<Button
 								size="sm"
 								variant="danger-soft"
@@ -279,6 +411,12 @@
 	}
 	.status:empty {
 		display: none;
+	}
+	.callout-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-top: 0.6rem;
 	}
 	.error {
 		color: var(--color-danger);
