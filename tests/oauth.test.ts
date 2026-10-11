@@ -894,6 +894,8 @@ describe('MCP endpoint', () => {
 		for (const tool of listed.result.tools) {
 			expect(tool.title).toEqual(expect.any(String));
 			expect(tool.outputSchema).toEqual(expect.any(Object));
+			// A strict schema makes a client with a cached tool list refuse a new result field.
+			expect(JSON.stringify(tool.outputSchema)).not.toContain('"additionalProperties":false');
 			// The Claude directory reads the listing name from annotations.title and needs one
 			// of the two hints set on every tool.
 			expect(tool.annotations).toMatchObject({

@@ -85,8 +85,9 @@ const toolScopes: Record<string, TokenScope> = {
 	enable_link: 'links:write'
 };
 
-// Results carry the link ID and nothing else internal.
-const linkOutput = z.object({
+// Results carry the link ID and nothing else internal. Output objects are loose, so a client
+// with an earlier tool list still accepts a result after a field is added.
+const linkOutput = z.looseObject({
 	id: z.string(),
 	shortUrl: z.string(),
 	hostname: z.string(),
@@ -94,21 +95,23 @@ const linkOutput = z.object({
 	destination: z.string(),
 	title: z.string().nullable(),
 	enabled: z.boolean(),
-	blocked: z.object({ reason: z.enum(blockReasons) }).nullable(),
+	blocked: z.looseObject({ reason: z.enum(blockReasons) }).nullable(),
 	createdAt: z.string(),
 	updatedAt: z.string()
 });
 type LinkOutput = z.infer<typeof linkOutput>;
-const clicks = z.object({ value: z.string(), clicks: z.number() });
+const clicks = z.looseObject({ value: z.string(), clicks: z.number() });
 
-const domainOutput = z.object({
+const domainOutput = z.looseObject({
 	hostname: z.string(),
 	state: z.enum(domainStates),
 	kind: z.enum(['platform', 'workspace']),
 	isDefault: z.boolean(),
 	setup: z.enum(domainSetups).nullable(),
-	records: z.array(z.object({ type: z.literal('CNAME'), name: z.string(), value: z.string() })),
-	error: z.object({ code: z.string(), message: z.string() }).nullable()
+	records: z.array(
+		z.looseObject({ type: z.literal('CNAME'), name: z.string(), value: z.string() })
+	),
+	error: z.looseObject({ code: z.string(), message: z.string() }).nullable()
 });
 type DomainOutput = z.infer<typeof domainOutput>;
 
@@ -119,7 +122,7 @@ function domainResult(domain: Domain): DomainOutput {
 		kind: domain.kind,
 		isDefault: domain.isDefault,
 		setup: domain.setup,
-		records: domain.records,
+		records: domain.records.map(({ type, name, value }) => ({ type, name, value })),
 		error: domain.error
 	};
 }
@@ -260,7 +263,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 				limit: z.number().int().min(1).max(100).optional(),
 				cursor: z.string().max(500).optional().describe('nextCursor from the previous page.')
 			}),
-			outputSchema: z.object({
+			outputSchema: z.looseObject({
 				links: z.array(linkOutput.extend({ clicksLast30Days: z.number().nullable() })),
 				nextCursor: z.string().nullable()
 			}),
@@ -290,7 +293,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 			title: 'Get a link',
 			description: 'Gets one short link by its ID or slug.',
 			inputSchema: z.object({ link: z.string().min(1).max(100).describe('The link ID or slug.') }),
-			outputSchema: z.object({ link: linkOutput }),
+			outputSchema: z.looseObject({ link: linkOutput }),
 			annotations: {
 				title: 'Get a link',
 				readOnlyHint: true,
@@ -307,7 +310,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 			title: 'Get a link QR code',
 			description: 'Gets a PNG QR code of a short URL, by link ID or slug.',
 			inputSchema: z.object({ link: z.string().min(1).max(100).describe('The link ID or slug.') }),
-			outputSchema: z.object({
+			outputSchema: z.looseObject({
 				shortUrl: z.string(),
 				mimeType: z.literal('image/png'),
 				size: z.number()
@@ -351,13 +354,13 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 					.optional()
 					.describe('Last day, YYYY-MM-DD.')
 			}),
-			outputSchema: z.object({
-				analytics: z.object({
+			outputSchema: z.looseObject({
+				analytics: z.looseObject({
 					linkId: z.string(),
 					from: z.string(),
 					to: z.string(),
 					total: z.number(),
-					days: z.array(z.object({ day: z.string(), clicks: z.number() })),
+					days: z.array(z.looseObject({ day: z.string(), clicks: z.number() })),
 					countries: z.array(clicks),
 					devices: z.array(clicks),
 					referrers: z.array(clicks),
@@ -387,19 +390,19 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 			description:
 				'Gets usage against the limits of the workspace this app may use, with its name: clicks recorded this calendar month (UTC), clicks not recorded after the allowance was full, active links, custom domains, days of history, and a warning for each limit at 80% or 100%.',
 			inputSchema: z.object({}),
-			outputSchema: z.object({
-				usage: z.object({
-					workspace: z.object({ id: z.string(), name: z.string() }),
+			outputSchema: z.looseObject({
+				usage: z.looseObject({
+					workspace: z.looseObject({ id: z.string(), name: z.string() }),
 					month: z.string(),
 					clicks: z.number(),
 					clickLimit: z.number(),
 					unrecordedClicks: z.number(),
 					unrecordedSince: z.string().nullable(),
-					links: z.object({ used: z.number(), limit: z.number() }),
-					domains: z.object({ used: z.number(), limit: z.number() }),
+					links: z.looseObject({ used: z.number(), limit: z.number() }),
+					domains: z.looseObject({ used: z.number(), limit: z.number() }),
 					retentionDays: z.number(),
 					warnings: z.array(
-						z.object({
+						z.looseObject({
 							resource: z.enum(['clicks', 'links', 'domains']),
 							level: z.union([z.literal(80), z.literal(100)])
 						})
@@ -424,7 +427,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 			description:
 				'Lists the domains links can use, with their status and how to connect each one. Only active domains serve links.',
 			inputSchema: z.object({}),
-			outputSchema: z.object({
+			outputSchema: z.looseObject({
 				domains: z.array(domainOutput),
 				used: z.number(),
 				limit: z.number()
@@ -460,7 +463,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 					.optional()
 					.describe('An active hostname from list_domains. The default domain when absent.')
 			}),
-			outputSchema: z.object({ link: linkOutput, replayed: z.boolean() }),
+			outputSchema: z.looseObject({ link: linkOutput, replayed: z.boolean() }),
 			annotations: {
 				title: 'Create a link',
 				readOnlyHint: false,
@@ -498,7 +501,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 				destination: z.string().min(1).max(4096).optional(),
 				title: z.string().max(200).nullable().optional().describe('null removes the title.')
 			}),
-			outputSchema: z.object({ link: linkOutput }),
+			outputSchema: z.looseObject({ link: linkOutput }),
 			annotations: {
 				title: 'Update a link',
 				readOnlyHint: false,
@@ -528,7 +531,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 				inputSchema: z.object({
 					link: z.string().min(1).max(100).describe('The link ID or slug.')
 				}),
-				outputSchema: z.object({ link: linkOutput }),
+				outputSchema: z.looseObject({ link: linkOutput }),
 				annotations: {
 					title: enabled ? 'Turn on a link' : 'Turn off a link',
 					readOnlyHint: false,
