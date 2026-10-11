@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { isMemberPage, type MemberPage } from '@flared/contracts/members';
 import { isErrorCode } from '@flared/contracts/errors';
 import {
 	isUsage,
@@ -342,6 +343,17 @@ export async function fetchTokens(
 	const result = await getJson(service, headers, '/v1/tokens');
 	if (!result.ok) return result;
 	return isApiTokenPage(result.body)
+		? { ok: true, page: result.body }
+		: { ok: false, failure: malformed };
+}
+
+export async function fetchMembers(
+	service: ApiService,
+	headers: Headers
+): Promise<{ ok: true; page: MemberPage } | { ok: false; failure: ApiFailure }> {
+	const result = await getJson(service, headers, '/v1/members');
+	if (!result.ok) return result;
+	return isMemberPage(result.body)
 		? { ok: true, page: result.body }
 		: { ok: false, failure: malformed };
 }

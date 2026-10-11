@@ -91,6 +91,10 @@
 			"types": "./src/workspace/DeleteWorkspace.svelte",
 			"svelte": "./src/workspace/DeleteWorkspace.svelte"
 		},
+		"./workspace/Members.svelte": {
+			"types": "./src/workspace/Members.svelte",
+			"svelte": "./src/workspace/Members.svelte"
+		},
 		"./theme/ThemeControl.svelte": {
 			"types": "./src/theme/ThemeControl.svelte",
 			"svelte": "./src/theme/ThemeControl.svelte"

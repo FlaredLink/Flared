@@ -45,6 +45,7 @@ export interface PolicyProjection {
 	domainLimit: number;
 	monthlyClickLimit: number;
 	retentionDays: number;
+	memberLimit: number;
 	suspendedAt: number | null;
 }
 
@@ -310,7 +311,7 @@ export async function readPolicyProjection(
 ): Promise<PolicyProjection | null> {
 	const row = await db
 		.prepare(
-			'SELECT p.revision, p.routing_revision, p.analytics_revision, t.analytics_shard_id, p.active_link_limit, p.domain_limit, p.monthly_click_limit, p.retention_days, p.suspended_at FROM tenant_policy p JOIN tenants t ON t.id = p.tenant_id WHERE p.tenant_id = ? AND NOT EXISTS (SELECT 1 FROM tenant_deletions d WHERE d.tenant_id = p.tenant_id)'
+			'SELECT p.revision, p.routing_revision, p.analytics_revision, t.analytics_shard_id, p.active_link_limit, p.domain_limit, p.monthly_click_limit, p.retention_days, p.member_limit, p.suspended_at FROM tenant_policy p JOIN tenants t ON t.id = p.tenant_id WHERE p.tenant_id = ? AND NOT EXISTS (SELECT 1 FROM tenant_deletions d WHERE d.tenant_id = p.tenant_id)'
 		)
 		.bind(tenantId)
 		.first<Record<string, unknown>>();
@@ -325,6 +326,7 @@ export async function readPolicyProjection(
 		domainLimit: count(row.domain_limit, 'domain limit'),
 		monthlyClickLimit: count(row.monthly_click_limit, 'click limit'),
 		retentionDays: count(row.retention_days, 'retention'),
+		memberLimit: count(row.member_limit, 'member limit'),
 		suspendedAt: row.suspended_at === null ? null : count(row.suspended_at, 'suspension time')
 	};
 }
