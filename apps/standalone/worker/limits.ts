@@ -10,8 +10,11 @@ import type { AuthService } from '@flared/server/web';
 import type { StandaloneConfig } from './config';
 
 // Bounds of each limit. Higher values are possible on D1 and Queues but cost more; see
-// docs/self-hosting/limits.md.
-export const limitBounds: Record<keyof PolicyLimits, { min: number; max: number }> = {
+// docs/self-hosting/limits.md. The member limit is not set here: this edition has no invites yet.
+export const limitBounds: Record<
+	Exclude<keyof PolicyLimits, 'memberLimit'>,
+	{ min: number; max: number }
+> = {
 	activeLinkLimit: { min: 1, max: 1_000_000 },
 	monthlyClickLimit: { min: 1, max: 100_000_000 },
 	retentionDays: { min: 1, max: 3650 },

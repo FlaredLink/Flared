@@ -84,7 +84,13 @@ const sessionOnly = [
 	'GET /workspaces',
 	'POST /workspaces',
 	'POST /workspaces/active',
-	'GET /icons/{hostname}'
+	'GET /icons/{hostname}',
+	'GET /members',
+	'POST /invites',
+	'POST /invites/lookup',
+	'POST /invites/accept',
+	'POST /invites/{id}/resend',
+	'DELETE /invites/{id}'
 ];
 const document = openApiDocument(baseUrl);
 type Operation = { responses: Record<string, { content?: Record<string, { schema: unknown }> }> };

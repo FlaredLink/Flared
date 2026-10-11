@@ -317,6 +317,21 @@
 			"binding": "MIGRATION_IDENTITY",
 			"database_name": "migration-identity",
 			"database_id": "00000000-0000-0000-0000-000000000072"
+		},
+		{
+			"binding": "MEMBERS_IDENTITY",
+			"database_name": "members-identity",
+			"database_id": "00000000-0000-0000-0000-000000000073"
+		},
+		{
+			"binding": "MEMBERS_ROUTING",
+			"database_name": "members-routing",
+			"database_id": "00000000-0000-0000-0000-000000000074"
+		},
+		{
+			"binding": "MEMBERS_ANALYTICS",
+			"database_name": "members-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000075"
 		}
 	]
 }

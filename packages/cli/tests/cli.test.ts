@@ -370,6 +370,10 @@ describe('flared CLI', () => {
 			// Only the dashboard receives these; a token never does.
 			WORKSPACE_CHANGED: 1,
 			WORKSPACE_LIMIT_REACHED: 1,
+			MEMBER_LIMIT_REACHED: 1,
+			ALREADY_MEMBER: 1,
+			INVITE_PENDING: 1,
+			INVITE_FOR_ANOTHER_EMAIL: 1,
 			LINK_BLOCKED: 4,
 			DOMAINS_UNAVAILABLE: 9,
 			DOMAIN_CHECK_TOO_SOON: 8,

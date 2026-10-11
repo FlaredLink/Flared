@@ -17,6 +17,7 @@
 		"./domains": "./src/domains.ts",
 		"./domain-challenges": "./src/domain-challenges.ts",
 		"./notices": "./src/notices.ts",
+		"./members": "./src/members.ts",
 		"./deletions": "./src/deletions.ts",
 		"./operations": "./src/operations.ts"
 	},

@@ -10,6 +10,8 @@ export interface PolicyLimits {
 	monthlyClickLimit: number;
 	retentionDays: number;
 	domainLimit: number;
+	// Members and open invites. Without it, a new tenant gets 2 and an update keeps the limit.
+	memberLimit?: number;
 }
 
 export interface NewTenant {
@@ -64,8 +66,10 @@ function reason(value: unknown): BlockReason {
 
 function checkLimits(limits: PolicyLimits): void {
 	for (const value of Object.values(limits))
-		if (!Number.isSafeInteger(value) || value < 0) throw new Error('Invalid policy limits');
-	if (limits.retentionDays < 1) throw new Error('Invalid policy limits');
+		if (value !== undefined && (!Number.isSafeInteger(value) || value < 0))
+			throw new Error('Invalid policy limits');
+	if (limits.retentionDays < 1 || limits.memberLimit === 0)
+		throw new Error('Invalid policy limits');
 }
 
 export async function readInstallationMode(db: D1Database): Promise<InstallationMode | null> {
@@ -229,7 +233,7 @@ export function tenantStatements(
 			.bind(tenant.id, tenant.ownerUserId, now),
 		db
 			.prepare(
-				`INSERT INTO tenant_policy (tenant_id, revision, active_link_limit, monthly_click_limit, retention_days, domain_limit, updated_at) SELECT ?1, 1, ?2, ?3, ?4, ?5, ?6 ${inserted}`
+				`INSERT INTO tenant_policy (tenant_id, revision, active_link_limit, monthly_click_limit, retention_days, domain_limit, member_limit, updated_at) SELECT ?1, 1, ?2, ?3, ?4, ?5, ?7, ?6 ${inserted}`
 			)
 			.bind(
 				tenant.id,
@@ -237,7 +241,8 @@ export function tenantStatements(
 				limits.monthlyClickLimit,
 				limits.retentionDays,
 				limits.domainLimit,
-				now
+				now,
+				limits.memberLimit ?? 2
 			)
 	];
 }
@@ -254,7 +259,7 @@ export async function updateTenantPolicy(
 	checkLimits(limits);
 	const row = await db
 		.prepare(
-			'UPDATE tenant_policy SET revision = revision + 1, active_link_limit = ?, monthly_click_limit = ?, retention_days = ?, domain_limit = ?, updated_at = ? WHERE tenant_id = ?6 AND NOT EXISTS (SELECT 1 FROM tenant_deletions WHERE tenant_id = ?6) RETURNING revision'
+			'UPDATE tenant_policy SET revision = revision + 1, active_link_limit = ?, monthly_click_limit = ?, retention_days = ?, domain_limit = ?, updated_at = ?, member_limit = COALESCE(?7, member_limit) WHERE tenant_id = ?6 AND NOT EXISTS (SELECT 1 FROM tenant_deletions WHERE tenant_id = ?6) RETURNING revision'
 		)
 		.bind(
 			limits.activeLinkLimit,
@@ -262,7 +267,8 @@ export async function updateTenantPolicy(
 			limits.retentionDays,
 			limits.domainLimit,
 			now,
-			tenantId
+			tenantId,
+			limits.memberLimit ?? null
 		)
 		.first<{ revision: unknown }>();
 	return row ? count(row.revision, 'revision') : null;

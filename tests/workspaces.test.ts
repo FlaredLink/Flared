@@ -558,7 +558,13 @@ describe('roles', () => {
 		['POST', '/tokens', 'member'],
 		['DELETE', '/tokens/:id', 'member'],
 		['GET', '/connected-apps', 'member'],
-		['DELETE', '/connected-apps/:clientId', 'member']
+		['DELETE', '/connected-apps/:clientId', 'member'],
+		['GET', '/members', 'member'],
+		['POST', '/invites/lookup', 'member'],
+		['POST', '/invites/accept', 'member'],
+		['POST', '/invites', 'owner'],
+		['POST', '/invites/:id/resend', 'owner'],
+		['DELETE', '/invites/:id', 'owner']
 	];
 
 	beforeAll(async () => {

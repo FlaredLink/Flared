@@ -32,6 +32,7 @@
 		"./domains": "./src/domains.ts",
 		"./worker-domains": "./src/worker-domains.ts",
 		"./notices": "./src/notices.ts",
+		"./members": "./src/members.ts",
 		"./deletion": "./src/deletion.ts",
 		"./account": "./src/account.ts",
 		"./setup": "./src/setup.ts",

@@ -47,6 +47,26 @@ import {
 	setActiveWorkspace,
 	type MembershipRole
 } from '@flared/data/tenancy';
+import {
+	inviteLifetimeDays,
+	parseInvite,
+	parseInviteToken,
+	type AcceptedInvite,
+	type InvitePreview,
+	type MemberPage,
+	type WorkspaceInvite
+} from '@flared/contracts/members';
+import {
+	acceptInvite,
+	cancelInvite,
+	countInviteEmail,
+	createInvite,
+	listInvites,
+	listMembers,
+	readInvite,
+	readInviteEmail,
+	readMemberCount
+} from '@flared/data/members';
 import { defaultQrSize, maxQrSize, minQrSize, qrPng, qrSvg } from '@flared/client/qr';
 import { knownAssistant, type ConnectedApp, type ConnectedAppPage } from '@flared/contracts/oauth';
 import { accountDeletionRunning } from '@flared/data/deletions';
@@ -64,6 +84,7 @@ import {
 } from './auth/api-tokens';
 import { freshUntil } from './auth/session';
 import { noteLimitUsage } from './notices';
+import { hashInviteToken, inviteEmail, newInviteToken, type InviteSettings } from './members';
 import { resolveTenant } from './tenancy';
 import {
 	addDomain,
@@ -133,6 +154,8 @@ export interface ApiDependencies {
 	icons?: IconSettings;
 	// Creates a workspace that the user owns. A single-workspace installation has none, and
 	// POST /v1/workspaces answers 404.
+	// Invites by email. Without them, the invite routes answer 404; members are still listed.
+	invites?: InviteSettings;
 	createWorkspace?: (input: {
 		userId: string;
 		name: string;
@@ -173,7 +196,14 @@ export async function authenticateBearer(
 const maxBodyBytes = 8192;
 // The workspace list and the switch work whatever state the active workspace is in, so a
 // person can always move to another workspace.
-const workspacePaths = new Set(['/v1/workspaces', '/v1/workspaces/active']);
+// An invite is accepted from any workspace, or from none.
+const workspacePaths = new Set([
+	'/v1/workspaces',
+	'/v1/workspaces/active',
+	'/v1/invites/lookup',
+	'/v1/invites/accept'
+]);
+const dayMs = 86_400_000;
 
 type Variables = {
 	requestId: string;
@@ -776,6 +806,196 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
 	});
 
+	// The workspace's members. Only the owner sees the open invites.
+	app.get('/members', async (context) => {
+		const principal = sessionOnly(context, 'See members in the Flared app.');
+		const { tenantId, role } = context.var;
+		const time = now();
+		const [members, invites, counted] = await Promise.all([
+			listMembers(identity, tenantId),
+			role === 'owner' ? listInvites(identity, tenantId, time) : Promise.resolve([]),
+			readMemberCount(identity, tenantId, time)
+		]);
+		if (!counted) throw new ApiError('NOT_FOUND', 'Workspace not found.');
+		const page: MemberPage = {
+			members: members.map((member) => ({
+				userId: member.userId,
+				email: member.email,
+				role: member.role,
+				joinedAt: new Date(member.joinedAt).toISOString(),
+				you: member.userId === principal.userId
+			})),
+			invites: invites.map((invite) =>
+				inviteSummary(invite.id, invite.email, invite.createdAt, invite.expiresAt)
+			),
+			used: counted.used,
+			limit: counted.limit
+		};
+		return respond({ status: 200, body: JSON.stringify(page) });
+	});
+
+	// What an invite link opens, for the person who received it.
+	app.post('/invites/lookup', async (context) => {
+		const principal = sessionOnly(context, 'Open the invite in the Flared app.');
+		const { token } = parseInviteToken(await readJson(context.req.raw));
+		const invite = await readInvite(identity, await hashInviteToken(token), now());
+		if (!invite) throw new ApiError('NOT_FOUND', 'This invite has ended or was already used.');
+		const user = await identity
+			.prepare('SELECT email, "emailVerified" AS verified FROM "user" WHERE id = ?')
+			.bind(principal.userId)
+			.first<{ email: unknown; verified: unknown }>();
+		const preview: InvitePreview = {
+			workspaceName: invite.workspaceName,
+			email: invite.email,
+			expiresAt: new Date(invite.expiresAt).toISOString(),
+			forYou:
+				typeof user?.email === 'string' &&
+				user.verified === 1 &&
+				user.email.toLowerCase() === invite.email
+		};
+		return respond({ status: 200, body: JSON.stringify(preview) });
+	});
+
+	// Joins the workspace and opens it in this session.
+	app.post('/invites/accept', async (context) => {
+		const principal = sessionOnly(context, 'Accept the invite in the Flared app.');
+		const { token } = parseInviteToken(await readJson(context.req.raw));
+		if (await accountDeletionRunning(identity, principal.userId))
+			throw new ApiError('ACCOUNT_DELETING', 'This account is being deleted.');
+		const time = now();
+		const result = await acceptInvite(identity, {
+			tokenHash: await hashInviteToken(token),
+			userId: principal.userId,
+			now: time
+		});
+		if (result.status === 'other_email')
+			throw new ApiError(
+				'INVITE_FOR_ANOTHER_EMAIL',
+				`This invite is for ${result.email}. Sign in with that address to accept it.`
+			);
+		if (result.status === 'invalid')
+			throw new ApiError('NOT_FOUND', 'This invite has ended or was already used.');
+		await setActiveWorkspace(identity, {
+			userId: principal.userId,
+			sessionId: principal.sessionId,
+			tenantId: result.tenantId,
+			now: time
+		});
+		const name = await readTenantName(identity, result.tenantId);
+		if (name === null) throw new ApiError('NOT_FOUND', 'Workspace not found.');
+		console.log(JSON.stringify({ event: 'invite_accepted', requestId: context.var.requestId }));
+		const body: AcceptedInvite = { workspace: { id: result.tenantId, name, role: 'member' } };
+		return respond({ status: 200, body: JSON.stringify(body) });
+	});
+
+	app.post('/invites', async (context) => {
+		const principal = sessionOnly(context, 'Invite members in the Flared app.');
+		ownerOnly(context, 'Only the workspace owner can invite members.');
+		const settings = inviteSettings();
+		const { email } = parseInvite(await readJson(context.req.raw));
+		return sendInvite(context, principal, settings, email, false);
+	});
+
+	// A new link with a new expiry; the old link stops working.
+	app.post('/invites/:id/resend', async (context) => {
+		const principal = sessionOnly(context, 'Invite members in the Flared app.');
+		ownerOnly(context, 'Only the workspace owner can invite members.');
+		const settings = inviteSettings();
+		const email = await readInviteEmail(identity, context.var.tenantId, context.req.param('id'));
+		if (email === null) throw new ApiError('NOT_FOUND', 'Invite not found.');
+		return sendInvite(context, principal, settings, email, true);
+	});
+
+	app.delete('/invites/:id', async (context) => {
+		sessionOnly(context, 'Manage invites in the Flared app.');
+		ownerOnly(context, 'Only the workspace owner can cancel invites.');
+		inviteSettings();
+		if (!(await cancelInvite(identity, context.var.tenantId, context.req.param('id'))))
+			throw new ApiError('NOT_FOUND', 'Invite not found.');
+		console.log(JSON.stringify({ event: 'invite_cancelled', requestId: context.var.requestId }));
+		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
+	});
+
+	function inviteSettings(): InviteSettings {
+		if (!dependencies.invites) throw new ApiError('NOT_FOUND', 'Route not found.');
+		return dependencies.invites;
+	}
+
+	// Counts the email against the day's limit, writes the invite within the member limit, then
+	// sends the email. A failed email leaves the invite, and the owner can send it again.
+	async function sendInvite(
+		context: ApiContext,
+		principal: Extract<ApiPrincipal, { kind: 'session' }>,
+		settings: InviteSettings,
+		email: string,
+		renew: boolean
+	): Promise<Response> {
+		const { tenantId, requestId } = context.var;
+		const time = now();
+		if (!(await countInviteEmail(identity, tenantId, time, settings.emailsPerDay ?? 20)))
+			throw new ApiError(
+				'RATE_LIMITED',
+				'This workspace sent many invites today. Try again tomorrow.',
+				Math.ceil((dayMs - (time % dayMs)) / 1000)
+			);
+		const token = newInviteToken();
+		const expiresAt = time + inviteLifetimeDays * dayMs;
+		const result = await createInvite(identity, {
+			id: crypto.randomUUID(),
+			tenantId,
+			email,
+			tokenHash: await hashInviteToken(token),
+			invitedBy: principal.userId,
+			now: time,
+			expiresAt,
+			renew
+		});
+		if (result.status === 'member')
+			throw new ApiError('ALREADY_MEMBER', 'This person is already a member.');
+		if (result.status === 'pending')
+			throw new ApiError(
+				'INVITE_PENDING',
+				'This address already has an invite. Send it again from the list.'
+			);
+		if (result.status === 'limit')
+			throw new ApiError(
+				'MEMBER_LIMIT_REACHED',
+				`This workspace has room for ${result.limit} members, open invites included. Remove a member or cancel an invite first.`
+			);
+		if (result.status === 'no_workspace') throw new ApiError('NOT_FOUND', 'Workspace not found.');
+		const [workspaceName, inviter] = await Promise.all([
+			readTenantName(identity, tenantId),
+			identity
+				.prepare('SELECT email FROM "user" WHERE id = ?')
+				.bind(principal.userId)
+				.first<{ email: unknown }>()
+		]);
+		let emailSent = false;
+		if (workspaceName !== null && typeof inviter?.email === 'string')
+			try {
+				await settings.email.send(
+					inviteEmail({
+						to: email,
+						workspaceName,
+						invitedBy: inviter.email,
+						url: settings.inviteUrl(token),
+						expiresAt
+					})
+				);
+				emailSent = true;
+			} catch {
+				console.error(JSON.stringify({ event: 'invite_email_failed', requestId }));
+			}
+		console.log(
+			JSON.stringify({ event: renew ? 'invite_resent' : 'invite_created', requestId, emailSent })
+		);
+		const body: { invite: WorkspaceInvite; emailSent: boolean } = {
+			invite: inviteSummary(result.id, email, time, expiresAt),
+			emailSent
+		};
+		return respond({ status: renew ? 200 : 201, body: JSON.stringify(body) });
+	}
+
 	app.all('/links', (context) => methodNotAllowed(context, 'GET, POST'));
 	app.all('/links/:id', (context) => methodNotAllowed(context, 'GET, PATCH'));
 	app.all('/links/:id/analytics', (context) => methodNotAllowed(context, 'GET'));
@@ -796,6 +1016,12 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	app.all('/tokens/:id', (context) => methodNotAllowed(context, 'DELETE'));
 	app.all('/connected-apps', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/connected-apps/:clientId', (context) => methodNotAllowed(context, 'DELETE'));
+	app.all('/members', (context) => methodNotAllowed(context, 'GET'));
+	app.all('/invites', (context) => methodNotAllowed(context, 'POST'));
+	app.all('/invites/lookup', (context) => methodNotAllowed(context, 'POST'));
+	app.all('/invites/accept', (context) => methodNotAllowed(context, 'POST'));
+	app.all('/invites/:id', (context) => methodNotAllowed(context, 'DELETE'));
+	app.all('/invites/:id/resend', (context) => methodNotAllowed(context, 'POST'));
 	return app;
 }
 
@@ -841,6 +1067,24 @@ function sessionOnly(
 	const { principal } = context.var;
 	if (principal.kind !== 'session') throw new ApiError('INSUFFICIENT_SCOPE', message);
 	return principal;
+}
+
+function ownerOnly(context: ApiContext, message: string): void {
+	if (context.var.role !== 'owner') throw new ApiError('OWNER_REQUIRED', message);
+}
+
+function inviteSummary(
+	id: string,
+	email: string,
+	createdAt: number,
+	expiresAt: number
+): WorkspaceInvite {
+	return {
+		id,
+		email,
+		createdAt: new Date(createdAt).toISOString(),
+		expiresAt: new Date(expiresAt).toISOString()
+	};
 }
 
 function methodNotAllowed(context: ApiContext, allow: string): Response {
