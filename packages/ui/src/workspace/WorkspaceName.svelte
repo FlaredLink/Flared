@@ -16,9 +16,11 @@
 		name: string;
 		// Runs after a rename, so the page can reload the name it shows elsewhere.
 		onRenamed: () => void | Promise<void>;
+		// Only the owner renames the workspace; a member sees the name.
+		editable?: boolean;
 	}
 
-	let { apiBase, name, onRenamed }: Props = $props();
+	let { apiBase, name, onRenamed, editable = true }: Props = $props();
 	const workspace = shownWorkspace();
 
 	function errorCodeOf(body: unknown): string {
@@ -76,28 +78,34 @@
 	icon="user"
 	id="workspace-name-heading"
 	title="Workspace name"
-	description="Shown in your sidebar and on your plan and invoices."
+	description={editable
+		? 'Shown in your sidebar and on your plan and invoices.'
+		: 'Only the workspace owner can rename it.'}
 >
-	<form onsubmit={save} aria-labelledby="workspace-name-heading">
-		<div class="row">
-			<label class="visually-hidden" for="workspace-name">Workspace name</label>
-			<input
-				id="workspace-name"
-				bind:value
-				maxlength={workspaceNameMaxLength * 2}
-				autocomplete="off"
-				aria-invalid={error ? 'true' : undefined}
-				aria-describedby={error ? 'workspace-error' : undefined}
-			/>
-			<Button
-				type="submit"
-				variant={unchanged ? 'secondary' : 'primary'}
-				disabled={pending || unchanged}>{pending ? 'Saving…' : 'Save'}</Button
-			>
-		</div>
-		<p class="status" role="status" aria-live="polite">{status}</p>
-		{#if error}<p id="workspace-error" class="error" role="alert">{error}</p>{/if}
-	</form>
+	{#if !editable}
+		<p class="name">{name}</p>
+	{:else}
+		<form onsubmit={save} aria-labelledby="workspace-name-heading">
+			<div class="row">
+				<label class="visually-hidden" for="workspace-name">Workspace name</label>
+				<input
+					id="workspace-name"
+					bind:value
+					maxlength={workspaceNameMaxLength * 2}
+					autocomplete="off"
+					aria-invalid={error ? 'true' : undefined}
+					aria-describedby={error ? 'workspace-error' : undefined}
+				/>
+				<Button
+					type="submit"
+					variant={unchanged ? 'secondary' : 'primary'}
+					disabled={pending || unchanged}>{pending ? 'Saving…' : 'Save'}</Button
+				>
+			</div>
+			<p class="status" role="status" aria-live="polite">{status}</p>
+			{#if error}<p id="workspace-error" class="error" role="alert">{error}</p>{/if}
+		</form>
+	{/if}
 </SettingRow>
 
 <style>
@@ -130,6 +138,11 @@
 	}
 	input[aria-invalid='true'] {
 		border-color: var(--color-danger);
+	}
+	.name {
+		color: var(--color-strong);
+		font-size: 0.9375rem;
+		overflow-wrap: anywhere;
 	}
 	.status {
 		color: var(--color-lead);

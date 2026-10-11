@@ -18,7 +18,8 @@
 		busy: boolean;
 		// What removal stops, such as "3 active links on this domain will stop working."
 		stopping: string;
-		onremove: () => void;
+		// Without it, the person may not remove domains.
+		onremove?: () => void;
 		onconfirm: () => void;
 		oncancel: () => void;
 	}
@@ -50,7 +51,7 @@
 			href: `https://${domain.hostname}`,
 			external: true
 		},
-		...(platform
+		...(platform || !onremove
 			? []
 			: [{ label: 'Remove domain', icon: 'trash' as const, danger: true, onselect: onremove }])
 	]);

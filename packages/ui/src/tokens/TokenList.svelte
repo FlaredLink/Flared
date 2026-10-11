@@ -36,9 +36,18 @@
 		onReauthRequired: () => void;
 		// The workspace the tokens act in, when the person can have several.
 		workspaceName?: string | null;
+		// The scopes the person's role allows; a member cannot give a token domains:write.
+		allowedScopes?: readonly TokenScope[];
 	}
 
-	let { page, apiBase, onChanged, onReauthRequired, workspaceName = null }: Props = $props();
+	let {
+		page,
+		apiBase,
+		onChanged,
+		onReauthRequired,
+		workspaceName = null,
+		allowedScopes = tokenScopes
+	}: Props = $props();
 	const workspace = shownWorkspace();
 
 	const scopeLabels: Record<TokenScope, string> = {
@@ -93,6 +102,7 @@
 		if (scopes.length === 0) return 'Choose at least one permission.';
 		if (same(scopes, scopePresets.full))
 			return 'This token can read and change everything in the workspace.';
+		if (same(scopes, allowedScopes)) return 'This token can do everything you can do here.';
 		const parts = scopes.map((scope) => scopeLabels[scope].toLocaleLowerCase());
 		const list =
 			parts.length > 1 ? `${parts.slice(0, -1).join(', ')}, and ${parts.at(-1)}` : parts[0];
@@ -117,7 +127,7 @@
 		token.expiresAt !== null && Date.parse(token.expiresAt) <= Date.now();
 
 	function toggle(scope: TokenScope, checked: boolean) {
-		scopes = tokenScopes.filter((item) => (item === scope ? checked : scopes.includes(item)));
+		scopes = allowedScopes.filter((item) => (item === scope ? checked : scopes.includes(item)));
 	}
 
 	async function create() {
@@ -200,12 +210,12 @@
 					>
 					<button
 						type="button"
-						aria-pressed={sameScopes(scopePresets.full)}
-						onclick={() => (scopes = [...scopePresets.full])}>Full access</button
+						aria-pressed={sameScopes(allowedScopes)}
+						onclick={() => (scopes = [...allowedScopes])}>Full access</button
 					>
 				</div>
 				<div class="checks">
-					{#each tokenScopes as scope (scope)}
+					{#each allowedScopes as scope (scope)}
 						<Checkbox
 							checked={scopes.includes(scope)}
 							onchange={(event) => toggle(scope, event.currentTarget.checked)}

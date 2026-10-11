@@ -109,6 +109,8 @@ export function domainErrorMessage(failure: DomainFailure): string {
 			return failure.message ?? 'Enter a hostname such as go.example.com.';
 		case 'DOMAIN_TAKEN':
 			return failure.message ?? 'This hostname is already in use.';
+		case 'OWNER_REQUIRED':
+			return 'Only the workspace owner can change domains.';
 		case 'DOMAIN_LIMIT_REACHED':
 			return 'You have used all your custom domains. Remove a domain to add another.';
 		case 'DOMAINS_UNAVAILABLE':

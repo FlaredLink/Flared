@@ -27,6 +27,8 @@ export const errorStatus = {
 	WORKSPACE_CHANGED: 409,
 	// The person cannot create another workspace now; the message says why.
 	WORKSPACE_LIMIT_REACHED: 403,
+	// The person's role in the workspace does not allow the change.
+	OWNER_REQUIRED: 403,
 	LINK_BLOCKED: 409,
 	NOT_FOUND: 404,
 	METHOD_NOT_ALLOWED: 405,

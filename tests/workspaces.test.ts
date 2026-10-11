@@ -528,6 +528,108 @@ describe('workspace API', () => {
 	});
 });
 
+describe('roles', () => {
+	// Every route of the API and the role it needs. A route added without a line here fails the
+	// first test, so each new route states who may use it.
+	const routes: [method: string, path: string, role: 'member' | 'owner'][] = [
+		['POST', '/links', 'member'],
+		['GET', '/links', 'member'],
+		['GET', '/links/:id', 'member'],
+		['PATCH', '/links/:id', 'member'],
+		['GET', '/links/:id/analytics', 'member'],
+		['GET', '/links/:id/qr', 'member'],
+		['GET', '/domains', 'member'],
+		['POST', '/domains', 'owner'],
+		['GET', '/domains/:id', 'member'],
+		['POST', '/domains/:id/check', 'owner'],
+		['DELETE', '/domains/:id', 'owner'],
+		['GET', '/usage', 'member'],
+		['GET', '/export/links', 'member'],
+		['GET', '/export/daily-totals', 'member'],
+		['GET', '/export/daily-dimensions', 'member'],
+		['GET', '/me', 'member'],
+		['GET', '/workspaces', 'member'],
+		['POST', '/workspaces', 'member'],
+		['POST', '/workspaces/active', 'member'],
+		['GET', '/workspace', 'member'],
+		['PATCH', '/workspace', 'owner'],
+		['GET', '/icons/:hostname', 'member'],
+		['GET', '/tokens', 'member'],
+		['POST', '/tokens', 'member'],
+		['DELETE', '/tokens/:id', 'member'],
+		['GET', '/connected-apps', 'member'],
+		['DELETE', '/connected-apps/:clientId', 'member']
+	];
+
+	beforeAll(async () => {
+		await addUser('gus');
+		await identity()
+			.prepare(
+				"INSERT INTO tenant_memberships (tenant_id, user_id, role, created_at) VALUES ('ws-c', 'gus', 'member', 40)"
+			)
+			.run();
+		await addSession('sess-gus', 'gus');
+	});
+
+	it('names the role of every route', () => {
+		const registered = api()
+			.routes.filter((route) => route.method !== 'ALL')
+			.map((route) => `${route.method} ${route.path.replace(/^\/v1/, '')}`);
+		expect(new Set(registered)).toEqual(
+			new Set(routes.map(([method, path]) => `${method} ${path}`))
+		);
+	});
+
+	it('refuses a member only the owner’s routes', async () => {
+		for (const [method, path, role] of routes) {
+			const target = path.replace(/:[a-zA-Z]+/g, 'x');
+			const body = method === 'GET' || method === 'DELETE' ? undefined : { name: 'Bo' };
+			for (const sessionId of ['sess-gus', 'sess-bo']) {
+				const response = await call(method, target, session(sessionId), body);
+				const refused =
+					response.status === 403 && (await code(response.clone())) === 'OWNER_REQUIRED';
+				expect([method, path, sessionId, refused]).toEqual([
+					method,
+					path,
+					sessionId,
+					role === 'owner' && sessionId === 'sess-gus'
+				]);
+			}
+		}
+	});
+
+	it('limits a member’s tokens to what the member may do', async () => {
+		const me = await call('GET', '/me', session('sess-gus'));
+		const identityBody = (await me.json()) as { scopes: string[]; workspace: unknown };
+		expect(identityBody.scopes).not.toContain('domains:write');
+		expect(identityBody.workspace).toEqual({ id: 'ws-c', name: 'Bo', role: 'member' });
+
+		const full = await call('POST', '/tokens', session('sess-gus'), {
+			name: 'Gus',
+			scopes: scopePresets.full,
+			expiresInDays: 30
+		});
+		expect([full.status, await code(full)]).toEqual([403, 'OWNER_REQUIRED']);
+		const links = await call('POST', '/tokens', session('sess-gus'), {
+			name: 'Gus',
+			scopes: ['links:read', 'links:write'],
+			expiresInDays: 30
+		});
+		expect(links.status).toBe(201);
+
+		// A token that holds domains:write, such as one made before the person became a member,
+		// still cannot change domains.
+		const { secret } = await createToken(auth(), {
+			userId: 'gus',
+			tenantId: 'ws-c',
+			input: { name: 'Old', scopes: scopePresets.full, expiresInDays: 30 }
+		});
+		const added = await call('POST', '/domains', bearer(secret), { hostname: 'go.example.org' });
+		expect([added.status, await code(added)]).toEqual([403, 'OWNER_REQUIRED']);
+		expect((await call('GET', '/domains', bearer(secret))).status).toBe(200);
+	});
+});
+
 describe('one workspace’s credentials', () => {
 	async function tokenFor(userId: string, tenantId: string) {
 		return (

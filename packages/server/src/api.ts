@@ -24,7 +24,7 @@ import {
 import {
 	isTokenScope,
 	parseCreateToken,
-	tokenScopes,
+	roleScopes,
 	type ApiIdentity,
 	type ApiTokenIdentity,
 	type ApiTokenPage,
@@ -571,7 +571,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		const me: ApiIdentity =
 			principal.kind === 'token'
 				? { kind: 'token', scopes: [...principal.scopes], token: principal.token, workspace }
-				: { kind: 'session', scopes: [...tokenScopes], workspace };
+				: { kind: 'session', scopes: [...roleScopes[role]], workspace };
 		return respond({ status: 200, body: JSON.stringify(me) });
 	});
 
@@ -660,6 +660,8 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	app.patch('/workspace', async (context) => {
 		sessionOnly(context, 'Rename the workspace from the Flared app.');
 		const { tenantId, role } = context.var;
+		if (role !== 'owner')
+			throw new ApiError('OWNER_REQUIRED', 'Only the workspace owner can rename it.');
 		const { name } = parseWorkspaceName(await readJson(context.req.raw));
 		if (!(await renameTenant(identity, tenantId, name)))
 			throw new ApiError('NOT_FOUND', 'Workspace not found.');
@@ -710,6 +712,12 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		if (freshUntil(principal, now()) === null)
 			throw new ApiError('REAUTH_REQUIRED', 'Sign in again to create a token.');
 		const input = parseCreateToken(await readJson(context.req.raw));
+		const denied = input.scopes.find((scope) => !roleScopes[context.var.role].includes(scope));
+		if (denied)
+			throw new ApiError(
+				'OWNER_REQUIRED',
+				`Only the workspace owner can give a token the ${denied} scope.`
+			);
 		if (!dependencies.tokenAuth) throw new Error('Token creation is not configured');
 		let created;
 		try {
@@ -800,12 +808,16 @@ function allowedWhileSuspended(principal: ApiPrincipal, method: string, path: st
 	return read && (path.startsWith('/v1/export/') || path === '/v1/me');
 }
 
-// A session holds every scope; a token or connected app must hold the route's scope.
+// A session holds every scope; a token or connected app must hold the route's scope. Each
+// also needs a role that allows the scope, checked on every request, so a role change applies to
+// credentials made before it.
 function requireScope(scope: TokenScope): MiddlewareHandler<{ Variables: Variables }> {
 	return async (context, next) => {
-		const { principal } = context.var;
+		const { principal, role } = context.var;
 		if (principal.kind !== 'session' && !principal.scopes.includes(scope))
 			throw new ApiError('INSUFFICIENT_SCOPE', `This token needs the ${scope} scope.`);
+		if (!roleScopes[role].includes(scope))
+			throw new ApiError('OWNER_REQUIRED', 'Only the workspace owner can do this.');
 		await next();
 	};
 }

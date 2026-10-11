@@ -37,9 +37,20 @@
 		// The links page, and the links page filtered to one domain.
 		createHref?: string;
 		linksHref?: (domain: Domain) => string;
+		// Only the owner adds, checks, and removes domains; a member sees them.
+		manage?: boolean;
 	}
 
-	let { page, apiBase, onChanged, guideHref, crumbs, createHref, linksHref }: Props = $props();
+	let {
+		page,
+		apiBase,
+		onChanged,
+		guideHref,
+		crumbs,
+		createHref,
+		linksHref,
+		manage = true
+	}: Props = $props();
 	const workspace = shownWorkspace();
 
 	let hostname = $state('');
@@ -270,7 +281,7 @@
 			items.push({ label: 'Show details', icon: 'info', onselect: () => (selectedId = domain.id) });
 		if (linksHref && ready(domain))
 			items.push({ label: 'View links', icon: 'link', href: linksHref(domain) });
-		if (domain.kind === 'workspace' && domain.state !== 'disabled')
+		if (manage && domain.kind === 'workspace' && domain.state !== 'disabled')
 			items.push({
 				label: 'Remove domain',
 				icon: 'trash',
@@ -314,7 +325,7 @@
 				removing={pending === `remove:${domain.id}`}
 				busy={pending !== null}
 				stopping={stopping(domain.activeLinks)}
-				onremove={() => (confirmingId = domain.id)}
+				onremove={manage ? () => (confirmingId = domain.id) : undefined}
 				onconfirm={() => void remove(domain)}
 				oncancel={() => (confirmingId = null)}
 			/>
@@ -328,7 +339,7 @@
 			{#if !empty && !setupDomain}
 				<div class="aside">
 					{@render usage()}
-					{#if !adding && page.limit > 0}
+					{#if manage && !adding && page.limit > 0}
 						<Button
 							variant="primary"
 							icon="plus"
@@ -359,8 +370,8 @@
 				wait={secondsLeft(domain.id)}
 				busy={pending !== null}
 				{guideHref}
-				oncheck={() => void check(domain)}
-				onremove={() => (confirmingId = domain.id)}
+				oncheck={manage ? () => void check(domain) : undefined}
+				onremove={manage ? () => (confirmingId = domain.id) : undefined}
 			/>
 			{#if confirmingId === domain.id}
 				<div class="confirm" role="alertdialog" aria-labelledby="confirm-{domain.id}">
@@ -391,7 +402,9 @@
 					></span
 				>
 				<h2 id="domain-hero-heading">Your links. Your domain.</h2>
-				{#if page.limit > 0}
+				{#if page.limit > 0 && !manage}
+					<p class="hero-lead">Only the workspace owner can add a domain.</p>
+				{:else if page.limit > 0}
 					<p class="hero-lead">Add a subdomain you own, such as go.yourbrand.com.</p>
 					<DomainAddForm
 						bind:hostname
@@ -440,7 +453,7 @@
 				</section>
 			{/if}
 		{:else}
-			{#if adding && !atLimit}
+			{#if manage && adding && !atLimit}
 				<section class="add-card" aria-labelledby="domain-add-heading">
 					<h2 id="domain-add-heading" class="small-heading">Add a custom domain</h2>
 					<DomainAddForm
@@ -512,7 +525,9 @@
 						>View all links<Glyph name="arrow" size={16} /></a
 					>{/if}
 			</div>
-			{#if atLimit && page.limit > 0}
+			{#if !manage}
+				<p class="note">Only the workspace owner can add or remove domains.</p>
+			{:else if atLimit && page.limit > 0}
 				<p class="note">You have used all your custom domains. To add another, remove one first.</p>
 			{:else if nearLimit}
 				<p class="note">You are close to your custom domain limit.</p>

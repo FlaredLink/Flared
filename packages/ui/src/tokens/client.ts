@@ -65,6 +65,8 @@ export function tokenErrorMessage(code: string): string {
 			return 'You switched workspaces in another tab. Reload the page to continue.';
 		case 'REAUTH_REQUIRED':
 			return 'Confirm it’s you, then create the token again.';
+		case 'OWNER_REQUIRED':
+			return 'Only the workspace owner can give a token these permissions.';
 		case 'TOKEN_LIMIT_REACHED':
 			return 'You have 25 tokens. Revoke one before you create another.';
 		case 'INVALID_INPUT':

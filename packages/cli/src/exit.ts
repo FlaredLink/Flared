@@ -20,6 +20,7 @@ export function exitCodeFor(code: ClientErrorCode): number {
 		case 'UNAUTHENTICATED':
 			return exitCodes.unauthenticated;
 		case 'INSUFFICIENT_SCOPE':
+		case 'OWNER_REQUIRED':
 		case 'NO_WORKSPACE':
 		case 'ACCOUNT_DELETING':
 		case 'WORKSPACE_SUSPENDED':

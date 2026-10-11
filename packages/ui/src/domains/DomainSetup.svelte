@@ -18,8 +18,9 @@
 		wait: number;
 		busy: boolean;
 		guideHref?: string;
-		oncheck: () => void;
-		onremove: () => void;
+		// Without these, the person may not change domains, and the page shows the steps only.
+		oncheck?: () => void;
+		onremove?: () => void;
 	}
 	let { domain, lastCheck, checking, wait, busy, guideHref, oncheck, onremove }: Props = $props();
 
@@ -113,16 +114,16 @@
 				: 'DNS changes can take time to appear. Checks also run automatically.'}
 	</p>
 	<div class="actions">
-		<Button
-			variant="primary"
-			icon="refresh"
-			disabled={busy || wait > 0}
-			aria-label={wait > 0
-				? `Check ${domain.hostname} again in ${wait} seconds`
-				: `Check ${domain.hostname} now`}
-			onclick={oncheck}
-			>{checking ? 'Checking…' : wait > 0 ? `Check again in ${wait}s` : 'Check status'}</Button
-		>
+		{#if oncheck}<Button
+				variant="primary"
+				icon="refresh"
+				disabled={busy || wait > 0}
+				aria-label={wait > 0
+					? `Check ${domain.hostname} again in ${wait} seconds`
+					: `Check ${domain.hostname} now`}
+				onclick={oncheck}
+				>{checking ? 'Checking…' : wait > 0 ? `Check again in ${wait}s` : 'Check status'}</Button
+			>{:else}<p class="note">Only the workspace owner can check or remove this domain.</p>{/if}
 		{#if guideHref}<a class="guide" href={guideHref}
 				>{worker ? 'Setup guide' : 'DNS setup guide'}<Glyph name="arrowUpRight" size={16} /></a
 			>{/if}
@@ -148,9 +149,11 @@
 		</Callout>
 	{/if}
 
-	<p class="remove">
-		<Button variant="link" disabled={busy} onclick={onremove}>Remove this domain</Button>
-	</p>
+	{#if onremove}
+		<p class="remove">
+			<Button variant="link" disabled={busy} onclick={onremove}>Remove this domain</Button>
+		</p>
+	{/if}
 </section>
 
 <style>

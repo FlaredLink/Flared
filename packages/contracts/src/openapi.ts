@@ -18,7 +18,7 @@ import { tokenScopes, type TokenScope } from './tokens';
 // Duplicated from the client's QR module, which this package cannot import.
 const qrSizes = { minimum: 128, maximum: 2048, default: 512 };
 
-export const openApiVersion = '1.1.0';
+export const openApiVersion = '1.2.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const dateTime = { type: 'string', format: 'date-time' };
@@ -304,7 +304,11 @@ function operation(
 ) {
 	return {
 		summary,
-		description: scope ? `Needs the \`${scope}\` scope.` : 'Needs no scope.',
+		description: !scope
+			? 'Needs no scope.'
+			: scope === 'domains:write'
+				? `Needs the \`${scope}\` scope and the workspace owner role.`
+				: `Needs the \`${scope}\` scope.`,
 		'x-required-scopes': scope ? [scope] : [],
 		...extra,
 		responses: { ...responses, default: errorResponse }
@@ -319,7 +323,7 @@ export function openApiDocument(serverUrl: string) {
 			title: 'Flared API',
 			version: openApiVersion,
 			description:
-				'Create and edit short links and read their click analytics. Authenticate with an API token from Settings in the Flared app: `Authorization: Bearer flr_…`. Each token works in one workspace and only for its scopes.',
+				'Create and edit short links and read their click analytics. Authenticate with an API token from Settings in the Flared app: `Authorization: Bearer flr_…`. Each token works in one workspace and only for its scopes. A token of a workspace member cannot use `domains:write`.',
 			license: { name: 'AGPL-3.0-only', identifier: 'AGPL-3.0-only' }
 		},
 		servers: [{ url: serverUrl }],

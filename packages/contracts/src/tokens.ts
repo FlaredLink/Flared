@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // API tokens: scopes, the create input, and what the dashboard may show about a token.
 import { LinkInputError } from './links';
-import { isWorkspace, type Workspace } from './workspace';
+import { isWorkspace, type Workspace, type WorkspaceRole } from './workspace';
 
 export const tokenScopes = [
 	'links:read',
@@ -12,6 +12,13 @@ export const tokenScopes = [
 	'usage:read'
 ] as const;
 export type TokenScope = (typeof tokenScopes)[number];
+
+// What each workspace role allows. A credential acts with the scopes it holds that its person's
+// role allows, so a member's token never adds or removes domains.
+export const roleScopes: Record<WorkspaceRole, readonly TokenScope[]> = {
+	owner: [...tokenScopes],
+	member: tokenScopes.filter((scope) => scope !== 'domains:write')
+};
 
 export const scopePresets = {
 	full: [...tokenScopes],
