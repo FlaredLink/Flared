@@ -160,29 +160,31 @@ export function usageNoticeEmail(
 		return null;
 	if (typeof period !== 'string') return null;
 	const full = level === 100;
+	// An owner can have several workspaces, so each email names the one it is about.
+	const workspace = notice.workspaceName ? `workspace "${notice.workspaceName}"` : 'workspace';
 	let subject: string;
 	let lines: string[];
 	if (resource === 'clicks') {
 		subject = full
-			? 'Your Flared workspace reached its monthly click limit'
-			: 'Your Flared workspace used 80% of its monthly clicks';
+			? `Your Flared ${workspace} reached its monthly click limit`
+			: `Your Flared ${workspace} used 80% of its monthly clicks`;
 		lines = full
 			? [
-					`Your workspace recorded ${limit} clicks in ${period} (UTC), which is its limit.`,
-					`Your links keep redirecting, but new clicks are not recorded until ${nextMonth(period)} or until the limit rises.`
+					`Your ${workspace} recorded ${limit} clicks in ${period} (UTC), which is its limit.`,
+					`Its links keep redirecting, but new clicks are not recorded until ${nextMonth(period)} or until the limit rises.`
 				]
 			: [
-					`Your workspace recorded ${used} of ${limit} clicks in ${period} (UTC).`,
-					'At the limit, your links keep redirecting, but new clicks are not recorded until the next month.'
+					`Your ${workspace} recorded ${used} of ${limit} clicks in ${period} (UTC).`,
+					'At the limit, its links keep redirecting, but new clicks are not recorded until the next month.'
 				];
 	} else {
 		const noun = nouns[resource];
 		const action = resource === 'links' ? 'create or turn on more links' : 'add more domains';
 		subject = full
-			? `Your Flared workspace reached its limit of ${noun}`
-			: `Your Flared workspace used 80% of its ${noun}`;
+			? `Your Flared ${workspace} reached its limit of ${noun}`
+			: `Your Flared ${workspace} used 80% of its ${noun}`;
 		lines = [
-			`Your workspace uses ${used} of ${limit} ${noun}.`,
+			`Your ${workspace} uses ${used} of ${limit} ${noun}.`,
 			full
 				? `You cannot ${action} until the limit rises. Existing ${resource} keep working.`
 				: `At the limit, you cannot ${action}. Existing ${resource} keep working.`

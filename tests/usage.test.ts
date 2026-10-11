@@ -423,7 +423,9 @@ describe('notice dispatcher', () => {
 		expect(first.sent).toBeGreaterThanOrEqual(1);
 		const mine = mail.sent.filter((message) => message.to === 'send@example.com');
 		expect(mine).toHaveLength(1);
-		expect(mine[0].subject).toBe('Your Flared workspace reached its monthly click limit');
+		expect(mine[0].subject).toBe(
+			'Your Flared workspace "Workspace" reached its monthly click limit'
+		);
 		expect(mine[0].text).toContain('until 2026-11-01');
 		expect(mine[0].text).toContain(`${origin}/app`);
 		const again = recorder();
@@ -535,7 +537,8 @@ describe('usage notice email', () => {
 		tenantId: 't',
 		kind: 'usage',
 		params,
-		email: 'owner@example.com'
+		email: 'owner@example.com',
+		workspaceName: 'Acme <Labs>'
 	});
 
 	it('describes link and domain limits and escapes the URL', () => {
@@ -544,10 +547,14 @@ describe('usage notice email', () => {
 			'owner@example.com',
 			'https://app.example/app?a=<b>'
 		);
-		expect(email?.subject).toBe('Your Flared workspace reached its limit of custom domains');
+		expect(email?.subject).toBe(
+			'Your Flared workspace "Acme <Labs>" reached its limit of custom domains'
+		);
 		expect(email?.text).toContain('You cannot add more domains until the limit rises.');
 		expect(email?.html).toContain('https://app.example/app?a=&lt;b&gt;');
+		expect(email?.html).toContain('workspace &quot;Acme &lt;Labs&gt;&quot;');
 		expect(email?.html).not.toContain('<b>');
+		expect(email?.html).not.toContain('<Labs>');
 	});
 
 	it('returns null for bad params', () => {

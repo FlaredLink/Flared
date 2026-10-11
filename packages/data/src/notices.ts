@@ -20,6 +20,8 @@ export interface ClaimedNotice {
 	params: NoticeParams;
 	// The owner's verified email, or null when the workspace has none.
 	email: string | null;
+	// The workspace name at sending time, so the email says which workspace it is about.
+	workspaceName: string | null;
 }
 
 export type NoticeOutcome = 'sent' | 'delivery_unknown' | 'undeliverable';
@@ -84,16 +86,17 @@ export async function claimNotices(
 		const tenantId = text(row.tenant_id, 'tenant');
 		const contact = await db
 			.prepare(
-				'SELECT u.email FROM tenant_memberships m JOIN "user" u ON u.id = m.user_id WHERE m.tenant_id = ? AND m.role = \'owner\' AND u.emailVerified = 1'
+				'SELECT t.name, (SELECT u.email FROM tenant_memberships m JOIN "user" u ON u.id = m.user_id WHERE m.tenant_id = t.id AND m.role = \'owner\' AND u.emailVerified = 1) AS email FROM tenants t WHERE t.id = ?'
 			)
 			.bind(tenantId)
-			.first<{ email: unknown }>();
+			.first<{ name: unknown; email: unknown }>();
 		notices.push({
 			id: text(row.id, 'notice'),
 			tenantId,
 			kind: text(row.kind, 'notice kind'),
 			params: parseParams(row.params),
-			email: typeof contact?.email === 'string' && contact.email ? contact.email : null
+			email: typeof contact?.email === 'string' && contact.email ? contact.email : null,
+			workspaceName: typeof contact?.name === 'string' && contact.name ? contact.name : null
 		});
 	}
 	return notices;
