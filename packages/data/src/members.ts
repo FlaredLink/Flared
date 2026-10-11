@@ -276,3 +276,45 @@ export async function acceptInvite(
 	const invite = await readInvite(db, tokenHash, now);
 	return invite ? { status: 'other_email', email: invite.email } : { status: 'invalid' };
 }
+
+// Removes a member, never the owner, in one batch: the member's tokens and connected apps for
+// the workspace, the session and sign-in pointers to it, then the membership. Every statement
+// checks the member role first, so a batch for the owner changes nothing. The member's other
+// workspaces and credentials stay.
+export async function removeMember(
+	db: D1Database,
+	input: { tenantId: string; userId: string }
+): Promise<boolean> {
+	const isMember =
+		"EXISTS (SELECT 1 FROM tenant_memberships WHERE tenant_id = ?1 AND user_id = ?2 AND role = 'member')";
+	const results = await db.batch(
+		[
+			`DELETE FROM "apikey" WHERE "referenceId" = ?2 AND json_extract("metadata", '$.tenantId') = ?1 AND ${isMember}`,
+			`DELETE FROM "oauthAccessToken" WHERE "referenceId" = ?1 AND "userId" = ?2 AND ${isMember}`,
+			`DELETE FROM "oauthRefreshToken" WHERE "referenceId" = ?1 AND "userId" = ?2 AND ${isMember}`,
+			`DELETE FROM "oauthConsent" WHERE "referenceId" = ?1 AND "userId" = ?2 AND ${isMember}`,
+			`DELETE FROM session_workspaces WHERE tenant_id = ?1 AND session_id IN (SELECT id FROM "session" WHERE "userId" = ?2) AND ${isMember}`,
+			`DELETE FROM user_workspace_preferences WHERE user_id = ?2 AND tenant_id = ?1 AND ${isMember}`,
+			"DELETE FROM tenant_memberships WHERE tenant_id = ?1 AND user_id = ?2 AND role = 'member'"
+		].map((statement) => db.prepare(statement).bind(input.tenantId, input.userId))
+	);
+	return results.at(-1)?.meta.changes === 1;
+}
+
+// The names of the workspaces the user owns that have other members, oldest first.
+export async function ownedWorkspacesWithMembers(
+	db: D1Database,
+	userId: string
+): Promise<string[]> {
+	const { results } = await db
+		.prepare(
+			`SELECT t.name FROM tenant_memberships o JOIN tenants t ON t.id = o.tenant_id
+			WHERE o.user_id = ? AND o.role = 'owner'
+			AND EXISTS (SELECT 1 FROM tenant_memberships m WHERE m.tenant_id = o.tenant_id AND m.role = 'member')
+			AND NOT EXISTS (SELECT 1 FROM tenant_deletions d WHERE d.tenant_id = o.tenant_id)
+			ORDER BY o.created_at, o.tenant_id LIMIT 100`
+		)
+		.bind(userId)
+		.all<{ name: unknown }>();
+	return results.map((row) => text(row.name, 'name'));
+}

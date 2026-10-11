@@ -454,6 +454,44 @@ describe('account deletion route', () => {
 		expect(started).toEqual(['t-owner']);
 	});
 
+	it('keeps a workspace with members and deletes a person who only belongs to others', async () => {
+		started.length = 0;
+		await identity()
+			.prepare(
+				"INSERT INTO \"user\" (id, name, email, emailVerified, createdAt, updatedAt) VALUES ('user-host', 'host', 'host@example.com', 1, 0, 0), ('user-guest', 'guest', 'guest@example.com', 1, 0, 0)"
+			)
+			.run();
+		await createTenant(identity(), {
+			id: 't-host',
+			name: 'Shared',
+			ownerUserId: 'user-host',
+			analyticsShardId: 'analytics-1',
+			limits: { activeLinkLimit: 10, monthlyClickLimit: 10, retentionDays: 30, domainLimit: 1 },
+			now: 1
+		});
+		await identity()
+			.prepare(
+				"INSERT INTO tenant_memberships (tenant_id, user_id, role, created_at) VALUES ('t-host', 'user-guest', 'member', 2)"
+			)
+			.run();
+		const shared = await remove('user-host', 'host');
+		expect(shared.status).toBe(409);
+		expect(await json(shared)).toMatchObject({ error: { code: 'WORKSPACE_HAS_MEMBERS' } });
+		expect(started).toEqual([]);
+
+		const guest = await remove('user-guest', 'guest');
+		expect(guest.status).toBe(202);
+		expect(started).toEqual([]);
+		const left = await identity()
+			.prepare(
+				"SELECT (SELECT COUNT(*) FROM \"user\" WHERE id = 'user-guest') AS users, (SELECT COUNT(*) FROM tenant_memberships WHERE tenant_id = 't-host') AS members"
+			)
+			.first<{ users: number; members: number }>();
+		expect(left).toEqual({ users: 0, members: 1 });
+		expect((await remove('user-host', 'host')).status).toBe(202);
+		expect(started).toEqual(['t-host']);
+	});
+
 	it('deletes the shown workspace by its name and keeps the last one', async () => {
 		started.length = 0;
 		await identity()

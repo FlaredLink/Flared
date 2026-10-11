@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
 	import { maxEmailLength, normalizeEmail, type MemberPage } from '@flared/contracts/members';
-	import { cancelInvite, sendInvite } from './client';
+	import { cancelInvite, removeMember, sendInvite } from './client';
 	import { shownWorkspace } from './shown';
 	import Glyph from '../icons/Glyph.svelte';
 	import Badge from '../atoms/Badge.svelte';
@@ -16,11 +16,13 @@
 		// Called after a change succeeds, so the app reloads the list.
 		onChanged: () => void | Promise<void>;
 		workspaceName: string;
-		// Only the owner invites; a member sees the list.
+		// Only the owner invites and removes; a member sees the list and can leave.
 		owner: boolean;
+		// Called after the person leaves, so the app opens another workspace.
+		onLeft: () => void | Promise<void>;
 	}
 
-	let { page, apiBase, onChanged, workspaceName, owner }: Props = $props();
+	let { page, apiBase, onChanged, workspaceName, owner, onLeft }: Props = $props();
 	const workspace = shownWorkspace();
 	const dates = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 
@@ -71,6 +73,23 @@
 		await onChanged();
 	}
 
+	// The owner removes a member: "remove:<userId>". A member leaves: "leave".
+	async function remove(userId: string | null, address: string) {
+		pending = userId === null ? 'leave' : `remove:${userId}`;
+		status = '';
+		error = '';
+		const result = await removeMember(apiBase, userId === null ? 'self' : { userId }, workspace());
+		pending = null;
+		confirmingId = null;
+		if (!result.ok) {
+			error = result.message;
+			return;
+		}
+		if (userId === null) return onLeft();
+		status = `Removed ${address}. Their tokens and connected apps for ${workspaceName} stopped working.`;
+		await onChanged();
+	}
+
 	async function cancel(id: string, address: string) {
 		pending = `cancel:${id}`;
 		status = '';
@@ -93,7 +112,7 @@
 		title="Members"
 		lead={owner
 			? `People in ${workspaceName}. Members create and edit links and see analytics. Only you manage domains, billing, and members.`
-			: `People in ${workspaceName}. Only the workspace owner can invite or remove members.`}
+			: `People in ${workspaceName}. Only the workspace owner can invite or remove members. If you leave, your tokens and connected apps for ${workspaceName} stop working.`}
 	/>
 	<p class="count">
 		{page.used} of {page.limit} places used{page.invites.length > 0
@@ -145,6 +164,32 @@
 						>{member.role === 'owner' ? 'Owner' : 'Member'}</Badge
 					>
 				</span>
+				{#if member.role === 'member' && (owner || member.you)}
+					<span class="actions">
+						{#if confirmingId === member.userId}
+							<span class="confirm"
+								>{member.you ? `Leave ${workspaceName}?` : `Remove ${member.email}?`}</span
+							>
+							<Button
+								size="sm"
+								variant="danger"
+								disabled={pending !== null}
+								onclick={() => void remove(member.you ? null : member.userId, member.email)}
+								>{pending !== null ? 'Working…' : member.you ? 'Leave' : 'Remove'}</Button
+							>
+							<Button size="sm" variant="ghost" onclick={() => (confirmingId = null)}>Keep</Button>
+						{:else}
+							<Button
+								size="sm"
+								variant="danger-soft"
+								disabled={pending !== null}
+								aria-label={member.you ? `Leave ${workspaceName}` : `Remove ${member.email}`}
+								onclick={() => (confirmingId = member.userId)}
+								>{member.you ? 'Leave…' : 'Remove…'}</Button
+							>
+						{/if}
+					</span>
+				{/if}
 			</li>
 		{/each}
 	</ul>

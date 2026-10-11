@@ -5,6 +5,8 @@
 // deletion for its own reasons.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
 import { workspaceHeader } from '@flared/contracts/workspace';
+import { deleteMemberOnlyUser } from '@flared/data/deletions';
+import { ownedWorkspacesWithMembers } from '@flared/data/members';
 import { listWorkspaces } from '@flared/data/tenancy';
 import type { ApiAuthentication, ApiPrincipal } from './api';
 import { freshUntil } from './auth/session';
@@ -23,6 +25,7 @@ type AccountErrorCode =
 	| 'WORKSPACE_SUSPENDED'
 	| 'WORKSPACE_CHANGED'
 	| 'LAST_WORKSPACE'
+	| 'WORKSPACE_HAS_MEMBERS'
 	| 'UNSUPPORTED_MEDIA_TYPE'
 	| 'PAYLOAD_TOO_LARGE'
 	| 'METHOD_NOT_ALLOWED'
@@ -38,6 +41,7 @@ const statuses: Record<AccountErrorCode, number> = {
 	WORKSPACE_SUSPENDED: 409,
 	WORKSPACE_CHANGED: 409,
 	LAST_WORKSPACE: 409,
+	WORKSPACE_HAS_MEMBERS: 409,
 	UNSUPPORTED_MEDIA_TYPE: 415,
 	PAYLOAD_TOO_LARGE: 413,
 	METHOD_NOT_ALLOWED: 405,
@@ -167,15 +171,28 @@ export async function deleteAccount(
 	if (!checked.ok) return checked.response;
 	const { principal, confirmation, now } = checked;
 
-	const owned = (await listWorkspaces(identity, principal.userId)).filter(
-		(workspace) => workspace.role === 'owner'
-	);
-	if (owned.length === 0) return failure('NO_WORKSPACE', 'Your account has no workspace.');
+	const workspaces = await listWorkspaces(identity, principal.userId);
+	if (workspaces.length === 0) return failure('NO_WORKSPACE', 'Your account has no workspace.');
+	const owned = workspaces.filter((workspace) => workspace.role === 'owner');
 	const expected = await edition.confirmation(identity, principal.userId);
 	if (expected === null)
 		return failure('OWNER_REQUIRED', 'Only the workspace owner can delete it.');
 	if (confirmation.toLowerCase() !== expected.toLowerCase())
 		return failure('CONFIRMATION_MISMATCH', edition.mismatchMessage);
+	// A person who only belongs to other owners' workspaces has no workspace to delete: the
+	// account goes at once, and those workspaces stay.
+	if (owned.length === 0) {
+		if (!(await deleteMemberOnlyUser(identity, principal.userId)))
+			return failure('NO_WORKSPACE', 'Your account has no workspace.');
+		return accepted();
+	}
+	// Members would lose a workspace they use. The owner removes them or deletes that workspace.
+	const shared = await ownedWorkspacesWithMembers(identity, principal.userId);
+	if (shared.length > 0)
+		return failure(
+			'WORKSPACE_HAS_MEMBERS',
+			`${shared.map((name) => `“${name}”`).join(', ')} ${shared.length === 1 ? 'has' : 'have'} other members. Remove them in Settings, or delete ${shared.length === 1 ? 'that workspace' : 'those workspaces'}, before you delete your account.`
+		);
 	for (const workspace of owned) {
 		if (workspace.status === 'suspended')
 			return failure('WORKSPACE_SUSPENDED', edition.suspendedMessage(workspace.name));

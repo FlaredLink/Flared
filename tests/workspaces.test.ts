@@ -564,7 +564,9 @@ describe('roles', () => {
 		['POST', '/invites/accept', 'member'],
 		['POST', '/invites', 'owner'],
 		['POST', '/invites/:id/resend', 'owner'],
-		['DELETE', '/invites/:id', 'owner']
+		['DELETE', '/invites/:id', 'owner'],
+		['DELETE', '/members/:userId', 'owner'],
+		['POST', '/workspace/leave', 'member']
 	];
 
 	beforeAll(async () => {

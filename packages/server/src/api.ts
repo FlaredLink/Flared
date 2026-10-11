@@ -59,6 +59,7 @@ import {
 import {
 	acceptInvite,
 	cancelInvite,
+	removeMember,
 	countInviteEmail,
 	createInvite,
 	listInvites,
@@ -916,6 +917,43 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
 	});
 
+	// The owner removes a member. The member's tokens and connected apps for this workspace end.
+	app.delete('/members/:userId', async (context) => {
+		const principal = sessionOnly(context, 'Manage members in the Flared app.');
+		ownerOnly(context, 'Only the workspace owner can remove members.');
+		const userId = context.req.param('userId');
+		if (userId === principal.userId)
+			throw new ApiError(
+				'OWNER_CANNOT_LEAVE',
+				'You own this workspace. Delete the workspace, or give it to a member first.'
+			);
+		if (!(await removeMember(identity, { tenantId: context.var.tenantId, userId })))
+			throw new ApiError('NOT_FOUND', 'Member not found.');
+		console.log(JSON.stringify({ event: 'member_removed', requestId: context.var.requestId }));
+		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
+	});
+
+	// A member leaves the workspace the page shows. The page must name it, so a tab left on
+	// another workspace cannot leave this one.
+	app.post('/workspace/leave', async (context) => {
+		const principal = sessionOnly(context, 'Leave the workspace in the Flared app.');
+		const { tenantId, role, requestId } = context.var;
+		if (context.req.header(workspaceHeader) !== tenantId)
+			throw new ApiError(
+				'WORKSPACE_CHANGED',
+				'You switched workspaces in another tab. Reload the page to continue.'
+			);
+		if (role === 'owner')
+			throw new ApiError(
+				'OWNER_CANNOT_LEAVE',
+				'You own this workspace. Delete the workspace, or give it to a member first.'
+			);
+		if (!(await removeMember(identity, { tenantId, userId: principal.userId })))
+			throw new ApiError('NOT_FOUND', 'Workspace not found.');
+		console.log(JSON.stringify({ event: 'workspace_left', requestId }));
+		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
+	});
+
 	function inviteSettings(): InviteSettings {
 		if (!dependencies.invites) throw new ApiError('NOT_FOUND', 'Route not found.');
 		return dependencies.invites;
@@ -1017,6 +1055,8 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	app.all('/connected-apps', (context) => methodNotAllowed(context, 'GET'));
 	app.all('/connected-apps/:clientId', (context) => methodNotAllowed(context, 'DELETE'));
 	app.all('/members', (context) => methodNotAllowed(context, 'GET'));
+	app.all('/members/:userId', (context) => methodNotAllowed(context, 'DELETE'));
+	app.all('/workspace/leave', (context) => methodNotAllowed(context, 'POST'));
 	app.all('/invites', (context) => methodNotAllowed(context, 'POST'));
 	app.all('/invites/lookup', (context) => methodNotAllowed(context, 'POST'));
 	app.all('/invites/accept', (context) => methodNotAllowed(context, 'POST'));
@@ -1025,12 +1065,17 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	return app;
 }
 
-// A suspended workspace keeps what takes nothing new: the dashboard reads its data, and the
-// owner may end a token or connected app. A token or connected app may only export.
+// A suspended workspace keeps what takes nothing new: the dashboard reads its data, a person
+// may end a token or connected app, the owner may remove a member, and a member may leave. A
+// token or connected app may only export.
 function allowedWhileSuspended(principal: ApiPrincipal, method: string, path: string): boolean {
 	const read = method === 'GET' || method === 'HEAD';
 	if (principal.kind === 'session')
-		return read || (method === 'DELETE' && /^\/v1\/(?:tokens|connected-apps)\/[^/]+$/.test(path));
+		return (
+			read ||
+			(method === 'DELETE' && /^\/v1\/(?:tokens|connected-apps|members)\/[^/]+$/.test(path)) ||
+			(method === 'POST' && path === '/v1/workspace/leave')
+		);
 	return read && (path.startsWith('/v1/export/') || path === '/v1/me');
 }
 

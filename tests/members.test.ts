@@ -4,9 +4,10 @@
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { deleteIdentityRecords } from '../packages/data/src/deletions';
+import { deleteIdentityRecords, deleteMemberOnlyUser } from '../packages/data/src/deletions';
 import { createTenant, type PolicyLimits } from '../packages/data/src/tenancy';
 import { createApi } from '../packages/server/src/api';
+import { workspaceHeader } from '../packages/contracts/src/workspace';
 import type { EmailContent } from '../packages/server/src/email/transport';
 import { projectPolicy } from '../packages/server/src/tenancy';
 
@@ -95,8 +96,15 @@ function api(emailsPerDay?: number) {
 	});
 }
 
-async function call(userId: string, method: string, path: string, body?: unknown, app = api()) {
-	const headers: Record<string, string> = { 'x-test-session': `sess-${userId}`, origin };
+async function call(
+	userId: string,
+	method: string,
+	path: string,
+	body?: unknown,
+	app = api(),
+	extra: Record<string, string> = {}
+) {
+	const headers: Record<string, string> = { 'x-test-session': `sess-${userId}`, origin, ...extra };
 	const init: RequestInit = { method, headers };
 	if (body !== undefined) {
 		init.body = JSON.stringify(body);
@@ -274,5 +282,79 @@ describe('invites', () => {
 			.prepare("SELECT COUNT(*) AS n FROM tenant_invites WHERE tenant_id = 'ws-gone'")
 			.first<{ n: number }>();
 		expect(left?.n).toBe(0);
+	});
+});
+
+describe('removal and leaving', () => {
+	async function rows(sql: string, ...values: string[]): Promise<number> {
+		const row = await identity()
+			.prepare(`SELECT COUNT(*) AS n FROM ${sql}`)
+			.bind(...values)
+			.first<{ n: number }>();
+		return row?.n ?? -1;
+	}
+
+	beforeAll(async () => {
+		// ned is a member of ws-team and owns ws-ned; each workspace has one of ned's tokens.
+		await addWorkspace('ws-ned', 'Ned', 'ned', 2);
+		const db = identity();
+		await db.batch([
+			db.prepare(
+				"INSERT INTO apikey (id, referenceId, key, createdAt, updatedAt, metadata) VALUES ('key-team', 'ned', 'h-team', 0, 0, '{\"tenantId\":\"ws-team\"}'), ('key-own', 'ned', 'h-own', 0, 0, '{\"tenantId\":\"ws-ned\"}')"
+			),
+			db.prepare(
+				"INSERT INTO oauthClient (id, clientId, redirectUris) VALUES ('client-1', 'client-1', '[]')"
+			),
+			db.prepare(
+				"INSERT INTO oauthConsent (id, clientId, userId, referenceId, scopes) VALUES ('consent-team', 'client-1', 'ned', 'ws-team', '[]'), ('consent-own', 'client-1', 'ned', 'ws-ned', '[]')"
+			),
+			db.prepare(
+				"INSERT OR REPLACE INTO session_workspaces (session_id, tenant_id, updated_at) VALUES ('sess-ned', 'ws-team', 1)"
+			)
+		]);
+	});
+
+	it('removes a member with the credentials for that workspace only', async () => {
+		const self = await call('own', 'DELETE', '/members/own');
+		expect([self.status, self.body.error.code]).toEqual([409, 'OWNER_CANNOT_LEAVE']);
+		const byMember = await call('mia', 'DELETE', '/members/ned');
+		expect([byMember.status, byMember.body.error.code]).toEqual([403, 'OWNER_REQUIRED']);
+
+		expect((await call('own', 'DELETE', '/members/ned')).status).toBe(204);
+		expect(await rows("tenant_memberships WHERE user_id = 'ned'")).toBe(1);
+		expect(await rows("apikey WHERE referenceId = 'ned'")).toBe(1);
+		expect(await rows("apikey WHERE id = 'key-own'")).toBe(1);
+		expect(await rows("oauthConsent WHERE id = 'consent-own'")).toBe(1);
+		expect(await rows("oauthConsent WHERE id = 'consent-team'")).toBe(0);
+		// The session falls back to the workspace ned still has.
+		expect((await call('ned', 'GET', '/workspace')).body.workspace.id).toBe('ws-ned');
+		expect((await call('own', 'DELETE', '/members/ned')).status).toBe(404);
+	});
+
+	it('lets a member leave and keeps the owner', async () => {
+		const owner = await call('own', 'POST', '/workspace/leave', undefined, api(), {
+			[workspaceHeader]: 'ws-team'
+		});
+		expect([owner.status, owner.body.error.code]).toEqual([409, 'OWNER_CANNOT_LEAVE']);
+		// Without the workspace the page shows, nothing changes.
+		const unnamed = await call('mia', 'POST', '/workspace/leave');
+		expect([unnamed.status, unnamed.body.error.code]).toEqual([409, 'WORKSPACE_CHANGED']);
+		const left = await call('mia', 'POST', '/workspace/leave', undefined, api(), {
+			[workspaceHeader]: 'ws-team'
+		});
+		expect(left.status).toBe(204);
+		const after = await call('mia', 'GET', '/links');
+		expect([after.status, after.body.error.code]).toEqual([403, 'NO_WORKSPACE']);
+	});
+
+	it('deletes a person who owns no workspace, and never an owner', async () => {
+		expect(await deleteMemberOnlyUser(identity(), 'own')).toBe(false);
+		expect(await rows("user WHERE id = 'own'")).toBe(1);
+		expect(await rows("tenant_memberships WHERE user_id = 'oli'")).toBe(1);
+		expect(await deleteMemberOnlyUser(identity(), 'oli')).toBe(true);
+		expect(await rows("user WHERE id = 'oli'")).toBe(0);
+		expect(await rows("tenant_memberships WHERE user_id = 'oli'")).toBe(0);
+		expect(await rows('"session" WHERE "userId" = \'oli\'')).toBe(0);
+		expect(await rows("tenant_memberships WHERE tenant_id = 'ws-team'")).toBe(1);
 	});
 });

@@ -36,6 +36,8 @@ export const errorStatus = {
 	INVITE_PENDING: 409,
 	// The signed-in person's address is not the one the invite is for.
 	INVITE_FOR_ANOTHER_EMAIL: 403,
+	// The owner cannot leave or be removed; the workspace needs an owner.
+	OWNER_CANNOT_LEAVE: 409,
 	LINK_BLOCKED: 409,
 	NOT_FOUND: 404,
 	METHOD_NOT_ALLOWED: 405,

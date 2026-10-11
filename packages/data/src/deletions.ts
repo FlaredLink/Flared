@@ -381,3 +381,25 @@ export async function deleteIdentityRecords(
 			.bind(now)
 	]);
 }
+
+// Deletes a user who owns no workspace: their memberships, then the user row, whose sessions,
+// passkeys, tokens, and connected apps go with it. Returns false, and changes nothing, when the
+// user owns a workspace.
+export async function deleteMemberOnlyUser(db: D1Database, userId: string): Promise<boolean> {
+	const ownsNone =
+		"NOT EXISTS (SELECT 1 FROM tenant_memberships WHERE user_id = ?1 AND role = 'owner')";
+	const [, user] = await db.batch([
+		db
+			.prepare(
+				`DELETE FROM tenant_memberships WHERE user_id = ?1 AND role = 'member' AND ${ownsNone}`
+			)
+			.bind(userId),
+		db
+			.prepare(
+				'DELETE FROM "user" WHERE id = ?1 AND NOT EXISTS (SELECT 1 FROM tenant_memberships WHERE user_id = ?1)'
+			)
+			.bind(userId)
+	]);
+	// D1 counts the rows the user's deletion removes in other tables too.
+	return user.meta.changes > 0;
+}

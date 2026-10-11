@@ -90,7 +90,9 @@ const sessionOnly = [
 	'POST /invites/lookup',
 	'POST /invites/accept',
 	'POST /invites/{id}/resend',
-	'DELETE /invites/{id}'
+	'DELETE /invites/{id}',
+	'DELETE /members/{userId}',
+	'POST /workspace/leave'
 ];
 const document = openApiDocument(baseUrl);
 type Operation = { responses: Record<string, { content?: Record<string, { schema: unknown }> }> };

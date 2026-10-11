@@ -189,3 +189,36 @@ export async function acceptInvite(apiBase: string, token: string): Promise<Invi
 		return { ok: false, message: failed };
 	}
 }
+
+// The owner removes a member, or a member leaves the workspace the page shows.
+export async function removeMember(
+	apiBase: string,
+	target: { userId: string } | 'self',
+	workspace: Record<string, string>
+): Promise<{ ok: true } | { ok: false; message: string }> {
+	const failed =
+		target === 'self'
+			? 'We could not take you out of the workspace. Try again.'
+			: 'We could not remove the member. Try again.';
+	try {
+		const response =
+			target === 'self'
+				? await fetch(`${apiBase}/workspace/leave`, { method: 'POST', headers: workspace })
+				: await fetch(`${apiBase}/members/${encodeURIComponent(target.userId)}`, {
+						method: 'DELETE',
+						headers: workspace
+					});
+		if (response.status === 204) return { ok: true };
+		const { code, message } = errorOf(await response.json().catch(() => null));
+		if (
+			(code === 'OWNER_CANNOT_LEAVE' ||
+				code === 'WORKSPACE_CHANGED' ||
+				code === 'OWNER_REQUIRED') &&
+			typeof message === 'string'
+		)
+			return { ok: false, message };
+		return { ok: false, message: failed };
+	} catch {
+		return { ok: false, message: failed };
+	}
+}
