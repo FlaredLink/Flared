@@ -11,7 +11,8 @@ import { createClickConsumer, type QueueMessage } from '../packages/server/src/a
 import { createApi } from '../packages/server/src/api';
 import {
 	cleanupDeletions,
-	requestDeletion,
+	requestAccountDeletion,
+	requestWorkspaceDeletion,
 	routeSettleMs,
 	runDeletions,
 	type DeletionDependencies
@@ -224,21 +225,15 @@ describe('workspace deletion', () => {
 	it('ends every credential at once and refuses the API, once per workspace', async () => {
 		// An outstanding projection must not bring the routing policy back later.
 		await updateTenantPolicy(identity(), 't-gone', { ...limits, activeLinkLimit: 50 }, 2);
-		expect(
-			await requestDeletion(identity(), { userId: 'user-gone', tenantId: 't-gone' }, start)
-		).toEqual({
+		expect(await requestAccountDeletion(identity(), { userId: 'user-gone' }, start)).toEqual({
 			status: 'started',
-			tenantId: 't-gone'
+			tenantIds: ['t-gone']
 		});
-		expect(
-			await requestDeletion(identity(), { userId: 'user-gone', tenantId: 't-gone' }, start)
-		).toEqual({
+		expect(await requestAccountDeletion(identity(), { userId: 'user-gone' }, start)).toEqual({
 			status: 'already_deleting',
-			tenantId: 't-gone'
+			tenantIds: ['t-gone']
 		});
-		expect(
-			await requestDeletion(identity(), { userId: 'user-nobody', tenantId: 't-gone' }, start)
-		).toEqual({
+		expect(await requestAccountDeletion(identity(), { userId: 'user-nobody' }, start)).toEqual({
 			status: 'no_workspace'
 		});
 		for (const table of ['"session"', '"apikey"', '"oauthConsent"'])
@@ -366,7 +361,7 @@ describe('workspace deletion', () => {
 	it('sends each email once even when a send fails, and keeps the ledger for 90 days', async () => {
 		await addWorkspace('quiet');
 		failEmail = true;
-		await requestDeletion(identity(), { userId: 'user-quiet', tenantId: 't-quiet' }, start);
+		await requestAccountDeletion(identity(), { userId: 'user-quiet' }, start);
 		await runDeletions(deps(start), { tenantId: 't-quiet' });
 		await identity().prepare('UPDATE tenant_deletions SET next_attempt_at = 0').run();
 		await runDeletions(deps(start + routeSettleMs), { tenantId: 't-quiet' });
@@ -402,5 +397,167 @@ describe('workspace deletion', () => {
 				now: 2
 			})
 		).rejects.toThrow();
+	});
+});
+
+describe('several workspaces of one user', () => {
+	const later = start + 86400000;
+	async function addSecond(id: string, name: string, userId: string): Promise<void> {
+		await createTenant(identity(), {
+			id,
+			name,
+			ownerUserId: userId,
+			analyticsShardId: 'analytics-1',
+			limits,
+			now: 2
+		});
+		await projectPolicy(identity(), stores(), id, 2);
+	}
+	// Runs one workspace's job as far as it goes, past the snapshot wait.
+	async function finish(tenantId: string, at: number): Promise<void> {
+		await runDeletions(deps(at), { tenantId });
+		await identity().prepare('UPDATE tenant_deletions SET next_attempt_at = 0').run();
+		await runDeletions(deps(at + routeSettleMs), { tenantId });
+	}
+	const mail = (to: string) =>
+		sent.filter((email) => email.to === to).map((email) => email.subject);
+
+	it('deletes one workspace and keeps the account, its sessions, and the other workspace', async () => {
+		await addWorkspace('multi');
+		await addSecond('t-multi-2', 'Side project', 'user-multi');
+		expect(
+			await requestWorkspaceDeletion(
+				identity(),
+				{ userId: 'user-multi', tenantId: 't-multi-2', workspaceName: 'Side project' },
+				later
+			)
+		).toEqual({ status: 'started', tenantId: 't-multi-2' });
+		expect(
+			await requestWorkspaceDeletion(
+				identity(),
+				{ userId: 'user-multi', tenantId: 't-multi-2', workspaceName: 'Side project' },
+				later
+			)
+		).toEqual({ status: 'already_deleting', tenantId: 't-multi-2' });
+		expect(await rows(identity(), '"session" WHERE "userId" = ?', 'user-multi')).toBe(1);
+		expect(await rows(identity(), '"apikey" WHERE "referenceId" = ?', 'user-multi')).toBe(1);
+		expect(await rows(identity(), '"oauthConsent" WHERE "referenceId" = ?', 't-multi')).toBe(1);
+		// With the other workspace on its way out, the first one is the last.
+		expect(
+			await requestWorkspaceDeletion(
+				identity(),
+				{ userId: 'user-multi', tenantId: 't-multi', workspaceName: 'Workspace' },
+				later
+			)
+		).toEqual({ status: 'last_workspace', tenantId: 't-multi' });
+		expect(await rows(identity(), 'tenant_deletions WHERE tenant_id = ?', 't-multi')).toBe(0);
+
+		await finish('t-multi-2', later);
+		expect(mail('multi@example.com')).toEqual([
+			'We are deleting the workspace “Side project”',
+			'The workspace “Side project” is deleted'
+		]);
+		const ledger = await identity()
+			.prepare(
+				'SELECT state, scope, workspace_name, contact_email FROM tenant_deletions WHERE tenant_id = ?'
+			)
+			.bind('t-multi-2')
+			.first();
+		expect(ledger).toEqual({
+			state: 'completed',
+			scope: 'workspace',
+			workspace_name: null,
+			contact_email: null
+		});
+		expect(await rows(identity(), 'tenants WHERE id = ?', 't-multi-2')).toBe(0);
+		expect(await rows(identity(), '"user" WHERE id = ?', 'user-multi')).toBe(1);
+		expect(await rows(routing(), 'links WHERE tenant_id = ?', 't-multi')).toBe(2);
+	});
+
+	it('lets only one of two concurrent requests delete a workspace of the last two', async () => {
+		await addWorkspace('pair');
+		await addSecond('t-pair-2', 'Second', 'user-pair');
+		const results = await Promise.all(
+			['t-pair', 't-pair-2'].map((tenantId) =>
+				requestWorkspaceDeletion(
+					identity(),
+					{ userId: 'user-pair', tenantId, workspaceName: 'x' },
+					later
+				)
+			)
+		);
+		expect(results.map((result) => result.status).sort()).toEqual(['last_workspace', 'started']);
+		expect(await rows(identity(), "tenant_deletions WHERE user_id = 'user-pair'")).toBe(1);
+	});
+
+	it('deletes every workspace of the account and reports the end once the user is gone', async () => {
+		await addSecond('t-multi-3', 'Third', 'user-multi');
+		const api = createApi({
+			identity: identity(),
+			routing: routing(),
+			appOrigin: 'https://app.example',
+			authenticate: async () => ({
+				kind: 'session',
+				userId: 'user-multi',
+				sessionId: 'session-multi',
+				signedInAt: ''
+			}),
+			createWorkspace: async () => ({ status: 'created', tenantId: 't-never' })
+		});
+		expect(await requestAccountDeletion(identity(), { userId: 'user-multi' }, later)).toEqual({
+			status: 'started',
+			tenantIds: ['t-multi', 't-multi-3']
+		});
+		for (const table of ['"session"', '"apikey"', '"oauthConsent"'])
+			expect(
+				await rows(
+					identity(),
+					`${table} WHERE ${table === '"apikey"' ? '"referenceId"' : '"userId"'} = ?`,
+					'user-multi'
+				),
+				table
+			).toBe(0);
+		const contacts = await identity()
+			.prepare(
+				"SELECT tenant_id, scope, contact_email FROM tenant_deletions WHERE user_id = 'user-multi' AND state = 'running' ORDER BY tenant_id"
+			)
+			.all();
+		expect(contacts.results).toEqual([
+			{ tenant_id: 't-multi', scope: 'account', contact_email: 'multi@example.com' },
+			{ tenant_id: 't-multi-3', scope: 'account', contact_email: null }
+		]);
+		// A new sign-in during the deletion cannot start a workspace.
+		const create = await api.fetch(
+			new Request('https://app.example/v1/workspaces', {
+				method: 'POST',
+				headers: { origin: 'https://app.example', 'content-type': 'application/json' },
+				body: JSON.stringify({ name: 'New' })
+			})
+		);
+		expect(((await create.json()) as { error: { code: string } }).error.code).toBe(
+			'ACCOUNT_DELETING'
+		);
+
+		// The first job is done with its workspace, but the user still has the third.
+		await finish('t-multi', later);
+		expect(mail('multi@example.com').slice(2)).toEqual(['We are deleting your Flared account']);
+		expect(
+			await rows(
+				identity(),
+				"tenant_deletions WHERE tenant_id = 't-multi' AND step = 'completed_notice'"
+			)
+		).toBe(1);
+		await finish('t-multi-3', later);
+		expect(await rows(identity(), '"user" WHERE id = ?', 'user-multi')).toBe(0);
+		expect(mail('multi@example.com').slice(2)).toEqual(['We are deleting your Flared account']);
+		await identity().prepare('UPDATE tenant_deletions SET next_attempt_at = 0').run();
+		await runDeletions(deps(later + 600000), { tenantId: 't-multi' });
+		expect(mail('multi@example.com').slice(2)).toEqual([
+			'We are deleting your Flared account',
+			'Your Flared account is deleted'
+		]);
+		expect(
+			await rows(identity(), "tenant_deletions WHERE user_id = 'user-multi' AND state = 'running'")
+		).toBe(0);
 	});
 });

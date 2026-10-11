@@ -12,8 +12,12 @@ import {
 	installD1ProofGuards,
 	withIdentityProofScope
 } from '../packages/data/src/identity-proof-guards';
-import { createTenant } from '../packages/data/src/tenancy';
-import { deleteAccount, type AccountDeletionEdition } from '../packages/server/src/account';
+import { createTenant, listWorkspaces } from '../packages/data/src/tenancy';
+import {
+	deleteAccount,
+	deleteWorkspace,
+	type AccountDeletionEdition
+} from '../packages/server/src/account';
 import { apiAuthenticator, sessionPrincipal } from '../packages/server/src/api/compose';
 import type { ApiTokenAuth } from '../packages/server/src/auth/api-tokens';
 import { checkedTableName, consumePasskeyBudget } from '../packages/server/src/auth/limits';
@@ -375,7 +379,7 @@ describe('account deletion route', () => {
 			return row?.name || null;
 		},
 		mismatchMessage: 'Type your name.',
-		suspendedMessage: 'Suspended.',
+		suspendedMessage: (name) => `${name} is suspended.`,
 		async refuse() {
 			return refusal ? { code: 'EDITION_REFUSED', status: 409, message: 'Not now.' } : null;
 		}
@@ -448,6 +452,76 @@ describe('account deletion route', () => {
 		const accepted = await remove('user-owner', 'OWNER');
 		expect(accepted.status).toBe(202);
 		expect(started).toEqual(['t-owner']);
+	});
+
+	it('deletes the shown workspace by its name and keeps the last one', async () => {
+		started.length = 0;
+		await identity()
+			.prepare(
+				"INSERT INTO \"user\" (id, name, email, emailVerified, createdAt, updatedAt) VALUES ('user-two', 'two', 'two@example.com', 1, 0, 0)"
+			)
+			.run();
+		for (const [id, name, now] of [
+			['t-alpha', 'Alpha', 1],
+			['t-beta', 'Beta', 2]
+		] as const)
+			await createTenant(identity(), {
+				id,
+				name,
+				ownerUserId: 'user-two',
+				analyticsShardId: 'analytics-1',
+				limits: { activeLinkLimit: 10, monthlyClickLimit: 10, retentionDays: 30, domainLimit: 1 },
+				now
+			});
+		const removeWorkspace = (confirmation: string, shown: string | null) =>
+			deleteWorkspace(
+				new Request(`${origin}/api/workspace/delete`, {
+					method: 'POST',
+					headers: {
+						origin,
+						'content-type': 'application/json',
+						...(shown ? { 'x-flared-workspace': shown } : {})
+					},
+					body: JSON.stringify({ confirmation })
+				}),
+				{
+					identity: identity(),
+					appOrigin: origin,
+					authenticate: async () => ({
+						kind: 'session',
+						sessionId: 'session-two',
+						userId: 'user-two',
+						signedInAt: fresh
+					}),
+					start: (tenantId) => started.push(tenantId),
+					edition
+				}
+			);
+		// The session shows Alpha, its oldest workspace. A tab that shows Beta, or names none,
+		// deletes nothing.
+		for (const shown of ['t-beta', null])
+			expect((await json(await removeWorkspace('Beta', shown))).error.code).toBe(
+				'WORKSPACE_CHANGED'
+			);
+		expect((await json(await removeWorkspace('two@example.com', 't-alpha'))).error).toMatchObject({
+			code: 'CONFIRMATION_MISMATCH'
+		});
+		refusal = true;
+		expect((await json(await removeWorkspace('alpha', 't-alpha'))).error.code).toBe(
+			'EDITION_REFUSED'
+		);
+		refusal = false;
+		expect((await removeWorkspace(' alpha ', 't-alpha')).status).toBe(202);
+		expect(started).toEqual(['t-alpha']);
+		expect(await listWorkspaces(identity(), 'user-two')).toMatchObject([
+			{ id: 't-alpha', status: 'deleting' },
+			{ id: 't-beta', status: 'pending' }
+		]);
+		// The session now shows Beta, which is the last workspace.
+		const last = await removeWorkspace('Beta', 't-beta');
+		expect(last.status).toBe(409);
+		expect((await json(last)).error.code).toBe('LAST_WORKSPACE');
+		expect(started).toEqual(['t-alpha']);
 	});
 });
 

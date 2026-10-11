@@ -87,6 +87,10 @@
 			"types": "./src/workspace/WorkspaceName.svelte",
 			"svelte": "./src/workspace/WorkspaceName.svelte"
 		},
+		"./workspace/DeleteWorkspace.svelte": {
+			"types": "./src/workspace/DeleteWorkspace.svelte",
+			"svelte": "./src/workspace/DeleteWorkspace.svelte"
+		},
 		"./theme/ThemeControl.svelte": {
 			"types": "./src/theme/ThemeControl.svelte",
 			"svelte": "./src/theme/ThemeControl.svelte"

@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Workspace deletion: the request ends every credential at once, then a resumable job stops the
-// redirects, waits out the redirect snapshots, and deletes the analytics, routing, and identity
-// records in bounded steps. Slug reservations stay, so a deleted address is never reused.
+// Workspace and account deletion: the request ends the affected credentials at once, then a
+// resumable job for each workspace stops the redirects, waits out the redirect snapshots, and
+// deletes the analytics, routing, and identity records in bounded steps. Slug reservations
+// stay, so a deleted address is never reused.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
 import {
+	accountDeletionRunning,
 	claimDeletions,
 	completeDeletion,
-	createDeletion,
+	createAccountDeletion,
+	createWorkspaceDeletion,
 	deleteAnalyticsData,
 	deleteExpiredDeletions,
 	deleteIdentityRecords,
@@ -15,11 +18,12 @@ import {
 	failDeletion,
 	saveDeletion,
 	tombstoneTenant,
+	userRemains,
 	type DeletionJob,
 	type DeletionStep
 } from '@flared/data/deletions';
 import { listDomains } from '@flared/data/domains';
-import { readTenantShard } from '@flared/data/tenancy';
+import { listWorkspaces, readTenantShard } from '@flared/data/tenancy';
 import { removeDomain, type DomainSettings } from './domains';
 import type { EmailContent, EmailTransport } from './email/transport';
 import { resolveShard, type AnalyticsShards } from './shards';
@@ -30,6 +34,8 @@ export const routeSettleMs = 70_000;
 const rowsPerBatch = 1000;
 const batchesPerRun = 20;
 const stepsPerRun = 12;
+// How often an account's first job checks whether the other jobs have deleted the user.
+const accountWaitMs = 5 * 60_000;
 
 export interface DeletionEmail {
 	transport: EmailTransport;
@@ -48,51 +54,117 @@ export interface DeletionDependencies {
 	now?: () => number;
 }
 
-export type DeletionRequest =
+export type WorkspaceDeletionRequest =
 	| { status: 'started'; tenantId: string }
 	| { status: 'already_deleting'; tenantId: string }
 	// The operator suspended the workspace; it cannot be deleted until it is reinstated.
 	| { status: 'suspended'; tenantId: string }
+	// The user has no other workspace. Deleting the account removes the last one.
+	| { status: 'last_workspace'; tenantId: string }
 	| { status: 'no_workspace' };
 
-// Starts the deletion of one of the user's workspaces. The caller has checked the session, a
-// recent sign-in, the owner role, the confirmation, and its own conditions. Safe to repeat.
-export async function requestDeletion(
-	identity: D1Database,
-	request: { userId: string; tenantId: string },
-	now: number
-): Promise<DeletionRequest> {
-	const { userId } = request;
-	const tenant = await resolveTenant(identity, request);
-	if (tenant.status === 'none') return { status: 'no_workspace' };
-	if (tenant.status === 'deleting')
-		return { status: 'already_deleting', tenantId: tenant.tenantId };
-	if (tenant.status === 'active' && tenant.suspension)
-		return { status: 'suspended', tenantId: tenant.tenantId };
-	const shardId = await readTenantShard(identity, tenant.tenantId);
+async function readContact(identity: D1Database, userId: string): Promise<string | null | false> {
 	const user = await identity
 		.prepare('SELECT "email", "emailVerified" FROM "user" WHERE "id" = ?')
 		.bind(userId)
 		.first<{ email: unknown; emailVerified: unknown }>();
-	if (!shardId || !user) return { status: 'no_workspace' };
+	if (!user) return false;
 	// Only a verified address receives the deletion emails.
-	const contact = user.emailVerified === 1 && typeof user.email === 'string' ? user.email : null;
-	const created = await createDeletion(identity, {
-		tenantId: tenant.tenantId,
+	return user.emailVerified === 1 && typeof user.email === 'string' ? user.email : null;
+}
+
+// Starts the deletion of one workspace; the user keeps the account and the other workspaces.
+// The caller has checked the session, a recent sign-in, the owner role, the confirmation, and
+// its own conditions. Safe to repeat.
+export async function requestWorkspaceDeletion(
+	identity: D1Database,
+	request: { userId: string; tenantId: string; workspaceName: string },
+	now: number
+): Promise<WorkspaceDeletionRequest> {
+	const { userId, tenantId } = request;
+	const tenant = await resolveTenant(identity, { userId, tenantId });
+	if (tenant.status === 'none') return { status: 'no_workspace' };
+	if (tenant.status === 'deleting') return { status: 'already_deleting', tenantId };
+	if (tenant.status === 'active' && tenant.suspension) return { status: 'suspended', tenantId };
+	const shardId = await readTenantShard(identity, tenantId);
+	const contact = await readContact(identity, userId);
+	if (!shardId || contact === false) return { status: 'no_workspace' };
+	const created = await createWorkspaceDeletion(identity, {
+		tenantId,
 		userId,
 		analyticsShardId: shardId,
+		workspaceName: request.workspaceName,
 		contactEmail: contact,
 		now
 	});
 	if (!created) {
-		// A concurrent request started the deletion, or a suspension landed after the check.
-		const current = await resolveTenant(identity, request);
-		return current.status === 'deleting'
-			? { status: 'already_deleting', tenantId: tenant.tenantId }
-			: { status: 'suspended', tenantId: tenant.tenantId };
+		// A concurrent request started it, a suspension landed after the check, or the user's
+		// other workspaces went first.
+		const current = await resolveTenant(identity, { userId, tenantId });
+		if (current.status === 'deleting') return { status: 'already_deleting', tenantId };
+		if (current.status === 'active' && current.suspension) return { status: 'suspended', tenantId };
+		return current.status === 'none'
+			? { status: 'no_workspace' }
+			: { status: 'last_workspace', tenantId };
 	}
-	console.log(JSON.stringify({ event: 'deletion_requested', tenantId: tenant.tenantId }));
-	return { status: 'started', tenantId: tenant.tenantId };
+	console.log(JSON.stringify({ event: 'deletion_requested', scope: 'workspace', tenantId }));
+	return { status: 'started', tenantId };
+}
+
+export type AccountDeletionResult =
+	// tenantIds: the workspaces whose jobs run now.
+	| { status: 'started'; tenantIds: string[] }
+	| { status: 'already_deleting'; tenantIds: string[] }
+	// The operator suspended one of the user's workspaces; nothing is deleted until it is
+	// reinstated.
+	| { status: 'suspended'; workspaceName: string }
+	| { status: 'no_workspace' };
+
+// Starts the deletion of the account: every workspace the user owns, then the user. The caller
+// has checked the session, a recent sign-in, the confirmation, and its own conditions for each
+// workspace. Safe to repeat.
+export async function requestAccountDeletion(
+	identity: D1Database,
+	request: { userId: string },
+	now: number
+): Promise<AccountDeletionResult> {
+	const { userId } = request;
+	const owned = (await listWorkspaces(identity, userId)).filter(
+		(workspace) => workspace.role === 'owner'
+	);
+	const running = () =>
+		owned.filter((workspace) => workspace.status === 'deleting').map((workspace) => workspace.id);
+	const suspended = owned.find((workspace) => workspace.status === 'suspended');
+	if (suspended) return { status: 'suspended', workspaceName: suspended.name };
+	const remaining = owned.filter((workspace) => workspace.status !== 'deleting');
+	if (remaining.length === 0)
+		return (await accountDeletionRunning(identity, userId))
+			? { status: 'already_deleting', tenantIds: running() }
+			: { status: 'no_workspace' };
+	const workspaces: { tenantId: string; analyticsShardId: string }[] = [];
+	for (const workspace of remaining) {
+		const shardId = await readTenantShard(identity, workspace.id);
+		if (!shardId) return { status: 'no_workspace' };
+		workspaces.push({ tenantId: workspace.id, analyticsShardId: shardId });
+	}
+	const contact = await readContact(identity, userId);
+	if (contact === false) return { status: 'no_workspace' };
+	const tenantIds = workspaces.map((workspace) => workspace.tenantId);
+	if (
+		!(await createAccountDeletion(identity, { userId, workspaces, contactEmail: contact, now }))
+	) {
+		// A suspension landed after the check, or a concurrent request started every job.
+		const current = (await listWorkspaces(identity, userId)).find(
+			(workspace) => workspace.role === 'owner' && workspace.status === 'suspended'
+		);
+		return current
+			? { status: 'suspended', workspaceName: current.name }
+			: { status: 'already_deleting', tenantIds };
+	}
+	console.log(
+		JSON.stringify({ event: 'deletion_requested', scope: 'account', workspaces: tenantIds.length })
+	);
+	return { status: 'started', tenantIds };
 }
 
 function escape(value: string): string {
@@ -104,25 +176,45 @@ function escape(value: string): string {
 }
 
 // The request already needed a recent sign-in and the typed confirmation, and a deletion cannot
-// be undone, so the emails only report progress.
-export function deletionEmail(kind: 'accepted' | 'completed', to: string): EmailContent {
+// be undone, so the emails only report progress. A workspace deletion names the workspace.
+export function deletionEmail(
+	kind: 'accepted' | 'completed',
+	to: string,
+	workspaceName: string | null = null
+): EmailContent {
 	const content =
-		kind === 'accepted'
-			? {
-					subject: 'We are deleting your Flared account',
-					lines: [
-						'We received the request to delete your Flared account. Your short links no longer redirect, and every sign-in, API token, and connected app has stopped working.',
-						'We are now removing your links, domains, and analytics. We will email you again when the deletion is complete.'
-					]
-				}
-			: {
-					subject: 'Your Flared account is deleted',
-					lines: [
-						'Your Flared account, links, domains, and analytics are deleted.',
-						'The short-link addresses you used stay reserved, so no one else can use them. These reservations hold no account details or destinations.',
-						'You can sign up again with this email address at any time.'
-					]
-				};
+		workspaceName !== null
+			? kind === 'accepted'
+				? {
+						subject: `We are deleting the workspace “${workspaceName}”`,
+						lines: [
+							`We received the request to delete the Flared workspace “${workspaceName}”. Its short links no longer redirect, and its API tokens and connected apps have stopped working.`,
+							'Your account and your other workspaces stay. We are now removing the links, domains, and analytics of this workspace. We will email you again when the deletion is complete.'
+						]
+					}
+				: {
+						subject: `The workspace “${workspaceName}” is deleted`,
+						lines: [
+							`The Flared workspace “${workspaceName}” and its links, domains, and analytics are deleted.`,
+							'The short-link addresses it used stay reserved, so no one else can use them. These reservations hold no account details or destinations.'
+						]
+					}
+			: kind === 'accepted'
+				? {
+						subject: 'We are deleting your Flared account',
+						lines: [
+							'We received the request to delete your Flared account. Your short links no longer redirect, and every sign-in, API token, and connected app has stopped working.',
+							'We are now removing your links, domains, and analytics. We will email you again when the deletion is complete.'
+						]
+					}
+				: {
+						subject: 'Your Flared account is deleted',
+						lines: [
+							'Your Flared account, links, domains, and analytics are deleted.',
+							'The short-link addresses you used stay reserved, so no one else can use them. These reservations hold no account details or destinations.',
+							'You can sign up again with this email address at any time.'
+						]
+					};
 	return {
 		to,
 		subject: content.subject,
@@ -139,7 +231,9 @@ async function notify(
 ): Promise<void> {
 	if (!deps.email || !job.contactEmail) return;
 	try {
-		await deps.email.transport.send(deletionEmail(kind, job.contactEmail));
+		await deps.email.transport.send(
+			deletionEmail(kind, job.contactEmail, job.scope === 'workspace' ? job.workspaceName : null)
+		);
 	} catch {
 		console.error(
 			JSON.stringify({ event: 'deletion_email_unknown', kind, tenantId: job.tenantId })
@@ -226,6 +320,16 @@ async function advance(deps: DeletionDependencies, job: DeletionJob): Promise<bo
 				next = 'completed_notice';
 				break;
 			case 'completed_notice':
+				// The account email waits for the jobs of the user's other workspaces: the last one
+				// deletes the user.
+				if (
+					job.scope === 'account' &&
+					job.contactEmail &&
+					(await userRemains(identity, job.userId))
+				) {
+					await save('completed_notice', now() + accountWaitMs);
+					return false;
+				}
 				await notify(deps, job, 'completed');
 				await completeDeletion(identity, tenantId, now());
 				console.log(JSON.stringify({ event: 'deletion_completed', tenantId }));

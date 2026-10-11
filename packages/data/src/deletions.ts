@@ -16,11 +16,16 @@ export const deletionSteps = [
 ] as const;
 export type DeletionStep = (typeof deletionSteps)[number];
 
+export type DeletionScope = 'account' | 'workspace';
+
 export interface DeletionJob {
 	tenantId: string;
 	userId: string;
 	analyticsShardId: string;
 	contactEmail: string | null;
+	scope: DeletionScope;
+	// Set for a workspace deletion, so its emails name the workspace.
+	workspaceName: string | null;
 	step: DeletionStep;
 	requestedAt: number;
 	routesStoppedAt: number | null;
@@ -44,11 +49,15 @@ function count(value: unknown, field: string): number {
 function toJob(row: Record<string, unknown>): DeletionJob {
 	const step = deletionSteps.find((name) => name === row.step);
 	if (!step) throw new Error('Invalid stored deletion step');
+	if (row.scope !== 'account' && row.scope !== 'workspace')
+		throw new Error('Invalid stored deletion scope');
 	return {
 		tenantId: text(row.tenant_id, 'tenant'),
 		userId: text(row.user_id, 'user'),
 		analyticsShardId: text(row.analytics_shard_id, 'shard'),
 		contactEmail: row.contact_email === null ? null : text(row.contact_email, 'contact'),
+		scope: row.scope,
+		workspaceName: row.workspace_name === null ? null : text(row.workspace_name, 'name'),
 		step,
 		requestedAt: count(row.requested_at, 'request time'),
 		routesStoppedAt:
@@ -58,49 +67,132 @@ function toJob(row: Record<string, unknown>): DeletionJob {
 }
 
 const jobColumns =
-	'tenant_id, user_id, analytics_shard_id, contact_email, step, requested_at, routes_stopped_at, attempts';
+	'tenant_id, user_id, analytics_shard_id, contact_email, scope, workspace_name, step, requested_at, routes_stopped_at, attempts';
 
-// One batch: the job; every API token and connected app bound to the workspace; and, when it is
-// the user's last workspace, the user's sessions and remaining credentials. Nothing can act for
-// the workspace once the request returns. Returns false when a deletion already exists or the
-// operator suspended the tenant; a suspended tenant keeps its credentials too.
-export async function createDeletion(
+// The tokens, connected apps, and MCP access bound to the workspace. Each statement runs only
+// when the batch created or found the workspace's job.
+const tenantCredentials = [
+	`DELETE FROM "apikey" WHERE json_extract("metadata", '$.tenantId') = ?1`,
+	'DELETE FROM "oauthAccessToken" WHERE "referenceId" = ?1',
+	'DELETE FROM "oauthRefreshToken" WHERE "referenceId" = ?1',
+	'DELETE FROM "oauthConsent" WHERE "referenceId" = ?1'
+];
+
+const notSuspended = (tenant: string) =>
+	`NOT EXISTS (SELECT 1 FROM tenant_policy WHERE tenant_id = ${tenant} AND suspended_at IS NOT NULL)`;
+const hasJob = (tenant: string) =>
+	`EXISTS (SELECT 1 FROM tenant_deletions WHERE tenant_id = ${tenant})`;
+
+export interface WorkspaceDeletionRequest {
+	tenantId: string;
+	userId: string;
+	analyticsShardId: string;
+	workspaceName: string;
+	contactEmail: string | null;
+	now: number;
+}
+
+// One batch: the job and every credential bound to the workspace. The user keeps the account,
+// the sessions, and the other workspaces, so the batch needs another workspace of the user that
+// is not being deleted. Returns false when that is missing, a deletion already exists, or the
+// operator suspended the tenant; nothing changes then.
+export async function createWorkspaceDeletion(
 	db: D1Database,
-	request: {
-		tenantId: string;
-		userId: string;
-		analyticsShardId: string;
-		contactEmail: string | null;
-		now: number;
-	}
+	request: WorkspaceDeletionRequest
 ): Promise<boolean> {
 	const { tenantId, userId, now } = request;
-	const hasJob = 'EXISTS (SELECT 1 FROM tenant_deletions WHERE tenant_id = ?1)';
-	const lastWorkspace =
-		'NOT EXISTS (SELECT 1 FROM tenant_memberships WHERE user_id = ?2 AND tenant_id <> ?1)';
+	const otherWorkspace =
+		'EXISTS (SELECT 1 FROM tenant_memberships m WHERE m.user_id = ?2 AND m.tenant_id <> ?1 AND NOT EXISTS (SELECT 1 FROM tenant_deletions d WHERE d.tenant_id = m.tenant_id))';
 	const [job] = await db.batch([
 		db
 			.prepare(
-				"INSERT INTO tenant_deletions (tenant_id, user_id, analytics_shard_id, contact_email, state, step, requested_at, next_attempt_at) SELECT ?1, ?2, ?3, ?4, 'running', 'accepted', ?5, ?5 WHERE NOT EXISTS (SELECT 1 FROM tenant_policy WHERE tenant_id = ?1 AND suspended_at IS NOT NULL) ON CONFLICT (tenant_id) DO NOTHING"
+				`INSERT INTO tenant_deletions (tenant_id, user_id, analytics_shard_id, contact_email, scope, workspace_name, state, step, requested_at, next_attempt_at) SELECT ?1, ?2, ?3, ?4, 'workspace', ?5, 'running', 'accepted', ?6, ?6 WHERE ${notSuspended('?1')} AND ${otherWorkspace} ON CONFLICT (tenant_id) DO NOTHING`
 			)
-			.bind(tenantId, userId, request.analyticsShardId, request.contactEmail, now),
-		...[
-			`DELETE FROM "apikey" WHERE json_extract("metadata", '$.tenantId') = ?1`,
-			'DELETE FROM "oauthAccessToken" WHERE "referenceId" = ?1',
-			'DELETE FROM "oauthRefreshToken" WHERE "referenceId" = ?1',
-			'DELETE FROM "oauthConsent" WHERE "referenceId" = ?1'
-		].map((statement) => db.prepare(`${statement} AND ${hasJob}`).bind(tenantId)),
-		...[
-			'DELETE FROM "session" WHERE "userId" = ?2',
-			'DELETE FROM "apikey" WHERE "referenceId" = ?2',
-			'DELETE FROM "oauthAccessToken" WHERE "userId" = ?2',
-			'DELETE FROM "oauthRefreshToken" WHERE "userId" = ?2',
-			'DELETE FROM "oauthConsent" WHERE "userId" = ?2'
-		].map((statement) =>
-			db.prepare(`${statement} AND ${lastWorkspace} AND ${hasJob}`).bind(tenantId, userId)
+			.bind(
+				tenantId,
+				userId,
+				request.analyticsShardId,
+				request.contactEmail,
+				request.workspaceName,
+				now
+			),
+		...tenantCredentials.map((statement) =>
+			db.prepare(`${statement} AND ${hasJob('?1')}`).bind(tenantId)
 		)
 	]);
 	return job.meta.changes === 1;
+}
+
+export interface AccountDeletionRequest {
+	userId: string;
+	// The workspaces the user owns that are not being deleted yet. The first job sends the
+	// emails, so contactEmail is stored with it only.
+	workspaces: { tenantId: string; analyticsShardId: string }[];
+	contactEmail: string | null;
+	now: number;
+}
+
+// One batch: a job for each workspace, their credentials, the user's sessions and remaining
+// credentials, and the user's memberships in workspaces of other owners. Nothing can act for
+// the account once the request returns. All jobs start, or none: a suspended workspace stops
+// the whole batch and keeps every credential. Returns whether the batch started a job; false
+// when a workspace is suspended or another request started every job first.
+export async function createAccountDeletion(
+	db: D1Database,
+	request: AccountDeletionRequest
+): Promise<boolean> {
+	const { userId, workspaces, now } = request;
+	const [first] = workspaces;
+	if (!first) return false;
+	const tenants = workspaces.map((workspace) => workspace.tenantId);
+	// ?1 is the user; ?2 to ?n+1 are the workspaces.
+	const list = tenants.map((_, index) => `?${index + 2}`).join(', ');
+	const noneSuspended = `NOT EXISTS (SELECT 1 FROM tenant_policy WHERE tenant_id IN (${list}) AND suspended_at IS NOT NULL)`;
+	const results = await db.batch([
+		...workspaces.map((workspace, index) =>
+			db
+				.prepare(
+					`INSERT INTO tenant_deletions (tenant_id, user_id, analytics_shard_id, contact_email, scope, state, step, requested_at, next_attempt_at) SELECT ?${tenants.length + 2}, ?1, ?${tenants.length + 3}, ?${tenants.length + 4}, 'account', 'running', 'accepted', ?${tenants.length + 5}, ?${tenants.length + 5} WHERE ${noneSuspended} ON CONFLICT (tenant_id) DO NOTHING`
+				)
+				.bind(
+					userId,
+					...tenants,
+					workspace.tenantId,
+					workspace.analyticsShardId,
+					index === 0 ? request.contactEmail : null,
+					now
+				)
+		),
+		...workspaces.flatMap((workspace) =>
+			tenantCredentials.map((statement) =>
+				db.prepare(`${statement} AND ${hasJob('?1')}`).bind(workspace.tenantId)
+			)
+		),
+		...[
+			'DELETE FROM "session" WHERE "userId" = ?1',
+			'DELETE FROM "apikey" WHERE "referenceId" = ?1',
+			'DELETE FROM "oauthAccessToken" WHERE "userId" = ?1',
+			'DELETE FROM "oauthRefreshToken" WHERE "userId" = ?1',
+			'DELETE FROM "oauthConsent" WHERE "userId" = ?1',
+			"DELETE FROM tenant_memberships WHERE user_id = ?1 AND role <> 'owner'"
+		].map((statement) =>
+			db.prepare(`${statement} AND ${hasJob('?2')}`).bind(userId, first.tenantId)
+		)
+	]);
+	return results.slice(0, workspaces.length).some((result) => result.meta.changes === 1);
+}
+
+// Whether an account deletion of the user is running. The user can sign in again until the
+// last job ends, but cannot start a new workspace.
+export async function accountDeletionRunning(db: D1Database, userId: string): Promise<boolean> {
+	return (
+		(await db
+			.prepare(
+				"SELECT 1 AS found FROM tenant_deletions WHERE user_id = ? AND state = 'running' AND scope = 'account' LIMIT 1"
+			)
+			.bind(userId)
+			.first()) !== null
+	);
 }
 
 export async function readDeletion(db: D1Database, tenantId: string): Promise<DeletionJob | null> {
@@ -151,7 +243,7 @@ export async function failDeletion(db: D1Database, tenantId: string, code: strin
 		.run();
 }
 
-// The end of the job: the ledger row keeps no contact.
+// The end of the job: the ledger row keeps no contact and no workspace name.
 export async function completeDeletion(
 	db: D1Database,
 	tenantId: string,
@@ -159,7 +251,7 @@ export async function completeDeletion(
 ): Promise<void> {
 	await db
 		.prepare(
-			"UPDATE tenant_deletions SET state = 'completed', step = 'done', contact_email = NULL, completed_at = ?, last_error_code = NULL WHERE tenant_id = ? AND state = 'running'"
+			"UPDATE tenant_deletions SET state = 'completed', step = 'done', contact_email = NULL, workspace_name = NULL, completed_at = ?, last_error_code = NULL WHERE tenant_id = ? AND state = 'running'"
 		)
 		.bind(now, tenantId)
 		.run();
@@ -254,6 +346,13 @@ export async function deleteAnalyticsData(
 			.bind(tenantId, limit)
 	]);
 	return results.reduce((sum, result) => sum + result.meta.changes, 0);
+}
+
+// Whether the user row is still there: the last job of an account deletes it.
+export async function userRemains(db: D1Database, userId: string): Promise<boolean> {
+	return (
+		(await db.prepare('SELECT 1 AS found FROM "user" WHERE "id" = ?').bind(userId).first()) !== null
+	);
 }
 
 // Identity: everything of the tenant and its user in one batch. The user's sessions, passkeys,

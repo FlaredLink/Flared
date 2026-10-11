@@ -34,9 +34,11 @@
 		onChanged: () => void | Promise<void>;
 		// Called when creation needs a recent sign-in. The edition asks for its own proof.
 		onReauthRequired: () => void;
+		// The workspace the tokens act in, when the person can have several.
+		workspaceName?: string | null;
 	}
 
-	let { page, apiBase, onChanged, onReauthRequired }: Props = $props();
+	let { page, apiBase, onChanged, onReauthRequired, workspaceName = null }: Props = $props();
 	const workspace = shownWorkspace();
 
 	const scopeLabels: Record<TokenScope, string> = {
@@ -245,7 +247,9 @@
 			<SectionHeader
 				id="tokens-heading"
 				title="API tokens"
-				lead="Give scripts and services only the access they need."
+				lead={workspaceName
+					? `Tokens act only in ${workspaceName}. Give scripts and services only the access they need.`
+					: 'Give scripts and services only the access they need.'}
 			>
 				{#snippet actions()}
 					{#if !creating}

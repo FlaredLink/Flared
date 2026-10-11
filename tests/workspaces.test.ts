@@ -6,7 +6,7 @@ import { applyD1Migrations } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { betterAuth } from 'better-auth';
 import { scopePresets } from '../packages/contracts/src/tokens';
-import { createDeletion, deleteIdentityRecords } from '../packages/data/src/deletions';
+import { createWorkspaceDeletion, deleteIdentityRecords } from '../packages/data/src/deletions';
 import { createIdentityAdapter } from '../packages/data/src/identity-adapter';
 import {
 	createTenant,
@@ -548,10 +548,11 @@ describe('one workspace’s credentials', () => {
 			})
 		).toBe(true);
 		expect(
-			await createDeletion(identity(), {
+			await createWorkspaceDeletion(identity(), {
 				tenantId: 'ws-g',
 				userId: 'di',
 				analyticsShardId: 'analytics-1',
+				workspaceName: 'G',
 				contactEmail: null,
 				now: 41
 			})

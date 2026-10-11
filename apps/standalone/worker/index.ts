@@ -67,7 +67,7 @@ const standaloneDeletion: AccountDeletionEdition = {
 		return typeof user?.username === 'string' && user.username ? user.username : null;
 	},
 	mismatchMessage: 'Type your username exactly to confirm.',
-	suspendedMessage: 'This workspace is suspended, so it cannot be deleted now.'
+	suspendedMessage: () => 'This workspace is suspended, so it cannot be deleted now.'
 };
 
 function json(body: unknown, status: number): Response {

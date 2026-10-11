@@ -49,6 +49,7 @@ import {
 } from '@flared/data/tenancy';
 import { defaultQrSize, maxQrSize, minQrSize, qrPng, qrSvg } from '@flared/client/qr';
 import { knownAssistant, type ConnectedApp, type ConnectedAppPage } from '@flared/contracts/oauth';
+import { accountDeletionRunning } from '@flared/data/deletions';
 import { deleteGrant, listGrants } from '@flared/data/oauth';
 import { countCreationAttempt } from '@flared/data/links';
 import { iconHostname } from '@flared/contracts/icons';
@@ -595,6 +596,9 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		const create = dependencies.createWorkspace;
 		if (!create) throw new ApiError('NOT_FOUND', 'Route not found.');
 		const { name } = parseWorkspaceName(await readJson(context.req.raw));
+		// After an account deletion, the user can sign in until its last job ends.
+		if (await accountDeletionRunning(identity, principal.userId))
+			throw new ApiError('ACCOUNT_DELETING', 'This account is being deleted.');
 		const result = await create({ userId: principal.userId, name, now: now() });
 		if (result.status === 'limit') throw new ApiError('WORKSPACE_LIMIT_REACHED', result.message);
 		if (result.status === 'unavailable')
