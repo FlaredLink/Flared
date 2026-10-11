@@ -9,14 +9,19 @@ function record(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-// Sends the decision for the signed authorization request the consent page received. On
-// success, the browser goes to redirectTo, which returns it to the app.
-export async function decideConsent(oauthQuery: string, accept: boolean): Promise<ConsentResult> {
+// Sends the decision for the signed authorization request the consent page received, with the
+// workspace the app may act in. On success, the browser goes to redirectTo, which returns it to
+// the app.
+export async function decideConsent(
+	oauthQuery: string,
+	accept: boolean,
+	workspaceId: string
+): Promise<ConsentResult> {
 	try {
 		const response = await fetch('/oauth2/consent', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ accept, oauth_query: oauthQuery })
+			body: JSON.stringify({ accept, oauth_query: oauthQuery, workspace_id: workspaceId })
 		});
 		const body: unknown = await response.json().catch(() => null);
 		if (response.ok && record(body) && typeof body.redirectTo === 'string')
@@ -62,7 +67,9 @@ export function consentErrorMessage(code: string): string {
 		case 'invalid_client':
 			return 'This request has expired. Start the connection again in the app.';
 		case 'workspace_unavailable':
-			return 'Your workspace is not ready yet. Try again in a moment.';
+			return 'This workspace is not available now. Reload the page, then choose a workspace.';
+		case 'workspace_suspended':
+			return 'Flared suspended this workspace. Choose another workspace.';
 		default:
 			return 'Something went wrong. Try again.';
 	}

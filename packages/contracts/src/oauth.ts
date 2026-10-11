@@ -12,6 +12,12 @@ export const scopeDescriptions: Record<TokenScope, string> = {
 	'usage:read': 'See your plan usage'
 };
 
+// A workspace the person can connect the app to.
+export interface ConsentWorkspace {
+	id: string;
+	name: string;
+}
+
 // What the consent page shows about a pending authorization request.
 export interface ConsentRequest {
 	client: {
@@ -26,6 +32,11 @@ export interface ConsentRequest {
 	scopes: TokenScope[];
 	// True when the app asks to stay connected after this session (a refresh token).
 	offlineAccess: boolean;
+	// The person's active, unsuspended workspaces, oldest first; never empty. The app can act only
+	// in the one the person approves.
+	workspaces: ConsentWorkspace[];
+	// The session's active workspace when it is listed, else the first one.
+	selectedWorkspaceId: string;
 }
 
 // An assistant whose OAuth codes can reach only that assistant: every redirect URI of the client
@@ -93,6 +104,12 @@ function nullableString(value: unknown): value is string | null {
 	return value === null || typeof value === 'string';
 }
 
+function isConsentWorkspace(value: unknown): value is ConsentWorkspace {
+	if (typeof value !== 'object' || value === null) return false;
+	const workspace = value as Record<string, unknown>;
+	return typeof workspace.id === 'string' && typeof workspace.name === 'string';
+}
+
 export function isConsentRequest(value: unknown): value is ConsentRequest {
 	if (typeof value !== 'object' || value === null) return false;
 	const request = value as Record<string, unknown>;
@@ -106,7 +123,13 @@ export function isConsentRequest(value: unknown): value is ConsentRequest {
 		typeof request.redirectLoopback === 'boolean' &&
 		Array.isArray(request.scopes) &&
 		request.scopes.every(isTokenScope) &&
-		typeof request.offlineAccess === 'boolean'
+		typeof request.offlineAccess === 'boolean' &&
+		Array.isArray(request.workspaces) &&
+		request.workspaces.length > 0 &&
+		request.workspaces.every(isConsentWorkspace) &&
+		request.workspaces.some(
+			(workspace: ConsentWorkspace) => workspace.id === request.selectedWorkspaceId
+		)
 	);
 }
 

@@ -5,23 +5,30 @@
 	import Glyph from '../icons/Glyph.svelte';
 	import Button from '../atoms/Button.svelte';
 	import Callout from '../molecules/Callout.svelte';
+	import ChoiceCard from '../molecules/ChoiceCard.svelte';
 
 	interface Props {
 		request: ConsentRequest;
 		// The signed authorization request from the page's query string.
 		oauthQuery: string;
-		// The signed-in account, shown so the person knows which workspace they connect.
+		// The signed-in account, shown so the person knows whose workspaces they see.
 		account: string;
 	}
 
 	let { request, oauthQuery, account }: Props = $props();
+	// The choice starts at the session's active workspace and keeps what the person picks.
+	// svelte-ignore state_referenced_locally
+	let workspaceId = $state(request.selectedWorkspaceId);
+	const workspaceName = $derived(
+		request.workspaces.find((workspace) => workspace.id === workspaceId)?.name ?? ''
+	);
 	let pending = $state<'approve' | 'deny' | null>(null);
 	let error = $state('');
 
 	async function decide(accept: boolean) {
 		pending = accept ? 'approve' : 'deny';
 		error = '';
-		const result = await decideConsent(oauthQuery, accept);
+		const result = await decideConsent(oauthQuery, accept, workspaceId);
 		if (!result.ok) {
 			pending = null;
 			error = consentErrorMessage(result.code);
@@ -39,6 +46,12 @@
 			<dt>Account</dt>
 			<dd>{account}</dd>
 		</div>
+		{#if request.workspaces.length === 1}
+			<div>
+				<dt>Workspace</dt>
+				<dd>{workspaceName}</dd>
+			</div>
+		{/if}
 		{#if request.client.uri}
 			<div>
 				<dt>App site</dt>
@@ -55,6 +68,21 @@
 			<p>This app runs on your computer. Approve only if you started the connection yourself.</p>
 		</Callout>
 	{/if}
+	{#if request.workspaces.length > 1}
+		<fieldset class="workspaces" disabled={pending !== null}>
+			<legend><h2>Workspace it can use</h2></legend>
+			{#each request.workspaces as workspace (workspace.id)}
+				<ChoiceCard
+					name="workspace"
+					value={workspace.id}
+					checked={workspace.id === workspaceId}
+					label={workspace.name}
+					layout="row"
+					onselect={(id) => (workspaceId = id)}
+				/>
+			{/each}
+		</fieldset>
+	{/if}
 	<h2>It will be able to</h2>
 	<ul>
 		{#each request.scopes as scope (scope)}
@@ -65,7 +93,7 @@
 		{/if}
 	</ul>
 	<p class="note">
-		<Glyph name="lock" size={18} />It can do this only in your workspace. You can disconnect it at
+		<Glyph name="lock" size={18} />It can do this only in {workspaceName}. You can disconnect it at
 		any time.
 	</p>
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -157,6 +185,21 @@
 	}
 	.note :global(svg) {
 		margin-top: 0.1rem;
+	}
+	.workspaces {
+		display: grid;
+		gap: 0.5rem;
+		min-width: 0;
+		margin: 0;
+		padding: 0;
+		border: 0;
+	}
+	.workspaces legend {
+		padding: 0;
+		margin-bottom: 0.5rem;
+	}
+	.workspaces :global(.choice) {
+		min-height: 3.25rem;
 	}
 	.error {
 		color: var(--color-danger);

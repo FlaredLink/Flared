@@ -4,7 +4,7 @@ import { env } from 'cloudflare:workers';
 import { applyD1Migrations } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { makeSignature } from 'better-auth/crypto';
-import { createTenant } from '../packages/data/src/tenancy';
+import { createTenant, setActiveWorkspace } from '../packages/data/src/tenancy';
 import { deleteGrant, deleteExpiredOAuthRecords } from '../packages/data/src/oauth';
 import { projectPolicy } from '../packages/server/src/tenancy';
 import { reinstateTenant, suspendTenant } from '../packages/server/src/operator';
@@ -104,9 +104,13 @@ async function addTenant(userId: string, tenantId: string) {
 		)
 		.bind(userId, '', `${userId}@example.com`)
 		.run();
+	await addWorkspace(userId, tenantId, 'Workspace');
+}
+
+async function addWorkspace(userId: string, tenantId: string, name: string) {
 	await createTenant(identity(), {
 		id: tenantId,
-		name: 'Workspace',
+		name,
 		ownerUserId: userId,
 		analyticsShardId: 'analytics-1',
 		limits: { activeLinkLimit: 100, monthlyClickLimit: 5000, retentionDays: 30, domainLimit: 1 },
@@ -171,11 +175,19 @@ interface Flow {
 	cookie: string;
 	verifier: string;
 	query: URLSearchParams;
+	// The workspace the consent approves.
+	workspace: string;
 }
 
 async function startFlow(
 	userId: string,
-	options: { clientId?: string; scope?: string; redirect?: string; cookie?: string } = {}
+	options: {
+		clientId?: string;
+		scope?: string;
+		redirect?: string;
+		cookie?: string;
+		workspace?: string;
+	} = {}
 ): Promise<Flow> {
 	const clientId = options.clientId ?? (await register());
 	const cookie = options.cookie ?? (await sessionCookie(userId));
@@ -190,7 +202,14 @@ async function startFlow(
 		code_challenge_method: 'S256',
 		resource
 	});
-	return { clientId, cookie, verifier, query };
+	// Each test user-N owns tenant-N.
+	return {
+		clientId,
+		cookie,
+		verifier,
+		query,
+		workspace: options.workspace ?? userId.replace('user-', 'tenant-')
+	};
 }
 
 async function authorize(flow: Flow): Promise<Response> {
@@ -206,7 +225,11 @@ async function approve(flow: Flow, accept = true): Promise<URL> {
 		new Request(`${origin}/oauth2/consent`, {
 			method: 'POST',
 			headers: { cookie: flow.cookie, origin, 'content-type': 'application/json' },
-			body: JSON.stringify({ accept, oauth_query: location.slice(location.indexOf('?') + 1) })
+			body: JSON.stringify({
+				accept,
+				oauth_query: location.slice(location.indexOf('?') + 1),
+				workspace_id: flow.workspace
+			})
 		})
 	);
 	expect(response.status).toBe(200);
@@ -379,7 +402,9 @@ describe('authorization server', () => {
 			redirectHost: 'client.example',
 			redirectLoopback: false,
 			scopes: ['links:read', 'links:write', 'analytics:read', 'usage:read'],
-			offlineAccess: true
+			offlineAccess: true,
+			workspaces: [{ id: 'tenant-1', name: 'Workspace' }],
+			selectedWorkspaceId: 'tenant-1'
 		});
 		const callback = await approve(flow);
 		expect(callback.origin + callback.pathname).toBe(redirectUri);
@@ -400,6 +425,78 @@ describe('authorization server', () => {
 			.bind(flow.clientId)
 			.first<Record<string, string>>();
 		expect(stored).toEqual({ referenceId: 'tenant-1', resources: JSON.stringify([resource]) });
+	});
+
+	it('lets a person with several workspaces bind the grant to the one they choose', async () => {
+		await addTenant('user-10', 'tenant-10');
+		await addWorkspace('user-10', 'tenant-10-shop', 'Shop');
+		await addWorkspace('user-10', 'tenant-10-paused', 'Paused');
+		const stores = { routing: routing(), analytics: { 'analytics-1': env.OAUTH_ANALYTICS } };
+		await suspendTenant(
+			identity(),
+			stores,
+			{ kind: 'operator', id: 'test-operator' },
+			{
+				tenantId: 'tenant-10-paused',
+				reason: 'spam',
+				now: Date.now()
+			}
+		);
+		const flow = await startFlow('user-10', { workspace: 'tenant-10-shop' });
+		const session = await identity()
+			.prepare('SELECT id FROM session WHERE userId = ?')
+			.bind('user-10')
+			.first<{ id: string }>();
+		await setActiveWorkspace(identity(), {
+			userId: 'user-10',
+			sessionId: session?.id ?? '',
+			tenantId: 'tenant-10-shop',
+			now: Date.now()
+		});
+		const location = (await authorize(flow)).headers.get('location') ?? '';
+		const oauthQuery = location.slice(location.indexOf('?') + 1);
+		const details = await oauth().fetch(
+			new Request(`${origin}/oauth2/consent/request?${oauthQuery}`, {
+				headers: { cookie: flow.cookie }
+			})
+		);
+		// A suspended workspace is not offered; the session's active one is selected.
+		expect(await details.json()).toMatchObject({
+			workspaces: [
+				{ id: 'tenant-10', name: 'Workspace' },
+				{ id: 'tenant-10-shop', name: 'Shop' }
+			],
+			selectedWorkspaceId: 'tenant-10-shop'
+		});
+		const decide = (workspace?: string) =>
+			oauth().fetch(
+				new Request(`${origin}/oauth2/consent`, {
+					method: 'POST',
+					headers: { cookie: flow.cookie, origin, 'content-type': 'application/json' },
+					body: JSON.stringify({ accept: true, oauth_query: oauthQuery, workspace_id: workspace })
+				})
+			);
+		expect((await decide()).status).toBe(400);
+		// Another person's workspace.
+		expect((await decide('tenant-2')).status).toBe(409);
+		expect((await decide('tenant-10-paused')).status).toBe(403);
+		const chosen = await approve({ ...flow, workspace: 'tenant-10' });
+		const response = await exchange(flow, chosen.searchParams.get('code') ?? '');
+		expect(response.status).toBe(200);
+		const tokens = (await response.json()) as Tokens;
+		const stored = await identity()
+			.prepare('SELECT DISTINCT referenceId FROM oauthAccessToken WHERE clientId = ?')
+			.bind(flow.clientId)
+			.all<{ referenceId: string }>();
+		expect(stored.results).toEqual([{ referenceId: 'tenant-10' }]);
+		expect((await call(tokens.access_token, 'get_usage')).status).toBe(200);
+		// Leaving the other workspaces does not end a grant for this one.
+		await identity()
+			.prepare(
+				"DELETE FROM tenant_memberships WHERE user_id = 'user-10' AND tenant_id != 'tenant-10'"
+			)
+			.run();
+		expect((await call(tokens.access_token, 'get_usage')).status).toBe(200);
 	});
 
 	it('shows consent again for an app that was approved before', async () => {
@@ -1126,7 +1223,8 @@ describe('MCP endpoint', () => {
 				headers: { cookie: flow.cookie, origin, 'content-type': 'application/json' },
 				body: JSON.stringify({
 					accept: true,
-					oauth_query: location.slice(location.indexOf('?') + 1)
+					oauth_query: location.slice(location.indexOf('?') + 1),
+					workspace_id: 'tenant-9'
 				})
 			})
 		);

@@ -5,8 +5,9 @@
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
 import { verifyOAuthQueryParams } from '@better-auth/oauth-provider';
 import { isTokenScope, type TokenScope } from '@flared/contracts/tokens';
-import type { ConsentRequest } from '@flared/contracts/oauth';
+import type { ConsentRequest, ConsentWorkspace } from '@flared/contracts/oauth';
 import { countRegistration } from '@flared/data/oauth';
+import { listWorkspaces } from '@flared/data/tenancy';
 import { authResponseHeaders } from '../web/forward';
 import { readPrincipal, type IdentityRule } from '../auth/session';
 import { resolveTenant } from '../tenancy';
@@ -193,23 +194,24 @@ export function createOAuthRoutes(dependencies: OAuthRouteDependencies) {
 		return backChannel(request, '/oauth2/register');
 	}
 
-	// The signed-in person, with an active workspace to grant, or a JSON error response.
+	// The signed-in person, or a JSON error response.
 	async function signedIn(request: Request) {
 		const principal = await readPrincipal(
 			auth().api,
 			copyHeaders(request, ['cookie']),
 			dependencies.identityRule
 		);
-		if (!principal) return oauthError(401, 'login_required', 'Sign in to continue.');
-		const tenant = await resolveTenant(db, {
-			userId: principal.user.id,
-			sessionId: principal.sessionId
-		});
-		if (tenant.status !== 'active')
-			return oauthError(409, 'workspace_unavailable', 'Your workspace is not ready.');
-		if (tenant.suspension)
+		return principal ?? oauthError(401, 'login_required', 'Sign in to continue.');
+	}
+
+	// The workspaces the person can grant, or a JSON error response when there are none.
+	async function grantable(userId: string): Promise<ConsentWorkspace[] | Response> {
+		const workspaces = await listWorkspaces(db, userId);
+		const active = workspaces.filter((workspace) => workspace.status === 'active');
+		if (active.length > 0) return active.map(({ id, name }) => ({ id, name }));
+		if (workspaces.some((workspace) => workspace.status === 'suspended'))
 			return oauthError(403, 'workspace_suspended', 'Flared suspended this workspace.');
-		return principal;
+		return oauthError(409, 'workspace_unavailable', 'Your workspace is not ready.');
 	}
 
 	// What the consent page shows, from the signed query that the provider sent it.
@@ -217,6 +219,8 @@ export function createOAuthRoutes(dependencies: OAuthRouteDependencies) {
 		if (request.method !== 'GET') return methodNotAllowed('GET');
 		const principal = await signedIn(request);
 		if (principal instanceof Response) return principal;
+		const workspaces = await grantable(principal.user.id);
+		if (workspaces instanceof Response) return workspaces;
 		const signed = url.search.slice(1);
 		if (!(await verifyOAuthQueryParams(signed, config.secret)))
 			return oauthError(400, 'invalid_request', 'This request has expired. Start again.');
@@ -234,6 +238,14 @@ export function createOAuthRoutes(dependencies: OAuthRouteDependencies) {
 			.first<Record<string, unknown>>();
 		if (!client) return oauthError(400, 'invalid_client', 'This app is not registered.');
 		const requested = (params.get('scope') ?? '').split(' ');
+		const active = await resolveTenant(db, {
+			userId: principal.user.id,
+			sessionId: principal.sessionId
+		});
+		const selected =
+			workspaces.find(
+				(workspace) => active.status !== 'none' && workspace.id === active.tenantId
+			) ?? workspaces[0];
 		const body: ConsentRequest = {
 			client: {
 				name: storedName(client.name, redirect.host || clientId),
@@ -243,12 +255,15 @@ export function createOAuthRoutes(dependencies: OAuthRouteDependencies) {
 			// Registration allows plain HTTP and app schemes only for apps on this computer.
 			redirectLoopback: redirect.protocol !== 'https:' || isLoopback(redirect.hostname),
 			scopes: requested.filter(isTokenScope) satisfies TokenScope[],
-			offlineAccess: requested.includes('offline_access')
+			offlineAccess: requested.includes('offline_access'),
+			workspaces,
+			selectedWorkspaceId: selected.id
 		};
 		return respond(Response.json(body));
 	}
 
-	// The consent page posts the decision with the session cookie, from the exact origin.
+	// The consent page posts the decision with the session cookie, from the exact origin. An
+	// approval names the workspace the app may act in.
 	async function consent(request: Request): Promise<Response> {
 		if (request.method !== 'POST') return methodNotAllowed('POST');
 		if (request.headers.get('origin') !== config.origin)
@@ -264,12 +279,25 @@ export function createOAuthRoutes(dependencies: OAuthRouteDependencies) {
 		}
 		const accept = (input as Record<string, unknown> | null)?.accept;
 		const query = (input as Record<string, unknown> | null)?.oauth_query;
+		const workspace = (input as Record<string, unknown> | null)?.workspace_id;
 		if (typeof accept !== 'boolean' || typeof query !== 'string')
 			return oauthError(400, 'invalid_request', 'Send accept and oauth_query.');
+		let server = auth();
+		if (accept) {
+			if (typeof workspace !== 'string')
+				return oauthError(400, 'invalid_request', 'Choose a workspace.');
+			const tenant = await resolveTenant(db, { userId: principal.user.id, tenantId: workspace });
+			if (tenant.status !== 'active')
+				return oauthError(409, 'workspace_unavailable', 'This workspace is not available.');
+			if (tenant.suspension)
+				return oauthError(403, 'workspace_suspended', 'Flared suspended this workspace.');
+			// A separate instance per approval holds the choice, so no request sees another's.
+			server = createOAuthServer(db, config, workspace);
+		}
 		const headers = copyHeaders(request, ['cookie', 'origin']);
 		headers.set('content-type', 'application/json');
 		headers.set('accept', 'application/json');
-		const response = await auth().handler(
+		const response = await server.handler(
 			new Request(internal('/oauth2/consent'), {
 				method: 'POST',
 				headers,
