@@ -1,9 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Invite tokens and the invite email. The token is in the email only: the store keeps its hash,
-// and the link carries it in the fragment, so no server log or Referer header receives it.
+// Invite and reset tokens, and the invite email. The token is in the email or the shown link
+// only: the store keeps its hash, and the link carries it in the fragment, so no server log or
+// Referer header receives it.
 import type { EmailContent, EmailTransport } from './email/transport';
 
-export interface InviteSettings {
+// How an installation invites members: by email to one address (the cloud), or as a link that
+// the owner shares and that creates a username account (standalone).
+export type InviteSettings = EmailInviteSettings | LinkInviteSettings;
+
+export interface EmailInviteSettings {
+	delivery: 'email';
 	email: EmailTransport;
 	// The page that accepts an invite, with the token in the fragment, such as
 	// https://example.com/app/invite#<token>.
@@ -13,6 +19,21 @@ export interface InviteSettings {
 	membersUrl: string;
 	// Invite emails each workspace may send in a UTC day. 20 when absent.
 	emailsPerDay?: number;
+}
+
+export interface LinkInviteSettings {
+	delivery: 'link';
+	// The page that creates an account from an invite, with the token in the fragment.
+	inviteUrl(token: string): string;
+	// The page that sets a member's new password, with the token in the fragment.
+	resetUrl(token: string): string;
+	// Invite and reset links each workspace may create in a UTC day. 20 when absent.
+	linksPerDay?: number;
+}
+
+// The links or emails of each workspace per UTC day.
+export function invitesPerDay(settings: InviteSettings): number {
+	return (settings.delivery === 'email' ? settings.emailsPerDay : settings.linksPerDay) ?? 20;
 }
 
 function base64url(bytes: Uint8Array): string {

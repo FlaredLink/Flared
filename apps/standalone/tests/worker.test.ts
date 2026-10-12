@@ -253,7 +253,8 @@ describe('the app host after setup', () => {
 				activeLinkLimit: 10000,
 				monthlyClickLimit: 50000,
 				retentionDays: 30,
-				domainLimit: 5
+				domainLimit: 5,
+				memberLimit: 10
 			},
 			pending: false
 		});
@@ -261,7 +262,8 @@ describe('the app host after setup', () => {
 			activeLinkLimit: 500,
 			monthlyClickLimit: 9000,
 			retentionDays: 60,
-			domainLimit: 2
+			domainLimit: 2,
+			memberLimit: 3
 		};
 		const change = (headers: Record<string, string>, body: unknown = limits) =>
 			call(`${origin}/api/settings/limits`, {
@@ -278,6 +280,52 @@ describe('the app host after setup', () => {
 		expect(
 			await count("SELECT COUNT(*) AS n FROM owner_audit WHERE action = 'limits_changed'")
 		).toBe(1);
+	});
+
+	it('adds a member by invite link, who reads but cannot change the limits', async () => {
+		const workspace = (await (
+			await call(`${origin}/api/v1/workspace`, { headers: { cookie: owner } })
+		).json()) as { workspace: { id: string } };
+		const shown = { 'x-flared-workspace': workspace.workspace.id };
+		const created = await call(`${origin}/api/v1/invites`, {
+			method: 'POST',
+			headers: browser(owner),
+			body: '{}'
+		});
+		expect(created.status).toBe(201);
+		const { url } = (await created.json()) as { url: string };
+		const accepted = await call(`${origin}/api/auth/invite/accept`, {
+			method: 'POST',
+			headers: browser(''),
+			body: JSON.stringify({
+				token: url.slice(url.indexOf('#') + 1),
+				username: 'Member.One',
+				password: 'member password one'
+			})
+		});
+		expect(accepted.status).toBe(200);
+		const member = cookieOf(accepted);
+		expect(
+			(await call(`${origin}/api/settings/limits`, { headers: { cookie: member } })).status
+		).toBe(200);
+		const refused = await call(`${origin}/api/settings/limits`, {
+			method: 'POST',
+			headers: browser(member),
+			body: JSON.stringify({
+				activeLinkLimit: 1,
+				monthlyClickLimit: 1,
+				retentionDays: 1,
+				domainLimit: 0,
+				memberLimit: 1
+			})
+		});
+		expect([refused.status, await code(refused)]).toEqual([403, 'OWNER_REQUIRED']);
+		// The workspace header reaches the API, so the member can leave the shown workspace.
+		const left = await call(`${origin}/api/v1/workspace/leave`, {
+			method: 'POST',
+			headers: browser(member, shown)
+		});
+		expect(left.status).toBe(204);
 	});
 });
 
@@ -301,7 +349,7 @@ describe('moving the app host', () => {
 
 	it('ends old-origin credentials at the first password sign-in and keeps API tokens', async () => {
 		await env.IDENTITY.prepare(
-			"INSERT INTO passkey (id, publicKey, userId, credentialID, counter, deviceType, backedUp) SELECT 'old-passkey', 'key', id, 'credential', 0, 'singleDevice', 0 FROM \"user\""
+			"INSERT INTO passkey (id, publicKey, userId, credentialID, counter, deviceType, backedUp) SELECT 'old-passkey', 'key', id, 'credential', 0, 'singleDevice', 0 FROM \"user\" WHERE username = 'owner'"
 		).run();
 		const signedIn = await call(
 			`${movedOrigin}/api/auth/sign-in/password`,

@@ -124,8 +124,8 @@
 		>
 	{/if}
 	<p class="help">
-		Forgot your password? The operator resets it with <code>bun run owner:reset-password</code>
-		in the deployed copy; see docs/self-hosting/recovery.md.
+		Forgot your password? A member asks the workspace owner for a reset link. The owner’s password
+		is reset with <code>bun run owner:reset-password</code> in the deployed copy; see docs/self-hosting/recovery.md.
 	</p>
 </section>
 

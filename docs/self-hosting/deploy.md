@@ -47,4 +47,4 @@ Flared runs on Workers Free. Workers Paid (US$5 a month) gives more room. On Fre
 - Time Travel keeps 7 days of history; Workers Paid keeps 30. See [backups.md](backups.md).
 - Cloudflare documents a limit of 10 ms of CPU time per request. The password hash is deliberate CPU work: a sign-in takes about 30 ms and setup about 160 ms. On 2026-10-08 both finished on a Free account. If Cloudflare stops such a request, it fails with error 1102, "Worker exceeded resource limits". Then move the account to Workers Paid; nothing else changes.
 
-Next: [move the app to your own address](origin.md), [use your own domains for links](domains.md), [change the limits](limits.md), [upgrade](upgrade.md), and [back up](backups.md).
+Next: [move the app to your own address](origin.md), [use your own domains for links](domains.md), [add members](members.md), [change the limits](limits.md), [upgrade](upgrade.md), and [back up](backups.md).

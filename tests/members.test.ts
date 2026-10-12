@@ -79,6 +79,7 @@ function api(emailsPerDay?: number, extra: Partial<ApiDependencies> = {}) {
 		appOrigin: origin,
 		now: () => clock,
 		invites: {
+			delivery: 'email',
 			email: {
 				async send(message) {
 					if (failEmail) throw new Error('No email');
@@ -649,5 +650,61 @@ describe('member events', () => {
 		expect(await listMemberEvents(identity(), 'ws-log', 200)).toHaveLength(kept);
 		await deleteExpiredMemberEvents(identity(), clock + memberEventLifetimeMs + 1, 1000);
 		expect(await listMemberEvents(identity(), 'ws-log', 200)).toHaveLength(0);
+	});
+});
+
+describe('member links migration', () => {
+	it('keeps every invite and member event, in order, and allows invites without an address', async () => {
+		const db = env.MEMBER_LINKS_MIGRATION_IDENTITY;
+		const migrations = env.IDENTITY_MIGRATIONS;
+		const index = migrations.findIndex((item) => item.name.startsWith('0017_'));
+		expect(index).toBeGreaterThan(0);
+		await applyD1Migrations(db, migrations.slice(0, index), 'flared_core_migrations');
+		await db.batch([
+			db.prepare("INSERT INTO installation (id, mode, created_at) VALUES (1, 'multi', 0)"),
+			db.prepare(
+				"INSERT INTO user (id, name, email, emailVerified, createdAt, updatedAt) VALUES ('kim', '', 'kim@example.com', 1, 0, 0)"
+			),
+			db.prepare(
+				"INSERT INTO tenants (id, name, analytics_shard_id, created_at, activated_at) VALUES ('t-kim', 'Kim', 'analytics-1', 1, 2)"
+			),
+			db.prepare(
+				"INSERT INTO tenant_invites (id, tenant_id, email, token_hash, invited_by, created_at, expires_at) VALUES ('inv-1', 't-kim', 'lee@example.com', 'hash-1', 'kim', 5, 6)"
+			),
+			// Same time, so only the write order (rowid) orders them; the IDs sort the other way.
+			db.prepare(
+				"INSERT INTO tenant_member_events (id, tenant_id, action, actor_user_id, subject_user_id, invite_id, created_at) VALUES ('z', 't-kim', 'invite_sent', 'kim', NULL, 'inv-1', 7), ('a', 't-kim', 'invite_resent', 'kim', NULL, 'inv-1', 7)"
+			)
+		]);
+		await expect(
+			db
+				.prepare(
+					"INSERT INTO tenant_invites (id, tenant_id, email, token_hash, created_at, expires_at) VALUES ('inv-2', 't-kim', NULL, 'hash-2', 8, 9)"
+				)
+				.run()
+		).rejects.toThrow();
+
+		await applyD1Migrations(db, migrations, 'flared_core_migrations');
+		expect(
+			(await db.prepare('SELECT id, email, token_hash, invited_by FROM tenant_invites').all())
+				.results
+		).toEqual([{ id: 'inv-1', email: 'lee@example.com', token_hash: 'hash-1', invited_by: 'kim' }]);
+		expect((await listMemberEvents(db, 't-kim', 10)).map((event) => event.id)).toEqual(['a', 'z']);
+		// Several invites without an address, and an address still once per workspace.
+		const invite = (id: string, email: string | null) =>
+			db
+				.prepare(
+					"INSERT INTO tenant_invites (id, tenant_id, email, token_hash, created_at, expires_at) VALUES (?, 't-kim', ?, ?, 8, 9)"
+				)
+				.bind(id, email, `hash-${id}`)
+				.run();
+		await invite('inv-2', null);
+		await invite('inv-3', null);
+		await expect(invite('inv-4', 'lee@example.com')).rejects.toThrow();
+		await db
+			.prepare(
+				"INSERT INTO tenant_member_events (id, tenant_id, action, actor_user_id, created_at) VALUES ('r', 't-kim', 'password_reset_issued', 'kim', 9)"
+			)
+			.run();
 	});
 });

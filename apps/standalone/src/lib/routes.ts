@@ -5,7 +5,9 @@ export const appRoutes = {
 	app: '/app',
 	domains: '/app/domains',
 	settings: '/app/settings',
-	consent: '/app/oauth/consent'
+	consent: '/app/oauth/consent',
+	invite: '/app/invite',
+	reset: '/app/reset'
 } as const;
 
 export function linkRoute(id: string): string {

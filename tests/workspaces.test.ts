@@ -569,7 +569,8 @@ describe('roles', () => {
 		['POST', '/workspace/leave', 'member'],
 		['POST', '/workspace/transfer', 'owner'],
 		['DELETE', '/workspace/transfer', 'member'],
-		['POST', '/workspace/transfer/accept', 'member']
+		['POST', '/workspace/transfer/accept', 'member'],
+		['POST', '/members/:userId/password-reset', 'owner']
 	];
 
 	beforeAll(async () => {

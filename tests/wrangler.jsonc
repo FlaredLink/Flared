@@ -319,6 +319,11 @@
 			"database_id": "00000000-0000-0000-0000-000000000072"
 		},
 		{
+			"binding": "MEMBER_LINKS_MIGRATION_IDENTITY",
+			"database_name": "member-links-migration-identity",
+			"database_id": "00000000-0000-0000-0000-000000000090"
+		},
+		{
 			"binding": "MEMBERS_IDENTITY",
 			"database_name": "members-identity",
 			"database_id": "00000000-0000-0000-0000-000000000073"

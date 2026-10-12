@@ -31,8 +31,41 @@ export async function postJson(path: string, body: Record<string, unknown>): Pro
 	}
 }
 
+// Reads what an invite or reset link opens. ended: the link no longer works.
+export async function lookupLink(
+	path: string,
+	token: string
+): Promise<{ ok: true; body: unknown } | { ok: false; ended: boolean; code: string }> {
+	try {
+		const response = await fetch(path, {
+			method: 'POST',
+			credentials: 'same-origin',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ token })
+		});
+		const body: unknown = await response.json().catch(() => null);
+		if (response.ok) return { ok: true, body };
+		const error = record(body) && record(body.error) ? body.error : null;
+		const code = error && typeof error.code === 'string' ? error.code : 'AUTH_UNAVAILABLE';
+		return {
+			ok: false,
+			ended:
+				code === 'INVITE_NOT_FOUND' || code === 'RESET_NOT_FOUND' || code === 'INVALID_REQUEST',
+			code
+		};
+	} catch {
+		return { ok: false, ended: false, code: 'AUTH_UNAVAILABLE' };
+	}
+}
+
 export function authErrorMessage(code: string): string {
 	switch (code) {
+		case 'INVITE_NOT_FOUND':
+			return 'This invite has ended or was already used. Ask the workspace owner for a new link.';
+		case 'RESET_NOT_FOUND':
+			return 'This reset link has ended or was already used. Ask the workspace owner for a new one.';
+		case 'USERNAME_TAKEN':
+			return 'This username is taken. Choose another one.';
 		case 'INVALID_CREDENTIALS':
 			return 'The username or password is not correct.';
 		case 'RATE_LIMITED':

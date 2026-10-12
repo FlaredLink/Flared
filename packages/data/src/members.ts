@@ -6,13 +6,16 @@ import type { MembershipRole } from './tenancy';
 export interface MemberRow {
 	userId: string;
 	email: string;
+	// What the person signs in with: the username where there is one, else the email.
+	name: string;
 	role: MembershipRole;
 	joinedAt: number;
 }
 
 export interface InviteRow {
 	id: string;
-	email: string;
+	// null for an invite shared as a link.
+	email: string | null;
 	createdAt: number;
 	expiresAt: number;
 }
@@ -45,7 +48,9 @@ export type MemberEventAction =
 	| 'transfer_offered'
 	| 'transfer_withdrawn'
 	| 'transfer_declined'
-	| 'owner_changed';
+	| 'owner_changed'
+	| 'password_reset_issued'
+	| 'password_reset_used';
 
 export const memberEventLifetimeMs = 90 * 86_400_000;
 
@@ -64,7 +69,8 @@ function role(value: unknown): MembershipRole {
 export async function listMembers(db: D1Database, tenantId: string): Promise<MemberRow[]> {
 	const { results } = await db
 		.prepare(
-			`SELECT m.user_id, u.email, m.role, m.created_at FROM tenant_memberships m JOIN "user" u ON u.id = m.user_id
+			`SELECT m.user_id, u.email, COALESCE(u."displayUsername", u.email) AS name, m.role, m.created_at
+			FROM tenant_memberships m JOIN "user" u ON u.id = m.user_id
 			WHERE m.tenant_id = ? ORDER BY m.role = 'owner' DESC, m.created_at, m.user_id LIMIT 100`
 		)
 		.bind(tenantId)
@@ -72,6 +78,7 @@ export async function listMembers(db: D1Database, tenantId: string): Promise<Mem
 	return results.map((row) => ({
 		userId: text(row.user_id, 'user'),
 		email: text(row.email, 'email'),
+		name: text(row.name, 'name'),
 		role: role(row.role),
 		joinedAt: count(row.created_at, 'join time')
 	}));
@@ -91,7 +98,7 @@ export async function listInvites(
 		.all<Record<string, unknown>>();
 	return results.map((row) => ({
 		id: text(row.id, 'invite'),
-		email: text(row.email, 'email'),
+		email: row.email === null ? null : text(row.email, 'email'),
 		createdAt: count(row.created_at, 'invite time'),
 		expiresAt: count(row.expires_at, 'expiry')
 	}));
@@ -146,8 +153,8 @@ export type InviteResult =
 export interface NewInvite {
 	id: string;
 	tenantId: string;
-	// In lower case.
-	email: string;
+	// In lower case, or null for an invite shared as a link.
+	email: string | null;
 	tokenHash: string;
 	invitedBy: string;
 	now: number;
@@ -158,7 +165,8 @@ export interface NewInvite {
 
 // One statement checks the member limit and writes the invite, so two invites sent at once
 // cannot both take the last place. An open invite for the same address counts once: a resend
-// replaces its token and expiry and takes no new place.
+// replaces its token and expiry and takes no new place. An invite without an address never
+// conflicts, so each one takes a place.
 export async function createInvite(db: D1Database, invite: NewInvite): Promise<InviteResult> {
 	const { tenantId, email, now } = invite;
 	const [written] = await db.batch<{ id: unknown }>([
@@ -170,7 +178,7 @@ export async function createInvite(db: D1Database, invite: NewInvite): Promise<I
 			AND NOT EXISTS (SELECT 1 FROM tenant_deletions WHERE tenant_id = ?1)
 			AND NOT EXISTS (SELECT 1 FROM tenant_memberships m JOIN "user" u ON u.id = m.user_id WHERE m.tenant_id = ?1 AND lower(u.email) = ?4)
 			AND (SELECT COUNT(*) FROM tenant_memberships WHERE tenant_id = ?1)
-				+ (SELECT COUNT(*) FROM tenant_invites WHERE tenant_id = ?1 AND expires_at > ?2 AND email <> ?4) < p.member_limit
+				+ (SELECT COUNT(*) FROM tenant_invites WHERE tenant_id = ?1 AND expires_at > ?2 AND email IS NOT ?4) < p.member_limit
 			ON CONFLICT (tenant_id, email) DO UPDATE SET token_hash = excluded.token_hash,
 				invited_by = excluded.invited_by, created_at = excluded.created_at, expires_at = excluded.expires_at
 			WHERE ?8 = 1 OR tenant_invites.expires_at <= ?2
@@ -213,14 +221,17 @@ export async function createInvite(db: D1Database, invite: NewInvite): Promise<I
 	return { status: 'limit', limit: count(state.member_limit, 'member limit') };
 }
 
-// The address of an invite of the workspace, open or expired, for a resend.
+// The address of an invite of the workspace, open or expired, for a resend. null when there is
+// none, or the invite was shared as a link.
 export async function readInviteEmail(
 	db: D1Database,
 	tenantId: string,
 	inviteId: string
 ): Promise<string | null> {
 	const row = await db
-		.prepare('SELECT email FROM tenant_invites WHERE id = ? AND tenant_id = ?')
+		.prepare(
+			'SELECT email FROM tenant_invites WHERE id = ? AND tenant_id = ? AND email IS NOT NULL'
+		)
 		.bind(inviteId, tenantId)
 		.first<{ email: unknown }>();
 	return row ? text(row.email, 'email') : null;
@@ -250,7 +261,8 @@ export interface InviteDetails {
 	expiresAt: number;
 }
 
-// An open invite by its token hash, in a workspace that is active and not being deleted.
+// An open invite for an address by its token hash, in a workspace that is active and not being
+// deleted.
 export async function readInvite(
 	db: D1Database,
 	tokenHash: string,
@@ -260,8 +272,8 @@ export async function readInvite(
 		.prepare(
 			`SELECT i.tenant_id, t.name, i.email, i.expires_at FROM tenant_invites i
 			JOIN tenants t ON t.id = i.tenant_id JOIN tenant_policy p ON p.tenant_id = i.tenant_id
-			WHERE i.token_hash = ? AND i.expires_at > ? AND t.activated_at IS NOT NULL AND p.suspended_at IS NULL
-			AND NOT EXISTS (SELECT 1 FROM tenant_deletions d WHERE d.tenant_id = i.tenant_id)`
+			WHERE i.token_hash = ? AND i.email IS NOT NULL AND i.expires_at > ? AND t.activated_at IS NOT NULL
+			AND p.suspended_at IS NULL AND NOT EXISTS (SELECT 1 FROM tenant_deletions d WHERE d.tenant_id = i.tenant_id)`
 		)
 		.bind(tokenHash, now)
 		.first<Record<string, unknown>>();
@@ -320,8 +332,8 @@ export async function acceptInvite(
 }
 
 // Removes a member, never the owner, in one batch: the member's tokens and connected apps for
-// the workspace, the session and sign-in pointers to it, an offer of the workspace to them, the
-// event, then the membership. Every statement checks the member role first, so a batch for the
+// the workspace, the session and sign-in pointers to it, an offer of the workspace to them, a
+// password reset link, the event, then the membership. Every statement checks the member role first, so a batch for the
 // owner changes nothing. The member's other workspaces and credentials stay. actorUserId is the
 // owner who removes the member, or the member who leaves.
 export async function removeMember(
@@ -340,7 +352,8 @@ export async function removeMember(
 			`DELETE FROM "oauthConsent" WHERE "referenceId" = ?1 AND "userId" = ?2 AND ${isMember}`,
 			`DELETE FROM session_workspaces WHERE tenant_id = ?1 AND session_id IN (SELECT id FROM "session" WHERE "userId" = ?2) AND ${isMember}`,
 			`DELETE FROM user_workspace_preferences WHERE user_id = ?2 AND tenant_id = ?1 AND ${isMember}`,
-			`DELETE FROM tenant_transfers WHERE tenant_id = ?1 AND to_user_id = ?2 AND ${isMember}`
+			`DELETE FROM tenant_transfers WHERE tenant_id = ?1 AND to_user_id = ?2 AND ${isMember}`,
+			`DELETE FROM member_password_resets WHERE tenant_id = ?1 AND user_id = ?2 AND ${isMember}`
 		].map((statement) => db.prepare(statement).bind(input.tenantId, input.userId)),
 		db
 			.prepare(`${memberEventInsert} ?1, ?3, ?4, ?2, NULL, ?5 WHERE ${isMember}`)
@@ -376,6 +389,7 @@ export interface TransferOffer {
 	// The member the owner offered the workspace to.
 	userId: string;
 	email: string;
+	name: string;
 	expiresAt: number;
 }
 
@@ -392,7 +406,8 @@ export async function readTransfer(
 ): Promise<TransferOffer | null> {
 	const row = await db
 		.prepare(
-			`SELECT x.to_user_id, u.email, x.expires_at ${openOffer} JOIN "user" u ON u.id = x.to_user_id
+			`SELECT x.to_user_id, u.email, COALESCE(u."displayUsername", u.email) AS name, x.expires_at
+			${openOffer} JOIN "user" u ON u.id = x.to_user_id
 			WHERE x.tenant_id = ? AND x.expires_at > ?`
 		)
 		.bind(tenantId, now)
@@ -401,6 +416,7 @@ export async function readTransfer(
 	return {
 		userId: text(row.to_user_id, 'user'),
 		email: text(row.email, 'email'),
+		name: text(row.name, 'name'),
 		expiresAt: count(row.expires_at, 'expiry')
 	};
 }
@@ -538,7 +554,9 @@ const memberEventActions: readonly MemberEventAction[] = [
 	'transfer_offered',
 	'transfer_withdrawn',
 	'transfer_declined',
-	'owner_changed'
+	'owner_changed',
+	'password_reset_issued',
+	'password_reset_used'
 ];
 
 function memberEventAction(value: unknown): MemberEventAction {
@@ -597,4 +615,192 @@ export async function deleteExpiredMemberEvents(
 		.bind(now - memberEventLifetimeMs, limit)
 		.run();
 	return { deleted: result.meta.changes };
+}
+
+// An open invite shared as a link, in a workspace that is active and not being deleted. ?1 is the
+// token hash and ?2 the time.
+const openLinkInvite = `FROM tenant_invites i JOIN tenants t ON t.id = i.tenant_id
+	JOIN tenant_policy p ON p.tenant_id = i.tenant_id
+	WHERE i.token_hash = ?1 AND i.email IS NULL AND i.expires_at > ?2 AND t.activated_at IS NOT NULL
+	AND p.suspended_at IS NULL AND NOT EXISTS (SELECT 1 FROM tenant_deletions d WHERE d.tenant_id = i.tenant_id)`;
+
+export async function readLinkInvite(
+	db: D1Database,
+	tokenHash: string,
+	now: number
+): Promise<{ tenantId: string; workspaceName: string; expiresAt: number } | null> {
+	const row = await db
+		.prepare(`SELECT i.tenant_id, t.name, i.expires_at ${openLinkInvite}`)
+		.bind(tokenHash, now)
+		.first<Record<string, unknown>>();
+	if (!row) return null;
+	return {
+		tenantId: text(row.tenant_id, 'tenant'),
+		workspaceName: text(row.name, 'name'),
+		expiresAt: count(row.expires_at, 'expiry')
+	};
+}
+
+export interface NewMemberAccount {
+	tokenHash: string;
+	userId: string;
+	// In lower case, and as the person typed it.
+	username: string;
+	displayUsername: string;
+	// The account's internal address, never verified or sent to.
+	email: string;
+	accountId: string;
+	passwordHash: string;
+	now: number;
+}
+
+export type LinkAcceptResult =
+	{ status: 'joined'; tenantId: string } | { status: 'invalid' } | { status: 'username_taken' };
+
+// One batch creates the person's account, adds the membership, records it, and deletes the
+// invite, so a link works once. Each statement checks that the invite is open and that the user
+// row is the new one; a taken username stops the first statement, and so the whole batch.
+export async function acceptLinkInvite(
+	db: D1Database,
+	input: NewMemberAccount
+): Promise<LinkAcceptResult> {
+	const { tokenHash, userId, now } = input;
+	const created = 'EXISTS (SELECT 1 FROM "user" WHERE id = ?3 AND "createdAt" = ?2)';
+	const [, , joined] = await db.batch([
+		db
+			.prepare(
+				`INSERT INTO "user" (id, name, email, "emailVerified", username, "displayUsername", "createdAt", "updatedAt")
+				SELECT ?3, ?5, ?6, 0, ?4, ?5, ?2, ?2 WHERE EXISTS (SELECT 1 ${openLinkInvite})
+				AND NOT EXISTS (SELECT 1 FROM "user" WHERE username = ?4)`
+			)
+			.bind(tokenHash, now, userId, input.username, input.displayUsername, input.email),
+		db
+			.prepare(
+				`INSERT INTO account (id, "accountId", "providerId", "userId", password, "createdAt", "updatedAt")
+				SELECT ?4, ?3, 'credential', ?3, ?5, ?2, ?2 WHERE ${created}`
+			)
+			.bind(tokenHash, now, userId, input.accountId, input.passwordHash),
+		db
+			.prepare(
+				`INSERT INTO tenant_memberships (tenant_id, user_id, role, created_at)
+				SELECT i.tenant_id, ?3, 'member', ?2 ${openLinkInvite} AND ${created} RETURNING tenant_id`
+			)
+			.bind(tokenHash, now, userId),
+		db
+			.prepare(
+				`${memberEventInsert} i.tenant_id, 'invite_accepted', ?3, ?3, i.id, ?2 ${openLinkInvite} AND ${created}`
+			)
+			.bind(tokenHash, now, userId),
+		db
+			.prepare(
+				`DELETE FROM tenant_invites WHERE token_hash = ?1 AND email IS NULL
+				AND EXISTS (SELECT 1 FROM tenant_memberships WHERE tenant_id = tenant_invites.tenant_id AND user_id = ?2)`
+			)
+			.bind(tokenHash, userId)
+	]);
+	const tenantId = (joined.results[0] as { tenant_id?: unknown } | undefined)?.tenant_id;
+	if (typeof tenantId === 'string') return { status: 'joined', tenantId };
+	return (await readLinkInvite(db, tokenHash, now))
+		? { status: 'username_taken' }
+		: { status: 'invalid' };
+}
+
+export const passwordResetLifetimeMs = 86_400_000;
+
+// Records the owner's link that lets a member of the workspace set a new password, in place of
+// an earlier one, and its event. False when the sender is not the owner, the person is not a
+// member with a password, or the workspace is being deleted.
+export async function createPasswordReset(
+	db: D1Database,
+	input: {
+		tenantId: string;
+		userId: string;
+		createdBy: string;
+		tokenHash: string;
+		now: number;
+		expiresAt: number;
+	}
+): Promise<boolean> {
+	const [created] = await db.batch([
+		db
+			.prepare(
+				`INSERT INTO member_password_resets (tenant_id, user_id, token_hash, created_by, created_at, expires_at)
+				SELECT ?1, ?2, ?4, ?3, ?5, ?6
+				WHERE EXISTS (SELECT 1 FROM tenant_memberships WHERE tenant_id = ?1 AND user_id = ?3 AND role = 'owner')
+				AND EXISTS (SELECT 1 FROM tenant_memberships WHERE tenant_id = ?1 AND user_id = ?2 AND role = 'member')
+				AND EXISTS (SELECT 1 FROM account WHERE "userId" = ?2 AND "providerId" = 'credential')
+				AND NOT EXISTS (SELECT 1 FROM tenant_deletions WHERE tenant_id = ?1)
+				ON CONFLICT (tenant_id, user_id) DO UPDATE SET token_hash = excluded.token_hash,
+					created_by = excluded.created_by, created_at = excluded.created_at, expires_at = excluded.expires_at
+				RETURNING user_id`
+			)
+			.bind(
+				input.tenantId,
+				input.userId,
+				input.createdBy,
+				input.tokenHash,
+				input.now,
+				input.expiresAt
+			),
+		db
+			.prepare(
+				`${memberEventInsert} tenant_id, 'password_reset_issued', created_by, user_id, NULL, created_at
+				FROM member_password_resets WHERE token_hash = ?`
+			)
+			.bind(input.tokenHash)
+	]);
+	return created.results.length === 1;
+}
+
+// An open reset link: not expired, for a person who is still a member of a workspace that is
+// not being deleted. ?1 is the token hash and ?2 the time.
+const openReset = `FROM member_password_resets r JOIN tenants t ON t.id = r.tenant_id JOIN "user" u ON u.id = r.user_id
+	JOIN tenant_memberships m ON m.tenant_id = r.tenant_id AND m.user_id = r.user_id AND m.role = 'member'
+	WHERE r.token_hash = ?1 AND r.expires_at > ?2
+	AND NOT EXISTS (SELECT 1 FROM tenant_deletions d WHERE d.tenant_id = r.tenant_id)`;
+
+export async function readPasswordReset(
+	db: D1Database,
+	tokenHash: string,
+	now: number
+): Promise<{ userId: string; username: string; workspaceName: string; expiresAt: number } | null> {
+	const row = await db
+		.prepare(
+			`SELECT r.user_id, COALESCE(u."displayUsername", u.username) AS username, t.name, r.expires_at ${openReset}`
+		)
+		.bind(tokenHash, now)
+		.first<Record<string, unknown>>();
+	if (!row) return null;
+	return {
+		userId: text(row.user_id, 'user'),
+		username: text(row.username, 'username'),
+		workspaceName: text(row.name, 'name'),
+		expiresAt: count(row.expires_at, 'expiry')
+	};
+}
+
+// One batch stores the new password hash, ends every session of the member, records the event,
+// and deletes the link, so a link works once. API tokens and passkeys stay. Returns false, and
+// changes nothing, when the link is not open.
+export async function usePasswordReset(
+	db: D1Database,
+	input: { tokenHash: string; passwordHash: string; now: number }
+): Promise<boolean> {
+	const { tokenHash, now } = input;
+	const member = `(SELECT r.user_id ${openReset})`;
+	const [updated] = await db.batch([
+		db
+			.prepare(
+				`UPDATE account SET password = ?3, "updatedAt" = ?2 WHERE "providerId" = 'credential' AND "userId" = ${member}`
+			)
+			.bind(tokenHash, now, input.passwordHash),
+		db.prepare(`DELETE FROM "session" WHERE "userId" = ${member}`).bind(tokenHash, now),
+		db
+			.prepare(
+				`${memberEventInsert} r.tenant_id, 'password_reset_used', r.user_id, r.user_id, NULL, ?2 ${openReset}`
+			)
+			.bind(tokenHash, now),
+		db.prepare('DELETE FROM member_password_resets WHERE token_hash = ?').bind(tokenHash)
+	]);
+	return updated.meta.changes === 1;
 }

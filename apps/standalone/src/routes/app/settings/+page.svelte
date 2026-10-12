@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { invalidateAll } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import ConnectedAppList from '@flared/ui/oauth/ConnectedAppList.svelte';
 	import DeleteAccount from '@flared/ui/account/DeleteAccount.svelte';
@@ -9,6 +9,7 @@
 	import PasskeyList from '@flared/ui/passkeys/PasskeyList.svelte';
 	import TokenList from '@flared/ui/tokens/TokenList.svelte';
 	import UsageMeters from '@flared/ui/usage/UsageMeters.svelte';
+	import Members from '@flared/ui/workspace/Members.svelte';
 	import WorkspaceName from '@flared/ui/workspace/WorkspaceName.svelte';
 	import ThemeSetting from '@flared/ui/theme/ThemeSetting.svelte';
 	import PageHeader from '@flared/ui/molecules/PageHeader.svelte';
@@ -20,6 +21,7 @@
 	} from '@flared/ui/passkeys/client';
 	import { authErrorMessage, postJson } from '$lib/auth-client';
 	import { limitFields, toLimitsView, type Limits } from '$lib/limits';
+	import { appRoutes } from '$lib/routes';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -28,6 +30,8 @@
 		data.auth.status === 'authenticated' ? data.auth.principal.user.name : ''
 	);
 	const numbers = new Intl.NumberFormat();
+	// The owner changes the name, members, and limits; a member sees them.
+	const owner = $derived(data.workspace?.role === 'owner');
 
 	// Confirming it's you: the password, or a passkey of this account.
 	let reauthOpen = $state(false);
@@ -213,7 +217,12 @@
 	<SectionHeader id="general-heading" title="General" />
 	{#if data.workspaceName !== null}
 		<div id="workspace" class="anchor">
-			<WorkspaceName apiBase="/api/v1" name={data.workspaceName} onRenamed={invalidateAll} />
+			<WorkspaceName
+				apiBase="/api/v1"
+				name={data.workspaceName}
+				onRenamed={invalidateAll}
+				editable={owner}
+			/>
 		</div>
 	{/if}
 	<ThemeSetting />
@@ -221,11 +230,34 @@
 
 <div class="divider"></div>
 
+<div id="members" class="anchor">
+	{#if data.members && data.workspaceName !== null}
+		<Members
+			page={data.members}
+			apiBase="/api/v1"
+			delivery="link"
+			onChanged={() => invalidateAll()}
+			workspaceName={data.workspaceName}
+			{owner}
+			onLeft={() => goto(appRoutes.login, { invalidateAll: true })}
+			onReauthRequired={() => void askReauth()}
+		/>
+	{:else}
+		<section class="notice" role="alert">
+			<h2>We couldn’t load the members</h2>
+			<p>Refresh the page to try again.</p>
+		</section>
+	{/if}
+</div>
+
+<div class="divider"></div>
+
 <section class="section" aria-labelledby="password-heading">
 	<h2 id="password-heading">Password</h2>
 	<p>
-		Changing your password ends every other session. Without email, a forgotten password is reset
-		from the Cloudflare account.
+		Changing your password ends every other session. {owner
+			? 'Without email, a forgotten password is reset from the Cloudflare account.'
+			: 'If you forget it, ask the workspace owner for a password reset link.'}
 	</p>
 	<form
 		class="password-form"
@@ -329,8 +361,9 @@
 	{#if data.usage}<UsageMeters usage={data.usage} />{/if}
 	{#if limits && limitsView}
 		<p>
-			Lower limits never stop existing links or domains; they block new ones. Higher limits use more
-			of your Cloudflare plan; see docs/self-hosting/limits.md.
+			{owner
+				? 'Lower limits never stop existing links, domains, or members; they block new ones. Higher limits use more of your Cloudflare plan; see docs/self-hosting/limits.md.'
+				: 'Only the workspace owner can change the limits.'}
 		</p>
 		<form
 			class="limits-form"
@@ -350,6 +383,7 @@
 						max={limitsView.bounds[field.key].max}
 						step="1"
 						required
+						readonly={!owner}
 						bind:value={limits[field.key]}
 					/>
 					<small
@@ -362,9 +396,11 @@
 			{/each}
 			{#if limitsError}<p class="error" role="alert">{limitsError}</p>{/if}
 			<div class="button-row">
-				<button class="button primary" type="submit" disabled={limitsPending}
-					>{limitsPending ? 'Saving…' : 'Save limits'}</button
-				>
+				{#if owner}
+					<button class="button primary" type="submit" disabled={limitsPending}
+						>{limitsPending ? 'Saving…' : 'Save limits'}</button
+					>
+				{/if}
 				{#if limitsView.pending}
 					<p role="status">
 						Pending: the new limits are saved and apply once both databases hold them.
@@ -400,7 +436,9 @@
 <DeleteAccount
 	endpoint="/api/account/delete"
 	confirmation={account}
-	afterDeletion="This installation closes for good. To use Flared again, deploy a new copy."
+	afterDeletion={owner
+		? 'This installation closes for good. To use Flared again, deploy a new copy.'
+		: 'Your account and its sign-in end. The workspace stays with its owner.'}
 	fresh={data.tokens?.freshUntil != null && Date.parse(data.tokens.freshUntil) > Date.now()}
 	blocked={null}
 	onReauthRequired={() => void askReauth()}

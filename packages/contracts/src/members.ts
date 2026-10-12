@@ -6,6 +6,8 @@ import { isWorkspace, type Workspace, type WorkspaceRole } from './workspace';
 export interface WorkspaceMember {
 	userId: string;
 	email: string;
+	// What the person signs in with: the email in the cloud, the username in standalone.
+	name: string;
 	role: WorkspaceRole;
 	joinedAt: string;
 	// The signed-in person.
@@ -14,7 +16,8 @@ export interface WorkspaceMember {
 
 export interface WorkspaceInvite {
 	id: string;
-	email: string;
+	// null for an invite shared as a link.
+	email: string | null;
 	createdAt: string;
 	expiresAt: string;
 }
@@ -23,6 +26,7 @@ export interface WorkspaceInvite {
 export interface OwnershipOffer {
 	userId: string;
 	email: string;
+	name: string;
 	expiresAt: string;
 }
 
@@ -48,6 +52,33 @@ export interface InvitePreview {
 
 export interface AcceptedInvite {
 	workspace: Workspace;
+}
+
+// The answer to POST /v1/invites and a resend. url is the invite link, shown once, for an
+// installation that shares invites as links; emailSent is then false.
+export interface CreatedInvite {
+	invite: WorkspaceInvite;
+	emailSent: boolean;
+	url?: string;
+}
+
+// The answer to POST /v1/members/:userId/password-reset: the link, shown once.
+export interface PasswordResetLink {
+	url: string;
+	expiresAt: string;
+}
+
+// What an invite link shows before the person creates an account, in standalone.
+export interface LinkInvitePreview {
+	workspaceName: string;
+	expiresAt: string;
+}
+
+// What a password reset link shows before the person sets a new password.
+export interface PasswordResetPreview {
+	username: string;
+	workspaceName: string;
+	expiresAt: string;
 }
 
 export const inviteLifetimeDays = 7;
@@ -82,6 +113,12 @@ export function parseInvite(body: unknown): { email: string } {
 	return { email };
 }
 
+// The body of POST /v1/invites for an invite shared as a link: an empty object.
+export function parseLinkInvite(body: unknown): void {
+	if (!isRecord(body)) throw new LinkInputError('body', 'Send a JSON object.');
+	for (const key of Object.keys(body)) throw new LinkInputError(key, `Unknown field: ${key}.`);
+}
+
 // The body of POST /v1/invites/lookup and /v1/invites/accept. The token comes from the invite
 // link's fragment.
 export function parseInviteToken(body: unknown): { token: string } {
@@ -110,6 +147,7 @@ function isMember(value: unknown): value is WorkspaceMember {
 		isRecord(value) &&
 		typeof value.userId === 'string' &&
 		typeof value.email === 'string' &&
+		typeof value.name === 'string' &&
 		typeof value.role === 'string' &&
 		roles.includes(value.role) &&
 		typeof value.joinedAt === 'string' &&
@@ -121,7 +159,7 @@ export function isWorkspaceInvite(value: unknown): value is WorkspaceInvite {
 	return (
 		isRecord(value) &&
 		typeof value.id === 'string' &&
-		typeof value.email === 'string' &&
+		(value.email === null || typeof value.email === 'string') &&
 		typeof value.createdAt === 'string' &&
 		typeof value.expiresAt === 'string'
 	);
@@ -132,6 +170,7 @@ export function isOwnershipOffer(value: unknown): value is OwnershipOffer {
 		isRecord(value) &&
 		typeof value.userId === 'string' &&
 		typeof value.email === 'string' &&
+		typeof value.name === 'string' &&
 		typeof value.expiresAt === 'string'
 	);
 }
@@ -161,4 +200,25 @@ export function isInvitePreview(value: unknown): value is InvitePreview {
 
 export function isAcceptedInvite(value: unknown): value is AcceptedInvite {
 	return isRecord(value) && isWorkspace(value.workspace);
+}
+
+export function isLinkInvitePreview(value: unknown): value is LinkInvitePreview {
+	return (
+		isRecord(value) &&
+		typeof value.workspaceName === 'string' &&
+		typeof value.expiresAt === 'string'
+	);
+}
+
+export function isPasswordResetPreview(value: unknown): value is PasswordResetPreview {
+	return (
+		isRecord(value) &&
+		typeof value.username === 'string' &&
+		typeof value.workspaceName === 'string' &&
+		typeof value.expiresAt === 'string'
+	);
+}
+
+export function isPasswordResetLink(value: unknown): value is PasswordResetLink {
+	return isRecord(value) && typeof value.url === 'string' && typeof value.expiresAt === 'string';
 }

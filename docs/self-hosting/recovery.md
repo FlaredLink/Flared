@@ -1,6 +1,8 @@
 # Reset a forgotten password
 
-Flared sends no email, so a password reset goes through the Cloudflare account that runs the Worker.
+A member who forgets their password asks the owner for a reset link: the owner creates it in **Settings → Members** (see [members.md](members.md)). This page is for the owner's password.
+
+Flared sends no email, so the owner's password reset goes through the Cloudflare account that runs the Worker.
 
 ## Before you start
 

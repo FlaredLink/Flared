@@ -18,6 +18,7 @@
 		apiBase="/api/v1"
 		onChanged={() => invalidateAll()}
 		createHref={appRoutes.app}
+		manage={data.workspace?.role === 'owner'}
 	/>
 {:else}
 	<PageHeader title="Domains" lead="Use a familiar address for every link." />

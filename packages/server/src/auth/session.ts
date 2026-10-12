@@ -20,15 +20,15 @@ export interface SessionReader {
 export type IdentityRule =
 	// The cloud: a verified email.
 	| { kind: 'verified-email' }
-	// Standalone: the owner's username with a password account. The email is an internal
-	// .invalid address and is never verified.
-	| { kind: 'owner-username'; db: D1Database };
+	// Standalone: a username with a password account, the owner's or a member's. The email is an
+	// internal .invalid address and is never verified.
+	| { kind: 'username'; db: D1Database };
 
 function record(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null;
 }
 
-async function ownerUsername(db: D1Database, userId: string): Promise<string | null> {
+async function accountUsername(db: D1Database, userId: string): Promise<string | null> {
 	const row = await db
 		.prepare(
 			`SELECT u.username FROM "user" u JOIN account a ON a.userId = u.id AND a.providerId = 'credential' WHERE u.id = ?`
@@ -63,7 +63,7 @@ export async function readPrincipal(
 		return null;
 	let name: string | null;
 	if (rule.kind === 'verified-email') name = emailVerified === true ? email : null;
-	else name = await ownerUsername(rule.db, id);
+	else name = await accountUsername(rule.db, id);
 	if (name === null) return null;
 	return {
 		user: { id, email, name },

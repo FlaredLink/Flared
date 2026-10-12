@@ -5,6 +5,7 @@
 		acceptTransfer,
 		cancelInvite,
 		cancelTransfer,
+		createPasswordReset,
 		offerTransfer,
 		removeMember,
 		sendInvite
@@ -16,6 +17,7 @@
 	import TextInput from '../atoms/TextInput.svelte';
 	import SectionHeader from '../molecules/SectionHeader.svelte';
 	import Callout from '../molecules/Callout.svelte';
+	import CopyField from '../molecules/CopyField.svelte';
 
 	interface Props {
 		page: MemberPage;
@@ -33,6 +35,9 @@
 		// What a change of owner means for billing, for the edition that bills; shown with the
 		// offer to both people.
 		billingNote?: string;
+		// How invites reach people: an email to one address, or a link the owner shares. With
+		// links, the owner also gives members links that set a new password.
+		delivery?: 'email' | 'link';
 	}
 
 	let {
@@ -43,14 +48,18 @@
 		owner,
 		onLeft,
 		onReauthRequired,
-		billingNote
+		billingNote,
+		delivery = 'email'
 	}: Props = $props();
 	const workspace = shownWorkspace();
 	const dates = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
+	const times = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+	// A link the server returned once, shown until the owner closes it.
+	let shownLink = $state<{ title: string; url: string; note: string } | null>(null);
 
 	let email = $state('');
 	// "invite", "resend:<id>", "cancel:<id>", "remove:<userId>", "leave", "offer:<userId>",
-	// "withdraw", or "accept" while a request runs.
+	// "reset:<userId>", "withdraw", or "accept" while a request runs.
 	let pending = $state<string | null>(null);
 	let status = $state('');
 	let error = $state('');
@@ -63,6 +72,7 @@
 
 	async function invite(event: SubmitEvent) {
 		event.preventDefault();
+		if (delivery === 'link') return createLink();
 		const address = normalizeEmail(email);
 		if (address === null) {
 			error = 'Enter an email address.';
@@ -82,6 +92,45 @@
 			? `Invite sent to ${address}.`
 			: `We saved the invite, but the email to ${address} failed. Send it again from the list.`;
 		await onChanged();
+	}
+
+	async function createLink() {
+		pending = 'invite';
+		status = '';
+		error = '';
+		shownLink = null;
+		const result = await sendInvite(apiBase, 'link', workspace());
+		pending = null;
+		if (!result.ok || result.url === null) {
+			error = result.ok ? 'We could not create the invite link. Try again.' : result.message;
+			return;
+		}
+		const until = result.expiresAt ? ` until ${dates.format(new Date(result.expiresAt))}` : '';
+		shownLink = {
+			title: 'Invite link',
+			url: result.url,
+			note: `Send this link to the person you invite. It works once${until}, and the person who opens it creates an account in ${workspaceName}. We show it only now; if it is lost, cancel the invite and create another.`
+		};
+		await onChanged();
+	}
+
+	async function resetLink(userId: string, name: string) {
+		pending = `reset:${userId}`;
+		status = '';
+		error = '';
+		shownLink = null;
+		const result = await createPasswordReset(apiBase, userId, workspace());
+		pending = null;
+		if (!result.ok) {
+			if (result.reauth) onReauthRequired();
+			else error = result.message;
+			return;
+		}
+		shownLink = {
+			title: `Password reset link for ${name}`,
+			url: result.link.url,
+			note: `Send this link to ${name} only. It works once, until ${times.format(new Date(result.link.expiresAt))}. The new password signs them out everywhere; their API tokens keep working. A new link replaces this one.`
+		};
 	}
 
 	async function resend(id: string, address: string) {
@@ -164,7 +213,8 @@
 		await onChanged();
 	}
 
-	async function cancel(id: string, address: string) {
+	// address is null for an invite link.
+	async function cancel(id: string, address: string | null) {
 		pending = `cancel:${id}`;
 		status = '';
 		error = '';
@@ -175,7 +225,8 @@
 			error = 'We could not cancel the invite. Try again.';
 			return;
 		}
-		status = `Cancelled the invite to ${address}.`;
+		status =
+			address === null ? 'Cancelled the invite link.' : `Cancelled the invite to ${address}.`;
 		await onChanged();
 	}
 </script>
@@ -185,7 +236,7 @@
 		id="members-heading"
 		title="Members"
 		lead={owner
-			? `People in ${workspaceName}. Members create and edit links and see analytics. Only you manage domains, billing, and members.`
+			? `People in ${workspaceName}. Members create and edit links and see analytics. Only you manage domains, ${delivery === 'email' ? 'billing, ' : ''}and members.`
 			: `People in ${workspaceName}. Only the workspace owner can invite or remove members. If you leave, your tokens and connected apps for ${workspaceName} stop working.`}
 	/>
 	<p class="count">
@@ -194,7 +245,21 @@
 			: ''}.
 	</p>
 
-	{#if owner}
+	{#if owner && delivery === 'link'}
+		<form class="invite" onsubmit={invite} aria-labelledby="invite-heading">
+			<h3 id="invite-heading">Invite a member</h3>
+			<div class="row">
+				<Button type="submit" variant="primary" disabled={pending !== null || full}
+					>{pending === 'invite' ? 'Creating…' : 'Create invite link'}</Button
+				>
+			</div>
+			<p class="hint">
+				{full
+					? 'All places are used. Cancel an invite or remove a member to free a place, or raise the member limit under Limits.'
+					: 'You get a link to send to the person yourself. It works once, for 7 days.'}
+			</p>
+		</form>
+	{:else if owner}
 		<form class="invite" onsubmit={invite} aria-labelledby="invite-heading">
 			<h3 id="invite-heading">Invite a member</h3>
 			<div class="row">
@@ -221,8 +286,17 @@
 			</p>
 		</form>
 	{/if}
+	{#if shownLink}
+		<Callout tone="info" icon="link" title={shownLink.title}>
+			<CopyField id="shown-link" label="Link" value={shownLink.url} />
+			<p>{shownLink.note}</p>
+			<p class="callout-actions">
+				<Button size="sm" onclick={() => (shownLink = null)}>Done</Button>
+			</p>
+		</Callout>
+	{/if}
 	{#if page.transfer && owner}
-		<Callout tone="info" icon="crown" title="Waiting for {page.transfer.email}">
+		<Callout tone="info" icon="crown" title="Waiting for {page.transfer.name}">
 			<p>
 				They become the owner when they accept. The offer is open until
 				<time datetime={page.transfer.expiresAt}
@@ -267,7 +341,7 @@
 			<li class="row-item">
 				<Glyph name={member.role === 'owner' ? 'crown' : 'user'} size={22} />
 				<span class="who">
-					<span class="email">{member.email}</span>
+					<span class="email">{member.name}</span>
 					<span class="meta">Joined {dates.format(new Date(member.joinedAt))}</span>
 				</span>
 				<span class="badges">
@@ -280,34 +354,43 @@
 					<span class="actions">
 						{#if confirmingId === `owner:${member.userId}`}
 							<span class="confirm"
-								>Make {member.email} the owner? You become a member. {billingNote ?? ''}</span
+								>Make {member.name} the owner? You become a member. {billingNote ?? ''}</span
 							>
 							<Button
 								size="sm"
 								variant="primary"
 								disabled={pending !== null}
-								onclick={() => void offer(member.userId, member.email)}
+								onclick={() => void offer(member.userId, member.name)}
 								>{pending === `offer:${member.userId}` ? 'Sending…' : 'Send offer'}</Button
 							>
 							<Button size="sm" variant="ghost" onclick={() => (confirmingId = null)}>Keep</Button>
 						{:else if confirmingId === member.userId}
 							<span class="confirm"
-								>{member.you ? `Leave ${workspaceName}?` : `Remove ${member.email}?`}</span
+								>{member.you ? `Leave ${workspaceName}?` : `Remove ${member.name}?`}</span
 							>
 							<Button
 								size="sm"
 								variant="danger"
 								disabled={pending !== null}
-								onclick={() => void remove(member.you ? null : member.userId, member.email)}
+								onclick={() => void remove(member.you ? null : member.userId, member.name)}
 								>{pending !== null ? 'Working…' : member.you ? 'Leave' : 'Remove'}</Button
 							>
 							<Button size="sm" variant="ghost" onclick={() => (confirmingId = null)}>Keep</Button>
 						{:else}
+							{#if owner && delivery === 'link'}
+								<Button
+									size="sm"
+									disabled={pending !== null}
+									aria-label={`Create a password reset link for ${member.name}`}
+									onclick={() => void resetLink(member.userId, member.name)}
+									>{pending === `reset:${member.userId}` ? 'Creating…' : 'Reset link'}</Button
+								>
+							{/if}
 							{#if owner && page.transfer?.userId !== member.userId}
 								<Button
 									size="sm"
 									disabled={pending !== null}
-									aria-label={`Make ${member.email} the owner`}
+									aria-label={`Make ${member.name} the owner`}
 									onclick={() => (confirmingId = `owner:${member.userId}`)}>Make owner…</Button
 								>
 							{/if}
@@ -315,7 +398,7 @@
 								size="sm"
 								variant="danger-soft"
 								disabled={pending !== null}
-								aria-label={member.you ? `Leave ${workspaceName}` : `Remove ${member.email}`}
+								aria-label={member.you ? `Leave ${workspaceName}` : `Remove ${member.name}`}
 								onclick={() => (confirmingId = member.userId)}
 								>{member.you ? 'Leave…' : 'Remove…'}</Button
 							>
@@ -331,9 +414,9 @@
 		<ul class="list" aria-labelledby="invites-heading">
 			{#each page.invites as item (item.id)}
 				<li class="row-item">
-					<Glyph name="envelope" size={22} />
+					<Glyph name={item.email === null ? 'link' : 'envelope'} size={22} />
 					<span class="who">
-						<span class="email">{item.email}</span>
+						<span class="email">{item.email ?? 'Invite link'}</span>
 						<span class="meta"
 							>Link works until <time datetime={item.expiresAt}
 								>{dates.format(new Date(item.expiresAt))}</time
@@ -352,18 +435,23 @@
 							>
 							<Button size="sm" variant="ghost" onclick={() => (confirmingId = null)}>Keep</Button>
 						{:else}
-							<Button
-								size="sm"
-								disabled={pending !== null}
-								aria-label={`Send the invite to ${item.email} again`}
-								onclick={() => void resend(item.id, item.email)}
-								>{pending === `resend:${item.id}` ? 'Sending…' : 'Send again'}</Button
-							>
+							{#if item.email !== null}
+								{@const address = item.email}
+								<Button
+									size="sm"
+									disabled={pending !== null}
+									aria-label={`Send the invite to ${address} again`}
+									onclick={() => void resend(item.id, address)}
+									>{pending === `resend:${item.id}` ? 'Sending…' : 'Send again'}</Button
+								>
+							{/if}
 							<Button
 								size="sm"
 								variant="danger-soft"
 								disabled={pending !== null}
-								aria-label={`Cancel the invite to ${item.email}`}
+								aria-label={item.email === null
+									? 'Cancel the invite link'
+									: `Cancel the invite to ${item.email}`}
 								onclick={() => (confirmingId = item.id)}>Cancel…</Button
 							>
 						{/if}

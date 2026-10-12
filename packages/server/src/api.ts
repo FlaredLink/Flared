@@ -51,12 +51,15 @@ import {
 	inviteLifetimeDays,
 	parseInvite,
 	parseInviteToken,
+	parseLinkInvite,
 	parseTransfer,
 	transferLifetimeDays,
 	type AcceptedInvite,
+	type CreatedInvite,
 	type InvitePreview,
 	type MemberPage,
 	type OwnershipOffer,
+	type PasswordResetLink,
 	type WorkspaceInvite
 } from '@flared/contracts/members';
 import {
@@ -66,6 +69,8 @@ import {
 	removeMember,
 	countInviteEmail,
 	createInvite,
+	createPasswordReset,
+	passwordResetLifetimeMs,
 	listInvites,
 	listMembers,
 	offerTransfer,
@@ -96,9 +101,11 @@ import { noteLimitUsage } from './notices';
 import {
 	hashInviteToken,
 	inviteEmail,
+	invitesPerDay,
 	newInviteToken,
 	transferEmail,
-	type InviteSettings
+	type InviteSettings,
+	type LinkInviteSettings
 } from './members';
 import { resolveTenant } from './tenancy';
 import {
@@ -846,6 +853,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			members: members.map((member) => ({
 				userId: member.userId,
 				email: member.email,
+				name: member.name,
 				role: member.role,
 				joinedAt: new Date(member.joinedAt).toISOString(),
 				you: member.userId === principal.userId
@@ -857,7 +865,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			limit: counted.limit,
 			transfer:
 				offer && (role === 'owner' || offer.userId === principal.userId)
-					? offerSummary(offer.userId, offer.email, offer.expiresAt)
+					? offerSummary(offer.userId, offer.email, offer.name, offer.expiresAt)
 					: null
 		};
 		return respond({ status: 200, body: JSON.stringify(page) });
@@ -921,11 +929,17 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		const principal = sessionOnly(context, 'Invite members in the Flared app.');
 		ownerOnly(context, 'Only the workspace owner can invite members.');
 		const settings = inviteSettings();
-		const { email } = parseInvite(await readJson(context.req.raw));
+		const body = await readJson(context.req.raw);
+		if (settings.delivery === 'link') {
+			parseLinkInvite(body);
+			return sendInvite(context, principal, settings, null, false);
+		}
+		const { email } = parseInvite(body);
 		return sendInvite(context, principal, settings, email, false);
 	});
 
-	// A new link with a new expiry; the old link stops working.
+	// A new link with a new expiry; the old link stops working. An invite shared as a link has no
+	// resend: the owner cancels it and creates another.
 	app.post('/invites/:id/resend', async (context) => {
 		const principal = sessionOnly(context, 'Invite members in the Flared app.');
 		ownerOnly(context, 'Only the workspace owner can invite members.');
@@ -999,6 +1013,45 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
 	});
 
+	// The owner creates a link that lets a member set a new password, where invites are shared as
+	// links. Like an invite, it is shown once; it replaces an earlier one and works for 24 hours.
+	// It can take over the member's account, so it needs a recent sign-in.
+	app.post('/members/:userId/password-reset', async (context) => {
+		const principal = sessionOnly(context, 'Reset passwords in the Flared app.');
+		ownerOnly(context, 'Only the workspace owner can reset a member’s password.');
+		const settings = linkSettings();
+		const { tenantId, requestId } = context.var;
+		requireShown(context);
+		const time = now();
+		if (freshUntil(principal, time) === null)
+			throw new ApiError('REAUTH_REQUIRED', 'Sign in again to reset a member’s password.');
+		if (!(await countInviteEmail(identity, tenantId, time, invitesPerDay(settings))))
+			throw new ApiError(
+				'RATE_LIMITED',
+				'This workspace created many links today. Try again tomorrow.',
+				Math.ceil((dayMs - (time % dayMs)) / 1000)
+			);
+		const token = newInviteToken();
+		const expiresAt = time + passwordResetLifetimeMs;
+		if (
+			!(await createPasswordReset(identity, {
+				tenantId,
+				userId: context.req.param('userId'),
+				createdBy: principal.userId,
+				tokenHash: await hashInviteToken(token),
+				now: time,
+				expiresAt
+			}))
+		)
+			throw new ApiError('NOT_FOUND', 'Member not found.');
+		console.log(JSON.stringify({ event: 'password_reset_created', requestId }));
+		const body: PasswordResetLink = {
+			url: settings.resetUrl(token),
+			expiresAt: new Date(expiresAt).toISOString()
+		};
+		return respond({ status: 201, body: JSON.stringify(body) });
+	});
+
 	// The owner offers the workspace to a member, who accepts it on the members page. A new offer
 	// replaces an open one. Giving the workspace away needs a recent sign-in, as deleting it does.
 	app.post('/workspace/transfer', async (context) => {
@@ -1024,22 +1077,28 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		const [workspaceName, people] = await Promise.all([
 			readTenantName(identity, tenantId),
 			identity
-				.prepare('SELECT id, email FROM "user" WHERE id IN (?, ?)')
+				.prepare(
+					'SELECT id, email, COALESCE("displayUsername", email) AS name FROM "user" WHERE id IN (?, ?)'
+				)
 				.bind(principal.userId, userId)
-				.all<{ id: unknown; email: unknown }>()
+				.all<{ id: unknown; email: unknown; name: unknown }>()
 		]);
-		const emailOf = (id: string) => {
-			const email = people.results.find((row) => row.id === id)?.email;
-			return typeof email === 'string' ? email : null;
+		const field = (id: string, key: 'email' | 'name') => {
+			const value = people.results.find((row) => row.id === id)?.[key];
+			return typeof value === 'string' ? value : null;
 		};
-		const [from, to] = [emailOf(principal.userId), emailOf(userId)];
-		if (to === null) throw new ApiError('NOT_FOUND', 'Member not found.');
+		const [from, to, toName] = [
+			field(principal.userId, 'email'),
+			field(userId, 'email'),
+			field(userId, 'name')
+		];
+		if (to === null || toName === null) throw new ApiError('NOT_FOUND', 'Member not found.');
 		// The offer stands without the email: the member also sees it on the members page.
 		let emailSent = false;
 		const settings = dependencies.invites;
-		if (settings && workspaceName !== null && from !== null)
+		if (settings?.delivery === 'email' && workspaceName !== null && from !== null)
 			try {
-				if (await countInviteEmail(identity, tenantId, time, settings.emailsPerDay ?? 20)) {
+				if (await countInviteEmail(identity, tenantId, time, invitesPerDay(settings))) {
 					await settings.email.send(
 						transferEmail({ to, workspaceName, from, url: settings.membersUrl, expiresAt })
 					);
@@ -1050,7 +1109,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			}
 		console.log(JSON.stringify({ event: 'transfer_offered', requestId, emailSent }));
 		const body: { transfer: OwnershipOffer; emailSent: boolean } = {
-			transfer: offerSummary(userId, to, expiresAt),
+			transfer: offerSummary(userId, to, toName, expiresAt),
 			emailSent
 		};
 		return respond({ status: 201, body: JSON.stringify(body) });
@@ -1102,18 +1161,25 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		return dependencies.invites;
 	}
 
-	// Counts the email against the day's limit, writes the invite within the member limit, then
-	// sends the email. A failed email leaves the invite, and the owner can send it again.
+	function linkSettings(): LinkInviteSettings {
+		const settings = inviteSettings();
+		if (settings.delivery !== 'link') throw new ApiError('NOT_FOUND', 'Route not found.');
+		return settings;
+	}
+
+	// Counts the email or link against the day's limit, writes the invite within the member limit,
+	// then sends the email or returns the link. A failed email leaves the invite, and the owner
+	// can send it again. email is null for an invite shared as a link.
 	async function sendInvite(
 		context: ApiContext,
 		principal: Extract<ApiPrincipal, { kind: 'session' }>,
 		settings: InviteSettings,
-		email: string,
+		email: string | null,
 		renew: boolean
 	): Promise<Response> {
 		const { tenantId, requestId } = context.var;
 		const time = now();
-		if (!(await countInviteEmail(identity, tenantId, time, settings.emailsPerDay ?? 20)))
+		if (!(await countInviteEmail(identity, tenantId, time, invitesPerDay(settings))))
 			throw new ApiError(
 				'RATE_LIMITED',
 				'This workspace sent many invites today. Try again tomorrow.',
@@ -1144,6 +1210,17 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 				`This workspace has room for ${result.limit} members, open invites included. Remove a member or cancel an invite first.`
 			);
 		if (result.status === 'no_workspace') throw new ApiError('NOT_FOUND', 'Workspace not found.');
+		if (settings.delivery === 'link') {
+			console.log(JSON.stringify({ event: 'invite_link_created', requestId }));
+			const created: CreatedInvite = {
+				invite: inviteSummary(result.id, null, time, expiresAt),
+				emailSent: false,
+				url: settings.inviteUrl(token)
+			};
+			return respond({ status: 201, body: JSON.stringify(created) });
+		}
+		// The email routes always parse an address.
+		if (email === null) throw new ApiError('INVALID_INPUT', 'Enter an email address.');
 		const [workspaceName, inviter] = await Promise.all([
 			readTenantName(identity, tenantId),
 			identity
@@ -1170,7 +1247,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		console.log(
 			JSON.stringify({ event: renew ? 'invite_resent' : 'invite_created', requestId, emailSent })
 		);
-		const body: { invite: WorkspaceInvite; emailSent: boolean } = {
+		const body: CreatedInvite = {
 			invite: inviteSummary(result.id, email, time, expiresAt),
 			emailSent
 		};
@@ -1273,13 +1350,18 @@ function requireShown(context: ApiContext): void {
 		);
 }
 
-function offerSummary(userId: string, email: string, expiresAt: number): OwnershipOffer {
-	return { userId, email, expiresAt: new Date(expiresAt).toISOString() };
+function offerSummary(
+	userId: string,
+	email: string,
+	name: string,
+	expiresAt: number
+): OwnershipOffer {
+	return { userId, email, name, expiresAt: new Date(expiresAt).toISOString() };
 }
 
 function inviteSummary(
 	id: string,
-	email: string,
+	email: string | null,
 	createdAt: number,
 	expiresAt: number
 ): WorkspaceInvite {

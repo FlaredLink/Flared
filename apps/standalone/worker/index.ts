@@ -5,6 +5,7 @@
 // link. No request header chooses the app origin.
 import sveltekit from 'sveltekit-worker';
 import { isReservedPath } from '@flared/contracts/reserved';
+import { workspaceHeader } from '@flared/contracts/workspace';
 import { readInstallationStatus, type InstallationStatus } from '@flared/data/setup';
 import { deleteAccount, type AccountDeletionEdition } from '@flared/server/account';
 import { createApi, type ApiAuthentication } from '@flared/server/api';
@@ -48,7 +49,8 @@ const initialLimits = {
 	activeLinkLimit: 10_000,
 	monthlyClickLimit: 50_000,
 	retentionDays: 30,
-	domainLimit: 5
+	domainLimit: 5,
+	memberLimit: 10
 };
 
 const deadLetterQueue = 'flared-clicks-dlq';
@@ -165,6 +167,12 @@ class Installation {
 			},
 			authenticate,
 			fixedTenantId: this.fixedTenantId,
+			// The owner shares invite and password reset links; no email is needed.
+			invites: {
+				delivery: 'link',
+				inviteUrl: (token) => `${config.origin}/app/invite#${token}`,
+				resetUrl: (token) => `${config.origin}/app/reset#${token}`
+			},
 			icons: { store: workersCacheIconStore() }
 		});
 	}
@@ -175,7 +183,7 @@ class Installation {
 		url.pathname = path;
 		const names =
 			mode === 'session'
-				? ['cookie', 'origin', 'content-type', 'accept', 'idempotency-key']
+				? ['cookie', 'origin', 'content-type', 'accept', 'idempotency-key', workspaceHeader]
 				: ['authorization', 'content-type', 'accept', 'idempotency-key'];
 		const authenticate = apiAuthenticator(mode, {
 			identity: this.config.identity,
@@ -203,7 +211,7 @@ class Installation {
 			secret: config.secret,
 			rateLimitSecret: config.rateLimitSecret,
 			resource: this.resource,
-			identityRule: { kind: 'owner-username' as const, db: config.identity }
+			identityRule: { kind: 'username' as const, db: config.identity }
 		};
 	}
 }

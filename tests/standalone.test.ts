@@ -22,6 +22,7 @@ import {
 	verifyPassword
 } from '../packages/server/src/auth/password';
 import { readPrincipal } from '../packages/server/src/auth/session';
+import { workspaceHeader } from '../packages/contracts/src/workspace';
 import { createOAuthRoutes } from '../packages/server/src/oauth/routes';
 import { createRedirectHandler } from '../packages/server/src/redirect';
 import { handleSetup, type SetupOptions } from '../packages/server/src/setup';
@@ -38,7 +39,8 @@ const limits = {
 	activeLinkLimit: 10000,
 	monthlyClickLimit: 50000,
 	retentionDays: 30,
-	domainLimit: 5
+	domainLimit: 5,
+	memberLimit: 10
 };
 const password = 'correct horse battery';
 const owner = { secret: setupSecret, username: 'Owner.One', password, workspaceName: 'Links' };
@@ -607,7 +609,7 @@ describe('owner sign-in', () => {
 		const headers = new Headers({ cookie: jar.header() });
 		expect(await readPrincipal(reader.api, headers, { kind: 'verified-email' })).toBeNull();
 		expect(
-			(await readPrincipal(reader.api, headers, { kind: 'owner-username', db: db() }))?.user.name
+			(await readPrincipal(reader.api, headers, { kind: 'username', db: db() }))?.user.name
 		).toBe('owner.one');
 		const oauth = (rule: Parameters<typeof readPrincipal>[2]) =>
 			createOAuthRoutes({
@@ -627,7 +629,7 @@ describe('owner sign-in', () => {
 			headers: { cookie: jar.header() }
 		});
 		expect((await oauth({ kind: 'verified-email' }).fetch(consent.clone())).status).toBe(401);
-		const accepted = await oauth({ kind: 'owner-username', db: db() }).fetch(consent);
+		const accepted = await oauth({ kind: 'username', db: db() }).fetch(consent);
 		expect(accepted.status).toBe(400);
 	});
 });
@@ -719,5 +721,197 @@ describe('single-workspace binding', () => {
 		})({ messages: [message] });
 		expect(results).toEqual(['dropped']);
 		expect(acked).toBe(true);
+	});
+});
+
+describe('members by link', () => {
+	const ownerPassword = 'the final password';
+	const memberPassword = 'member password one';
+	const linkApi = () =>
+		createApi({
+			identity: db(),
+			routing: env.OWNER_ROUTING,
+			analytics: { 'analytics-1': env.OWNER_ANALYTICS },
+			appOrigin: origin,
+			fixedTenantId: tenantId,
+			invites: {
+				delivery: 'link',
+				inviteUrl: (token) => `${origin}/app/invite#${token}`,
+				resetUrl: (token) => `${origin}/app/reset#${token}`
+			},
+			authenticate: async (request) => {
+				const principal = await readPrincipal((await sharedAuth()).api, request.headers, {
+					kind: 'username',
+					db: db()
+				});
+				return principal
+					? {
+							kind: 'session',
+							userId: principal.user.id,
+							sessionId: principal.sessionId,
+							signedInAt: principal.signedInAt
+						}
+					: null;
+			}
+		});
+	async function api(jar: Jar, method: string, path: string, body?: unknown) {
+		const headers = new Headers({ origin, cookie: jar.header(), [workspaceHeader]: tenantId });
+		if (body !== undefined) headers.set('content-type', 'application/json');
+		const response = await linkApi().fetch(
+			new Request(`${origin}/v1${path}`, {
+				method,
+				headers,
+				body: body === undefined ? undefined : JSON.stringify(body)
+			})
+		);
+		const text = await response.text();
+		return {
+			status: response.status,
+			body: text ? (JSON.parse(text) as Record<string, any>) : {}
+		};
+	}
+	const tokenOf = (url: string) => url.slice(url.indexOf('#') + 1);
+	const events = async () =>
+		(
+			await db()
+				.prepare(
+					'SELECT action FROM tenant_member_events WHERE tenant_id = ? ORDER BY created_at, rowid'
+				)
+				.bind(tenantId)
+				.all<{ action: string }>()
+		).results.map((row) => row.action);
+	let memberId = '';
+
+	it('shares an invite link that creates one member account', async () => {
+		const owner = await signIn('owner.one', ownerPassword);
+		expect((await api(owner, 'POST', '/invites', { email: 'a@example.com' })).status).toBe(422);
+		const created = await api(owner, 'POST', '/invites', {});
+		expect(created.status).toBe(201);
+		expect(created.body).toMatchObject({ invite: { email: null }, emailSent: false });
+		const url: string = created.body.url;
+		expect(url.startsWith(`${origin}/app/invite#`)).toBe(true);
+		const token = tokenOf(url);
+		// Nothing else holds the token: the store keeps a hash.
+		expect(
+			await count(db(), `SELECT COUNT(*) AS n FROM tenant_invites WHERE token_hash = '${token}'`)
+		).toBe(0);
+
+		const preview = await call(new Jar(), '/api/auth/invite/lookup', { token });
+		expect(await preview.json()).toMatchObject({ workspaceName: 'Links' });
+		const accept = (jar: Jar, username: string, secret = memberPassword) =>
+			call(jar, '/api/auth/invite/accept', { token, username, password: secret });
+		expect((await accept(new Jar(), 'x')).status).toBe(400);
+		expect((await accept(new Jar(), 'Mia.Member', 'short')).status).toBe(400);
+		const taken = await accept(new Jar(), 'OWNER.one');
+		expect([taken.status, await code(taken)]).toEqual([409, 'USERNAME_TAKEN']);
+
+		const mia = new Jar();
+		expect((await accept(mia, 'Mia.Member')).status).toBe(200);
+		const session = (await (await call(mia, '/api/auth/session')).json()) as {
+			user: { id: string; name: string };
+		};
+		expect(session.user.name).toBe('mia.member');
+		memberId = session.user.id;
+		const again = await accept(new Jar(), 'Other.Person');
+		expect([again.status, await code(again)]).toEqual([404, 'INVITE_NOT_FOUND']);
+		await signIn('mia.member', memberPassword);
+
+		const page = await api(owner, 'GET', '/members');
+		expect(
+			page.body.members.map((member: { name: string; role: string }) => [member.name, member.role])
+		).toEqual([
+			['Owner.One', 'owner'],
+			['Mia.Member', 'member']
+		]);
+		expect(page.body.invites).toEqual([]);
+		// The member sees the members, not the invites, and cannot invite.
+		expect((await api(mia, 'POST', '/invites', {})).status).toBe(403);
+		expect(await events()).toEqual(['invite_sent', 'invite_accepted']);
+	});
+
+	it('lets one of two people at once use a link', async () => {
+		const owner = await signIn('owner.one', ownerPassword);
+		const { url } = (await api(owner, 'POST', '/invites', {})).body;
+		const token = tokenOf(url);
+		const results = await Promise.all(
+			['Ned.One', 'Ned.Two'].map((username) =>
+				call(new Jar(), '/api/auth/invite/accept', { token, username, password: memberPassword })
+			)
+		);
+		expect(results.map((result) => result.status).sort()).toEqual([200, 404]);
+		expect(
+			await count(
+				db(),
+				"SELECT COUNT(*) AS n FROM \"user\" WHERE username IN ('ned.one', 'ned.two')"
+			)
+		).toBe(1);
+		const ned = await db()
+			.prepare("SELECT id FROM \"user\" WHERE username IN ('ned.one', 'ned.two')")
+			.first<{ id: string }>();
+		expect((await api(owner, 'DELETE', `/members/${ned?.id}`)).status).toBe(204);
+	});
+
+	it('lets the owner give a member a password reset link that works once', async () => {
+		const mia = await signIn('mia.member', memberPassword);
+		const owner = await signIn('owner.one', ownerPassword);
+		const reset = (jar: Jar, target: string) =>
+			api(jar, 'POST', `/members/${target}/password-reset`);
+		expect((await reset(mia, memberId)).status).toBe(403);
+		expect((await reset(owner, userId)).status).toBe(404);
+		await makeStale();
+		const stale = await reset(owner, memberId);
+		expect([stale.status, stale.body.error.code]).toEqual([403, 'REAUTH_REQUIRED']);
+		const fresh = await signIn('owner.one', ownerPassword);
+		const created = await reset(fresh, memberId);
+		expect(created.status).toBe(201);
+		const token = tokenOf(created.body.url);
+		expect(created.body.url.startsWith(`${origin}/app/reset#`)).toBe(true);
+
+		const preview = await call(new Jar(), '/api/auth/password/reset/lookup', { token });
+		expect(await preview.json()).toMatchObject({ username: 'Mia.Member', workspaceName: 'Links' });
+		const use = (secret: string) =>
+			call(new Jar(), '/api/auth/password/reset', { token, newPassword: secret });
+		expect((await use('short')).status).toBe(400);
+		expect((await use('a new member password')).status).toBe(200);
+		expect((await call(mia, '/api/auth/session')).status).toBe(401);
+		expect(
+			(
+				await call(new Jar(), '/api/auth/sign-in/password', {
+					username: 'mia.member',
+					password: memberPassword
+				})
+			).status
+		).toBe(401);
+		await signIn('mia.member', 'a new member password');
+		const again = await use('another member password');
+		expect([again.status, await code(again)]).toEqual([404, 'RESET_NOT_FOUND']);
+		expect((await events()).slice(-2)).toEqual(['password_reset_issued', 'password_reset_used']);
+	});
+
+	it('ends a reset link when the member leaves or becomes the owner', async () => {
+		const owner = await signIn('owner.one', ownerPassword);
+		const { url } = (await api(owner, 'POST', `/members/${memberId}/password-reset`)).body;
+		const token = tokenOf(url);
+		// The offer and its acceptance make the member the owner; the link no longer counts.
+		expect((await api(owner, 'POST', '/workspace/transfer', { userId: memberId })).status).toBe(
+			201
+		);
+		const mia = await signIn('mia.member', 'a new member password');
+		expect((await api(mia, 'POST', '/workspace/transfer/accept')).status).toBe(200);
+		const ended = await call(new Jar(), '/api/auth/password/reset', {
+			token,
+			newPassword: 'a takeover password'
+		});
+		expect(ended.status).toBe(404);
+		// Give the workspace back, then remove the member: the new link goes with them.
+		const fresh = await signIn('mia.member', 'a new member password');
+		expect((await api(fresh, 'POST', '/workspace/transfer', { userId })).status).toBe(201);
+		const back = await signIn('owner.one', ownerPassword);
+		expect((await api(back, 'POST', '/workspace/transfer/accept')).status).toBe(200);
+		const second = (await api(back, 'POST', `/members/${memberId}/password-reset`)).body.url;
+		expect((await api(back, 'DELETE', `/members/${memberId}`)).status).toBe(204);
+		expect(
+			(await call(new Jar(), '/api/auth/password/reset/lookup', { token: tokenOf(second) })).status
+		).toBe(404);
 	});
 });

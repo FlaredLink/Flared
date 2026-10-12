@@ -2,8 +2,10 @@
 import {
 	isAcceptedInvite,
 	isInvitePreview,
+	isPasswordResetLink,
 	type AcceptedInvite,
-	type InvitePreview
+	type InvitePreview,
+	type PasswordResetLink
 } from '@flared/contracts/members';
 import { isWorkspace, type WorkspaceSummary } from '@flared/contracts/workspace';
 
@@ -65,7 +67,10 @@ export async function createWorkspace(apiBase: string, name: string): Promise<Cr
 	}
 }
 
-export type InviteOutcome = { ok: true; emailSent: boolean } | { ok: false; message: string };
+// url is the invite link, shown once, where invites are shared as links.
+export type InviteOutcome =
+	| { ok: true; emailSent: boolean; url: string | null; expiresAt: string | null }
+	| { ok: false; message: string };
 
 function errorOf(body: unknown): { code: unknown; message: unknown } {
 	const error = typeof body === 'object' && body !== null ? Reflect.get(body, 'error') : null;
@@ -86,16 +91,19 @@ const inviteCodes = new Set([
 	'WORKSPACE_SUSPENDED'
 ]);
 
-// Sends an invite, or sends one again with a new link when id is set.
+// Sends an invite, sends one again with a new link when id is set, or creates an invite link.
 export async function sendInvite(
 	apiBase: string,
-	target: { email: string } | { id: string },
+	target: { email: string } | { id: string } | 'link',
 	workspace: Record<string, string>
 ): Promise<InviteOutcome> {
-	const failed = 'We could not send the invite. Try again.';
+	const failed =
+		target === 'link'
+			? 'We could not create the invite link. Try again.'
+			: 'We could not send the invite. Try again.';
 	try {
 		const response =
-			'id' in target
+			typeof target === 'object' && 'id' in target
 				? await fetch(`${apiBase}/invites/${encodeURIComponent(target.id)}/resend`, {
 						method: 'POST',
 						headers: workspace
@@ -103,13 +111,22 @@ export async function sendInvite(
 				: await fetch(`${apiBase}/invites`, {
 						method: 'POST',
 						headers: { 'content-type': 'application/json', ...workspace },
-						body: JSON.stringify({ email: target.email })
+						body: JSON.stringify(target === 'link' ? {} : { email: target.email })
 					});
 		const body: unknown = await response.json().catch(() => null);
 		if (response.ok) {
-			const emailSent: unknown =
-				typeof body === 'object' && body !== null ? Reflect.get(body, 'emailSent') : null;
-			return { ok: true, emailSent: emailSent === true };
+			const record = typeof body === 'object' && body !== null ? body : {};
+			const url: unknown = Reflect.get(record, 'url');
+			const invite: unknown = Reflect.get(record, 'invite');
+			const expiresAt: unknown =
+				typeof invite === 'object' && invite !== null ? Reflect.get(invite, 'expiresAt') : null;
+			if (target === 'link' && typeof url !== 'string') return { ok: false, message: failed };
+			return {
+				ok: true,
+				emailSent: Reflect.get(record, 'emailSent') === true,
+				url: typeof url === 'string' ? url : null,
+				expiresAt: typeof expiresAt === 'string' ? expiresAt : null
+			};
 		}
 		const { code, message } = errorOf(body);
 		return {
@@ -304,6 +321,42 @@ export async function acceptTransfer(
 		});
 		if (response.ok) return { ok: true, emailSent: false };
 		return transferFailure(await response.json().catch(() => null), failed);
+	} catch {
+		return { ok: false, reauth: false, message: failed };
+	}
+}
+
+export type ResetOutcome =
+	{ ok: true; link: PasswordResetLink } | { ok: false; reauth: boolean; message: string };
+
+// The owner creates a link that lets a member set a new password. It replaces an earlier one.
+export async function createPasswordReset(
+	apiBase: string,
+	userId: string,
+	workspace: Record<string, string>
+): Promise<ResetOutcome> {
+	const failed = 'We could not create the reset link. Try again.';
+	try {
+		const response = await fetch(
+			`${apiBase}/members/${encodeURIComponent(userId)}/password-reset`,
+			{ method: 'POST', headers: workspace }
+		);
+		const body: unknown = await response.json().catch(() => null);
+		if (response.status === 201 && isPasswordResetLink(body)) return { ok: true, link: body };
+		const { code, message } = errorOf(body);
+		if (code === 'REAUTH_REQUIRED') return { ok: false, reauth: true, message: '' };
+		return {
+			ok: false,
+			reauth: false,
+			message:
+				(code === 'NOT_FOUND' ||
+					code === 'RATE_LIMITED' ||
+					code === 'OWNER_REQUIRED' ||
+					code === 'WORKSPACE_CHANGED') &&
+				typeof message === 'string'
+					? message
+					: failed
+		};
 	} catch {
 		return { ok: false, reauth: false, message: failed };
 	}

@@ -1,15 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The standalone owner's sign-in: username and password, plus the shared passkey routes. No
-// public sign-up, email, password reset, or account-linking route exists; only setup creates
-// the owner. Password sign-in, reauthentication, and password change each reserve a budget
-// before any hash runs and answer every credential failure the same way.
+// Standalone sign-in: username and password, plus the shared passkey routes. No public sign-up,
+// email, or account-linking route exists. Setup creates the owner; a member's account comes
+// only from an invite link, and a member's new password only from the owner's reset link. Each
+// route reserves a budget before any hash runs, and sign-in answers every credential failure
+// the same way.
 import { betterAuth } from 'better-auth';
 import { username } from 'better-auth/plugins';
 import type { Hono } from 'hono';
 import { createIdentityAdapter } from '@flared/data/identity-adapter';
 import { ensurePlatformDomain } from '@flared/data/domains';
 import { installD1ProofGuards } from '@flared/data/identity-proof-guards';
+import {
+	acceptLinkInvite,
+	readLinkInvite,
+	readPasswordReset,
+	usePasswordReset
+} from '@flared/data/members';
 import { moveAppOrigin } from '@flared/data/setup';
+import type { LinkInvitePreview, PasswordResetPreview } from '@flared/contracts/members';
+import { hashInviteToken } from '../members';
 import type { AuthMethods } from '../web/auth';
 import { reserveAttempt, type AttemptKind } from './attempts';
 import { keyedHash } from './limits';
@@ -34,8 +43,8 @@ export const maxPasswordLength = 128;
 // lower case.
 export const usernamePattern = /^[a-zA-Z0-9_.]{3,30}$/;
 
-// Better Auth requires a unique email. The owner's is an internal address that is never
-// verified, shown, or sent to.
+// Better Auth requires a unique email. The owner's and each member's is an internal address
+// that is never verified, shown, or sent to.
 export function ownerEmail(userId: string): string {
 	return `${userId}@owner.invalid`;
 }
@@ -74,16 +83,26 @@ export type OwnerAuth = Awaited<ReturnType<typeof createOwnerAuth>>;
 export const ownerSignInMethods: AuthMethods = {
 	'/api/auth/sign-in/password': 'POST',
 	'/api/auth/reauth/password': 'POST',
-	'/api/auth/password/change': 'POST'
+	'/api/auth/password/change': 'POST',
+	'/api/auth/invite/lookup': 'POST',
+	'/api/auth/invite/accept': 'POST',
+	'/api/auth/password/reset/lookup': 'POST',
+	'/api/auth/password/reset': 'POST'
 };
 
 // The routes that need the trusted client address.
+const sourceLimitedPaths = new Set([
+	'/api/auth/sign-in/password',
+	'/api/auth/passkey/sign-in/options',
+	'/api/auth/reauth/passkey/options',
+	'/api/auth/invite/lookup',
+	'/api/auth/invite/accept',
+	'/api/auth/password/reset/lookup',
+	'/api/auth/password/reset'
+]);
+
 export function ownerSourceLimited(path: string): boolean {
-	return (
-		path === '/api/auth/sign-in/password' ||
-		path === '/api/auth/passkey/sign-in/options' ||
-		path === '/api/auth/reauth/passkey/options'
-	);
+	return sourceLimitedPaths.has(path);
 }
 
 function password(value: unknown): string {
@@ -114,7 +133,30 @@ function changeBody(value: unknown): { currentPassword: string; newPassword: str
 	return { currentPassword: password(record.currentPassword), newPassword: record.newPassword };
 }
 
+// An invite or reset token from a link's fragment.
+function linkToken(value: unknown): string {
+	if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{20,100}$/.test(value))
+		throw new AuthInputError(400, 'INVALID_REQUEST');
+	return value;
+}
+
+function acceptBody(value: unknown): { token: string; username: string; password: string } {
+	const record = exactRecord(value, ['token', 'username', 'password']);
+	const name = typeof record.username === 'string' ? record.username.trim() : '';
+	if (!usernamePattern.test(name) || !isNewPassword(record.password))
+		throw new AuthInputError(400, 'INVALID_REQUEST');
+	return { token: linkToken(record.token), username: name, password: record.password };
+}
+
+function resetBody(value: unknown): { token: string; newPassword: string } {
+	const record = exactRecord(value, ['token', 'newPassword']);
+	if (!isNewPassword(record.newPassword)) throw new AuthInputError(400, 'INVALID_REQUEST');
+	return { token: linkToken(record.token), newPassword: record.newPassword };
+}
+
 const invalidCredentials = () => authFailure('INVALID_CREDENTIALS', 401);
+const inviteEnded = () => authFailure('INVITE_NOT_FOUND', 404);
+const resetEnded = () => authFailure('RESET_NOT_FOUND', 404);
 
 // The user ID and session token of a successful sign-in response.
 async function signedInSession(
@@ -259,8 +301,93 @@ export function createOwnerAuthRoutes(options: OwnerRouteOptions): Hono {
 		return outcome.ok ? authenticated(outcome.result) : authFailure('AUTH_UNAVAILABLE', 503);
 	}
 
+	// The links are the secret, so each use of one spends the address's sign-in budget.
+	async function reserveSource(request: Request): Promise<Response | null> {
+		const source = trustedSource(request);
+		if (!source) return authFailure('AUTH_UNAVAILABLE', 503);
+		return reserve('sign_in', source);
+	}
+
+	async function inviteLookup({ body, request }: SignInRouteInput) {
+		const token = linkToken(exactRecord(body, ['token']).token);
+		const refused = await reserveSource(request);
+		if (refused) return refused;
+		const invite = await readLinkInvite(db, await hashInviteToken(token), now());
+		if (!invite) return inviteEnded();
+		const preview: LinkInvitePreview = {
+			workspaceName: invite.workspaceName,
+			expiresAt: new Date(invite.expiresAt).toISOString()
+		};
+		return authJson(preview);
+	}
+
+	// Creates the member's account from an open invite link and signs them in. The checks before
+	// the hash keep a stale link or a taken name from costing a hash.
+	async function inviteAccept({ body, request, headers }: SignInRouteInput) {
+		const input = acceptBody(body);
+		const refused = await reserveSource(request);
+		if (refused) return refused;
+		const tokenHash = await hashInviteToken(input.token);
+		if (!(await readLinkInvite(db, tokenHash, now()))) return inviteEnded();
+		const taken = await db
+			.prepare('SELECT 1 AS found FROM "user" WHERE username = ?')
+			.bind(input.username.toLowerCase())
+			.first();
+		if (taken) return authFailure('USERNAME_TAKEN', 409);
+		const context = await (await getAuth()).$context;
+		const userId = crypto.randomUUID();
+		const result = await acceptLinkInvite(db, {
+			tokenHash,
+			userId,
+			username: input.username.toLowerCase(),
+			displayUsername: input.username,
+			email: ownerEmail(userId),
+			accountId: crypto.randomUUID(),
+			passwordHash: await context.password.hash(input.password),
+			now: now()
+		});
+		if (result.status === 'username_taken') return authFailure('USERNAME_TAKEN', 409);
+		if (result.status === 'invalid') return inviteEnded();
+		const outcome = await signIn(input.username, input.password, headers);
+		return outcome.ok ? authenticated(outcome.result) : authFailure('AUTH_UNAVAILABLE', 503);
+	}
+
+	async function resetLookup({ body, request }: SignInRouteInput) {
+		const token = linkToken(exactRecord(body, ['token']).token);
+		const refused = await reserveSource(request);
+		if (refused) return refused;
+		const reset = await readPasswordReset(db, await hashInviteToken(token), now());
+		if (!reset) return resetEnded();
+		const preview: PasswordResetPreview = {
+			username: reset.username,
+			workspaceName: reset.workspaceName,
+			expiresAt: new Date(reset.expiresAt).toISOString()
+		};
+		return authJson(preview);
+	}
+
+	// Sets the member's new password from an open reset link, which ends their sessions, then
+	// signs them in.
+	async function passwordReset({ body, request, headers }: SignInRouteInput) {
+		const input = resetBody(body);
+		const refused = await reserveSource(request);
+		if (refused) return refused;
+		const tokenHash = await hashInviteToken(input.token);
+		const reset = await readPasswordReset(db, tokenHash, now());
+		if (!reset) return resetEnded();
+		const context = await (await getAuth()).$context;
+		const passwordHash = await context.password.hash(input.newPassword);
+		if (!(await usePasswordReset(db, { tokenHash, passwordHash, now: now() }))) return resetEnded();
+		const outcome = await signIn(reset.username, input.newPassword, headers);
+		return outcome.ok ? authenticated(outcome.result) : authFailure('AUTH_UNAVAILABLE', 503);
+	}
+
 	async function handle(input: SignInRouteInput): Promise<Response> {
 		if (input.path === '/api/auth/sign-in/password') return passwordSignIn(input);
+		if (input.path === '/api/auth/invite/lookup') return inviteLookup(input);
+		if (input.path === '/api/auth/invite/accept') return inviteAccept(input);
+		if (input.path === '/api/auth/password/reset/lookup') return resetLookup(input);
+		if (input.path === '/api/auth/password/reset') return passwordReset(input);
 		const principal = await input.principal();
 		if (!principal) return authFailure('UNAUTHENTICATED', 401);
 		if (input.path === '/api/auth/reauth/password') return passwordReauth(principal, input);
@@ -274,7 +401,7 @@ export function createOwnerAuthRoutes(options: OwnerRouteOptions): Hono {
 		origin: config.origin,
 		rateLimitSecret: config.rateLimitSecret,
 		passkeyAttemptsTable: 'passkey_attempts',
-		identityRule: { kind: 'owner-username', db },
+		identityRule: { kind: 'username', db },
 		signIn: { methods: ownerSignInMethods, handle },
 		now
 	});

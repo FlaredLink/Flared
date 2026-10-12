@@ -95,7 +95,8 @@ const sessionOnly = [
 	'POST /workspace/leave',
 	'POST /workspace/transfer',
 	'DELETE /workspace/transfer',
-	'POST /workspace/transfer/accept'
+	'POST /workspace/transfer/accept',
+	'POST /members/{userId}/password-reset'
 ];
 const document = openApiDocument(baseUrl);
 type Operation = { responses: Record<string, { content?: Record<string, { schema: unknown }> }> };
