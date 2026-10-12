@@ -4,8 +4,18 @@
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { deleteIdentityRecords, deleteMemberOnlyUser } from '../packages/data/src/deletions';
-import { ownershipTransferStatements, transferred } from '../packages/data/src/members';
+import {
+	createAccountDeletion,
+	deleteIdentityRecords,
+	deleteMemberOnlyUser
+} from '../packages/data/src/deletions';
+import {
+	deleteExpiredMemberEvents,
+	listMemberEvents,
+	memberEventLifetimeMs,
+	ownershipTransferStatements,
+	transferred
+} from '../packages/data/src/members';
 import { createTenant, type PolicyLimits } from '../packages/data/src/tenancy';
 import { createApi, type ApiDependencies } from '../packages/server/src/api';
 import { workspaceHeader } from '../packages/contracts/src/workspace';
@@ -351,10 +361,10 @@ describe('removal and leaving', () => {
 	});
 
 	it('deletes a person who owns no workspace, and never an owner', async () => {
-		expect(await deleteMemberOnlyUser(identity(), 'own')).toBe(false);
+		expect(await deleteMemberOnlyUser(identity(), 'own', clock)).toBe(false);
 		expect(await rows("user WHERE id = 'own'")).toBe(1);
 		expect(await rows("tenant_memberships WHERE user_id = 'oli'")).toBe(1);
-		expect(await deleteMemberOnlyUser(identity(), 'oli')).toBe(true);
+		expect(await deleteMemberOnlyUser(identity(), 'oli', clock)).toBe(true);
 		expect(await rows("user WHERE id = 'oli'")).toBe(0);
 		expect(await rows("tenant_memberships WHERE user_id = 'oli'")).toBe(0);
 		expect(await rows('"session" WHERE "userId" = \'oli\'')).toBe(0);
@@ -499,5 +509,145 @@ describe('ownership transfer', () => {
 		]);
 		expect(await role('ava')).toBe('owner');
 		expect((await endOffer('ava')).status).toBe(204);
+	});
+});
+
+describe('member events', () => {
+	const shown = { [workspaceHeader]: 'ws-log' };
+	// Oldest first, as [action, actor, subject].
+	const events = async () =>
+		(await listMemberEvents(identity(), 'ws-log', 200))
+			.reverse()
+			.map((event) => [event.action, event.actorUserId, event.subjectUserId]);
+
+	beforeAll(async () => {
+		for (const userId of ['eve', 'fay', 'gus', 'hal']) await addUser(userId);
+		await addWorkspace('ws-log', 'Log', 'eve', 5);
+	});
+
+	it('records each member change once, with user IDs and no address or token', async () => {
+		const first = await invite('eve', 'fay@example.com');
+		expect(first.status).toBe(201);
+		expect((await call('eve', 'POST', `/invites/${first.body.invite.id}/resend`)).status).toBe(200);
+		const token = lastToken();
+		expect((await accept('fay', token)).status).toBe(200);
+		// Refused changes record nothing.
+		expect((await invite('eve', 'fay@example.com')).status).toBe(409);
+		expect((await accept('fay', token)).status).toBe(404);
+		expect((await call('eve', 'DELETE', '/members/eve')).status).toBe(409);
+		expect((await call('eve', 'DELETE', '/invites/none')).status).toBe(404);
+
+		const second = await invite('eve', 'gus@example.com');
+		expect((await call('eve', 'DELETE', `/invites/${second.body.invite.id}`)).status).toBe(204);
+		expect((await invite('eve', 'gus@example.com')).status).toBe(201);
+		expect((await accept('gus', lastToken())).status).toBe(200);
+		expect((await call('eve', 'DELETE', '/members/gus')).status).toBe(204);
+
+		const offer = () => call('eve', 'POST', '/workspace/transfer', { userId: 'fay' }, api(), shown);
+		const endOffer = (userId: string) =>
+			call(userId, 'DELETE', '/workspace/transfer', undefined, api(), shown);
+		expect((await offer()).status).toBe(201);
+		expect((await endOffer('eve')).status).toBe(204);
+		expect((await endOffer('eve')).status).toBe(404);
+		expect((await offer()).status).toBe(201);
+		expect((await endOffer('fay')).status).toBe(204);
+		expect((await offer()).status).toBe(201);
+		const db = identity();
+		const input = { tenantId: 'ws-log', toUserId: 'fay', now: clock };
+		expect(transferred(await db.batch(ownershipTransferStatements(db, input, '0')))).toBe(false);
+		expect(
+			(await call('fay', 'POST', '/workspace/transfer/accept', undefined, api(), shown)).status
+		).toBe(200);
+		expect((await call('eve', 'POST', '/workspace/leave', undefined, api(), shown)).status).toBe(
+			204
+		);
+
+		expect(await events()).toEqual([
+			['invite_sent', 'eve', null],
+			['invite_resent', 'eve', null],
+			['invite_accepted', 'fay', 'fay'],
+			['invite_sent', 'eve', null],
+			['invite_cancelled', 'eve', null],
+			['invite_sent', 'eve', null],
+			['invite_accepted', 'gus', 'gus'],
+			['member_removed', 'eve', 'gus'],
+			['transfer_offered', 'eve', 'fay'],
+			['transfer_withdrawn', 'eve', 'fay'],
+			['transfer_offered', 'eve', 'fay'],
+			['transfer_declined', 'fay', 'fay'],
+			['transfer_offered', 'eve', 'fay'],
+			['owner_changed', 'fay', 'eve'],
+			['member_left', 'eve', 'eve']
+		]);
+		const listed = await listMemberEvents(identity(), 'ws-log', 200);
+		// The invite events name the invite; the readers get each person's current address.
+		expect(listed.filter((event) => event.inviteId !== null)).toHaveLength(7);
+		expect(listed.find((event) => event.action === 'owner_changed')).toMatchObject({
+			actorEmail: 'fay@example.com',
+			subjectEmail: 'eve@example.com'
+		});
+		const stored = await identity()
+			.prepare("SELECT * FROM tenant_member_events WHERE tenant_id = 'ws-log'")
+			.all<Record<string, unknown>>();
+		const tokens = sent.flatMap((email) =>
+			[...email.text.matchAll(/#([A-Za-z0-9_-]+)/g)].map((match) => match[1])
+		);
+		for (const row of stored.results)
+			for (const value of Object.values(row)) {
+				expect(String(value)).not.toContain('@');
+				expect(tokens).not.toContain(String(value));
+			}
+	});
+
+	it('records a member’s account deletion in each workspace they leave', async () => {
+		expect((await invite('fay', 'hal@example.com')).status).toBe(201);
+		expect((await accept('hal', lastToken())).status).toBe(200);
+		expect(await deleteMemberOnlyUser(identity(), 'hal', clock)).toBe(true);
+		const [latest] = await listMemberEvents(identity(), 'ws-log', 1);
+		expect(latest).toMatchObject({
+			action: 'account_deleted',
+			actorUserId: 'hal',
+			actorEmail: null,
+			subjectUserId: 'hal'
+		});
+	});
+
+	it('records no join for a person who is already a member', async () => {
+		await addUser('jo');
+		expect((await invite('fay', 'jo@example.com')).status).toBe(201);
+		await identity()
+			.prepare(
+				"INSERT INTO tenant_memberships (tenant_id, user_id, role, created_at) VALUES ('ws-log', 'jo', 'member', 1)"
+			)
+			.run();
+		const before = (await listMemberEvents(identity(), 'ws-log', 200)).length;
+		expect((await accept('jo', lastToken())).status).toBe(404);
+		expect(await listMemberEvents(identity(), 'ws-log', 200)).toHaveLength(before);
+	});
+
+	it('records the account deletion of an owner who is a member elsewhere', async () => {
+		await addUser('ivy');
+		await addWorkspace('ws-ivy', 'Ivy', 'ivy', 2);
+		expect((await invite('fay', 'ivy@example.com')).status).toBe(201);
+		expect((await accept('ivy', lastToken())).status).toBe(200);
+		expect(
+			await createAccountDeletion(identity(), {
+				userId: 'ivy',
+				workspaces: [{ tenantId: 'ws-ivy', analyticsShardId: 'analytics-1' }],
+				contactEmail: null,
+				now: clock
+			})
+		).toBe(true);
+		const [latest] = await listMemberEvents(identity(), 'ws-log', 1);
+		expect(latest).toMatchObject({ action: 'account_deleted', actorUserId: 'ivy' });
+		expect((await listMemberEvents(identity(), 'ws-ivy', 10)).length).toBe(0);
+	});
+
+	it('keeps events for 90 days', async () => {
+		const kept = (await listMemberEvents(identity(), 'ws-log', 200)).length;
+		await deleteExpiredMemberEvents(identity(), clock + memberEventLifetimeMs, 1000);
+		expect(await listMemberEvents(identity(), 'ws-log', 200)).toHaveLength(kept);
+		await deleteExpiredMemberEvents(identity(), clock + memberEventLifetimeMs + 1, 1000);
+		expect(await listMemberEvents(identity(), 'ws-log', 200)).toHaveLength(0);
 	});
 });

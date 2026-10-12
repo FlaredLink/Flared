@@ -34,6 +34,27 @@ function count(value: unknown, field: string): number {
 	return value;
 }
 
+export type MemberEventAction =
+	| 'invite_sent'
+	| 'invite_resent'
+	| 'invite_cancelled'
+	| 'invite_accepted'
+	| 'member_removed'
+	| 'member_left'
+	| 'account_deleted'
+	| 'transfer_offered'
+	| 'transfer_withdrawn'
+	| 'transfer_declined'
+	| 'owner_changed';
+
+export const memberEventLifetimeMs = 90 * 86_400_000;
+
+// The start of a statement that records a member event (see migration 0016). The row ID comes
+// from SQLite, so one statement can record an event for each row it selects.
+export const memberEventInsert = `INSERT INTO tenant_member_events
+	(id, tenant_id, action, actor_user_id, subject_user_id, invite_id, created_at)
+	SELECT lower(hex(randomblob(16))),`;
+
 function role(value: unknown): MembershipRole {
 	if (value !== 'owner' && value !== 'member') throw new Error('Invalid stored role');
 	return value;
@@ -140,9 +161,10 @@ export interface NewInvite {
 // replaces its token and expiry and takes no new place.
 export async function createInvite(db: D1Database, invite: NewInvite): Promise<InviteResult> {
 	const { tenantId, email, now } = invite;
-	const row = await db
-		.prepare(
-			`INSERT INTO tenant_invites (id, tenant_id, email, token_hash, invited_by, created_at, expires_at)
+	const [written] = await db.batch<{ id: unknown }>([
+		db
+			.prepare(
+				`INSERT INTO tenant_invites (id, tenant_id, email, token_hash, invited_by, created_at, expires_at)
 			SELECT ?3, ?1, ?4, ?5, ?6, ?2, ?7 FROM tenant_policy p
 			WHERE p.tenant_id = ?1
 			AND NOT EXISTS (SELECT 1 FROM tenant_deletions WHERE tenant_id = ?1)
@@ -153,18 +175,25 @@ export async function createInvite(db: D1Database, invite: NewInvite): Promise<I
 				invited_by = excluded.invited_by, created_at = excluded.created_at, expires_at = excluded.expires_at
 			WHERE ?8 = 1 OR tenant_invites.expires_at <= ?2
 			RETURNING id`
-		)
-		.bind(
-			tenantId,
-			now,
-			invite.id,
-			email,
-			invite.tokenHash,
-			invite.invitedBy,
-			invite.expiresAt,
-			invite.renew ? 1 : 0
-		)
-		.first<{ id: unknown }>();
+			)
+			.bind(
+				tenantId,
+				now,
+				invite.id,
+				email,
+				invite.tokenHash,
+				invite.invitedBy,
+				invite.expiresAt,
+				invite.renew ? 1 : 0
+			),
+		// The token hash is new, so the event is recorded only when the invite was written.
+		db
+			.prepare(
+				`${memberEventInsert} tenant_id, ?, ?, NULL, id, ? FROM tenant_invites WHERE token_hash = ?`
+			)
+			.bind(invite.renew ? 'invite_resent' : 'invite_sent', invite.invitedBy, now, invite.tokenHash)
+	]);
+	const row = written.results[0];
 	if (row) return { status: 'invited', id: text(row.id, 'invite') };
 	// Nothing was written; say why. The write above already kept the limit, so this read
 	// cannot let an invite through.
@@ -199,14 +228,19 @@ export async function readInviteEmail(
 
 export async function cancelInvite(
 	db: D1Database,
-	tenantId: string,
-	inviteId: string
+	input: { tenantId: string; inviteId: string; actorUserId: string; now: number }
 ): Promise<boolean> {
-	const result = await db
-		.prepare('DELETE FROM tenant_invites WHERE id = ? AND tenant_id = ?')
-		.bind(inviteId, tenantId)
-		.run();
-	return result.meta.changes === 1;
+	const [, deleted] = await db.batch([
+		db
+			.prepare(
+				`${memberEventInsert} tenant_id, 'invite_cancelled', ?3, NULL, id, ?4 FROM tenant_invites WHERE id = ?1 AND tenant_id = ?2`
+			)
+			.bind(input.inviteId, input.tenantId, input.actorUserId, input.now),
+		db
+			.prepare('DELETE FROM tenant_invites WHERE id = ? AND tenant_id = ?')
+			.bind(input.inviteId, input.tenantId)
+	]);
+	return deleted.meta.changes === 1;
 }
 
 export interface InviteDetails {
@@ -245,8 +279,9 @@ export type AcceptResult =
 	| { status: 'invalid' }
 	| { status: 'other_email'; email: string };
 
-// One batch adds the membership and deletes the invite, so a token works once. The invite must
-// be open and for the user's verified address. A second use finds no invite and is invalid.
+// One batch adds the membership, records it, and deletes the invite, so a token works once. The
+// invite must be open and for the user's verified address. A second use finds no invite and is
+// invalid.
 export async function acceptInvite(
 	db: D1Database,
 	input: { tokenHash: string; userId: string; now: number }
@@ -261,6 +296,13 @@ export async function acceptInvite(
 			.prepare(
 				`INSERT INTO tenant_memberships (tenant_id, user_id, role, created_at)
 				SELECT i.tenant_id, ?2, 'member', ?3 ${open} ON CONFLICT (tenant_id, user_id) DO NOTHING RETURNING tenant_id`
+			)
+			.bind(tokenHash, userId, now),
+		// Only a membership the first statement added has this join time.
+		db
+			.prepare(
+				`${memberEventInsert} i.tenant_id, 'invite_accepted', ?2, ?2, i.id, ?3 ${open}
+				AND EXISTS (SELECT 1 FROM tenant_memberships m WHERE m.tenant_id = i.tenant_id AND m.user_id = ?2 AND m.created_at = ?3)`
 			)
 			.bind(tokenHash, userId, now),
 		db
@@ -278,28 +320,37 @@ export async function acceptInvite(
 }
 
 // Removes a member, never the owner, in one batch: the member's tokens and connected apps for
-// the workspace, the session and sign-in pointers to it, an offer of the workspace to them, then
-// the membership. Every statement
-// checks the member role first, so a batch for the owner changes nothing. The member's other
-// workspaces and credentials stay.
+// the workspace, the session and sign-in pointers to it, an offer of the workspace to them, the
+// event, then the membership. Every statement checks the member role first, so a batch for the
+// owner changes nothing. The member's other workspaces and credentials stay. actorUserId is the
+// owner who removes the member, or the member who leaves.
 export async function removeMember(
 	db: D1Database,
-	input: { tenantId: string; userId: string }
+	input: { tenantId: string; userId: string; actorUserId: string; now: number }
 ): Promise<boolean> {
 	const isMember =
 		"EXISTS (SELECT 1 FROM tenant_memberships WHERE tenant_id = ?1 AND user_id = ?2 AND role = 'member')";
-	const results = await db.batch(
-		[
+	const action: MemberEventAction =
+		input.actorUserId === input.userId ? 'member_left' : 'member_removed';
+	const results = await db.batch([
+		...[
 			`DELETE FROM "apikey" WHERE "referenceId" = ?2 AND json_extract("metadata", '$.tenantId') = ?1 AND ${isMember}`,
 			`DELETE FROM "oauthAccessToken" WHERE "referenceId" = ?1 AND "userId" = ?2 AND ${isMember}`,
 			`DELETE FROM "oauthRefreshToken" WHERE "referenceId" = ?1 AND "userId" = ?2 AND ${isMember}`,
 			`DELETE FROM "oauthConsent" WHERE "referenceId" = ?1 AND "userId" = ?2 AND ${isMember}`,
 			`DELETE FROM session_workspaces WHERE tenant_id = ?1 AND session_id IN (SELECT id FROM "session" WHERE "userId" = ?2) AND ${isMember}`,
 			`DELETE FROM user_workspace_preferences WHERE user_id = ?2 AND tenant_id = ?1 AND ${isMember}`,
-			`DELETE FROM tenant_transfers WHERE tenant_id = ?1 AND to_user_id = ?2 AND ${isMember}`,
-			"DELETE FROM tenant_memberships WHERE tenant_id = ?1 AND user_id = ?2 AND role = 'member'"
-		].map((statement) => db.prepare(statement).bind(input.tenantId, input.userId))
-	);
+			`DELETE FROM tenant_transfers WHERE tenant_id = ?1 AND to_user_id = ?2 AND ${isMember}`
+		].map((statement) => db.prepare(statement).bind(input.tenantId, input.userId)),
+		db
+			.prepare(`${memberEventInsert} ?1, ?3, ?4, ?2, NULL, ?5 WHERE ${isMember}`)
+			.bind(input.tenantId, input.userId, action, input.actorUserId, input.now),
+		db
+			.prepare(
+				"DELETE FROM tenant_memberships WHERE tenant_id = ?1 AND user_id = ?2 AND role = 'member'"
+			)
+			.bind(input.tenantId, input.userId)
+	]);
 	return results.at(-1)?.meta.changes === 1;
 }
 
@@ -354,16 +405,17 @@ export async function readTransfer(
 	};
 }
 
-// Records the owner's offer of the workspace to a member, in place of an earlier offer. False
-// when the sender is not the owner, the receiver is not a member, or the workspace is being
-// deleted.
+// Records the owner's offer of the workspace to a member, in place of an earlier offer, and its
+// event. False when the sender is not the owner, the receiver is not a member, or the workspace
+// is being deleted.
 export async function offerTransfer(
 	db: D1Database,
 	input: { tenantId: string; fromUserId: string; toUserId: string; now: number; expiresAt: number }
 ): Promise<boolean> {
-	const row = await db
-		.prepare(
-			`INSERT INTO tenant_transfers (tenant_id, from_user_id, to_user_id, created_at, expires_at)
+	const [offered] = await db.batch([
+		db
+			.prepare(
+				`INSERT INTO tenant_transfers (tenant_id, from_user_id, to_user_id, created_at, expires_at)
 			SELECT ?1, ?2, ?3, ?4, ?5
 			WHERE EXISTS (SELECT 1 FROM tenant_memberships WHERE tenant_id = ?1 AND user_id = ?2 AND role = 'owner')
 			AND EXISTS (SELECT 1 FROM tenant_memberships WHERE tenant_id = ?1 AND user_id = ?3 AND role = 'member')
@@ -371,24 +423,32 @@ export async function offerTransfer(
 			ON CONFLICT (tenant_id) DO UPDATE SET from_user_id = excluded.from_user_id,
 				to_user_id = excluded.to_user_id, created_at = excluded.created_at, expires_at = excluded.expires_at
 			RETURNING tenant_id`
-		)
-		.bind(input.tenantId, input.fromUserId, input.toUserId, input.now, input.expiresAt)
-		.first();
-	return row !== null;
+			)
+			.bind(input.tenantId, input.fromUserId, input.toUserId, input.now, input.expiresAt),
+		db
+			.prepare(
+				`${memberEventInsert} tenant_id, 'transfer_offered', from_user_id, to_user_id, NULL, created_at
+				FROM tenant_transfers WHERE tenant_id = ?1 AND from_user_id = ?2 AND to_user_id = ?3 AND created_at = ?4`
+			)
+			.bind(input.tenantId, input.fromUserId, input.toUserId, input.now)
+	]);
+	return offered.results.length === 1;
 }
 
 // Ends the workspace's offer: the owner withdraws it, or the member it names declines it.
 export async function cancelTransfer(
 	db: D1Database,
-	input: { tenantId: string; userId: string; owner: boolean }
+	input: { tenantId: string; userId: string; owner: boolean; now: number }
 ): Promise<boolean> {
-	const result = await db
-		.prepare(
-			`DELETE FROM tenant_transfers WHERE tenant_id = ?1 AND ${input.owner ? 'from_user_id' : 'to_user_id'} = ?2`
-		)
-		.bind(input.tenantId, input.userId)
-		.run();
-	return result.meta.changes === 1;
+	const offer = `FROM tenant_transfers WHERE tenant_id = ?1 AND ${input.owner ? 'from_user_id' : 'to_user_id'} = ?2`;
+	const action: MemberEventAction = input.owner ? 'transfer_withdrawn' : 'transfer_declined';
+	const [, deleted] = await db.batch([
+		db
+			.prepare(`${memberEventInsert} tenant_id, ?3, ?2, to_user_id, NULL, ?4 ${offer}`)
+			.bind(input.tenantId, input.userId, action, input.now),
+		db.prepare(`DELETE ${offer}`).bind(input.tenantId, input.userId)
+	]);
+	return deleted.meta.changes === 1;
 }
 
 export interface TransferInput {
@@ -402,7 +462,8 @@ export interface TransferInput {
 // first demotes the owner who made the offer, while the offer is open, the workspace is active,
 // and condition holds. The second promotes the member only once the workspace has no owner, so
 // the two happen together or not at all, and the one-owner index never sees two owners. The
-// third deletes the offer. condition is SQL over the same parameters (?1 the tenant, ?2 the
+// third records the event, with the previous owner from the offer, and the fourth deletes the
+// offer. condition is SQL over the same parameters (?1 the tenant, ?2 the
 // member, ?3 the time), so an edition adds its own rules to the same check; it is read once,
 // before anything changes.
 export function ownershipTransferStatements(
@@ -430,6 +491,14 @@ export function ownershipTransferStatements(
 			.bind(tenantId, toUserId),
 		db
 			.prepare(
+				`${memberEventInsert} tenant_id, 'owner_changed', ?2, from_user_id, NULL, ?3
+				FROM tenant_transfers x WHERE tenant_id = ?1 AND to_user_id = ?2
+				AND EXISTS (SELECT 1 FROM tenant_memberships WHERE tenant_id = ?1 AND user_id = ?2 AND role = 'owner')
+				AND EXISTS (SELECT 1 FROM tenant_memberships WHERE tenant_id = ?1 AND user_id = x.from_user_id AND role = 'member')`
+			)
+			.bind(tenantId, toUserId, now),
+		db
+			.prepare(
 				`DELETE FROM tenant_transfers WHERE tenant_id = ?1 AND to_user_id = ?2
 				AND EXISTS (SELECT 1 FROM tenant_memberships WHERE tenant_id = ?1 AND user_id = ?2 AND role = 'owner')`
 			)
@@ -444,4 +513,88 @@ export function transferred(results: D1Result[], offset = 0): boolean {
 
 export async function transferOwnership(db: D1Database, input: TransferInput): Promise<boolean> {
 	return transferred(await db.batch(ownershipTransferStatements(db, input)));
+}
+
+export interface MemberEvent {
+	id: string;
+	action: MemberEventAction;
+	actorUserId: string;
+	// null when the account was deleted.
+	actorEmail: string | null;
+	subjectUserId: string | null;
+	subjectEmail: string | null;
+	inviteId: string | null;
+	createdAt: number;
+}
+
+const memberEventActions: readonly MemberEventAction[] = [
+	'invite_sent',
+	'invite_resent',
+	'invite_cancelled',
+	'invite_accepted',
+	'member_removed',
+	'member_left',
+	'account_deleted',
+	'transfer_offered',
+	'transfer_withdrawn',
+	'transfer_declined',
+	'owner_changed'
+];
+
+function memberEventAction(value: unknown): MemberEventAction {
+	const found = memberEventActions.find((action) => action === value);
+	if (!found) throw new Error('Invalid stored member event');
+	return found;
+}
+
+function textOrNull(value: unknown, field: string): string | null {
+	return value === null ? null : text(value, field);
+}
+
+// The workspace's member events, newest first, with the current address of each person. Events
+// of one millisecond keep the order of their writes (rowid).
+export async function listMemberEvents(
+	db: D1Database,
+	tenantId: string,
+	limit: number
+): Promise<MemberEvent[]> {
+	if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200)
+		throw new Error('Invalid member event page size');
+	const { results } = await db
+		.prepare(
+			`SELECT e.id, e.action, e.actor_user_id, a.email AS actor_email, e.subject_user_id,
+			s.email AS subject_email, e.invite_id, e.created_at
+			FROM tenant_member_events e LEFT JOIN "user" a ON a.id = e.actor_user_id
+			LEFT JOIN "user" s ON s.id = e.subject_user_id
+			WHERE e.tenant_id = ? ORDER BY e.created_at DESC, e.rowid DESC LIMIT ?`
+		)
+		.bind(tenantId, limit)
+		.all<Record<string, unknown>>();
+	return results.map((row) => ({
+		id: text(row.id, 'member event'),
+		action: memberEventAction(row.action),
+		actorUserId: text(row.actor_user_id, 'user'),
+		actorEmail: textOrNull(row.actor_email, 'email'),
+		subjectUserId: textOrNull(row.subject_user_id, 'user'),
+		subjectEmail: textOrNull(row.subject_email, 'email'),
+		inviteId: textOrNull(row.invite_id, 'invite'),
+		createdAt: count(row.created_at, 'event time')
+	}));
+}
+
+// Removes member events older than memberEventLifetimeMs, at most limit rows per call.
+export async function deleteExpiredMemberEvents(
+	db: D1Database,
+	now: number,
+	limit: number
+): Promise<{ deleted: number }> {
+	if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10000)
+		throw new Error('Invalid purge batch size');
+	const result = await db
+		.prepare(
+			'DELETE FROM tenant_member_events WHERE id IN (SELECT id FROM tenant_member_events WHERE created_at < ? LIMIT ?)'
+		)
+		.bind(now - memberEventLifetimeMs, limit)
+		.run();
+	return { deleted: result.meta.changes };
 }

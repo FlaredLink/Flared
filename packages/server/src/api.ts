@@ -936,10 +936,17 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	});
 
 	app.delete('/invites/:id', async (context) => {
-		sessionOnly(context, 'Manage invites in the Flared app.');
+		const principal = sessionOnly(context, 'Manage invites in the Flared app.');
 		ownerOnly(context, 'Only the workspace owner can cancel invites.');
 		inviteSettings();
-		if (!(await cancelInvite(identity, context.var.tenantId, context.req.param('id'))))
+		if (
+			!(await cancelInvite(identity, {
+				tenantId: context.var.tenantId,
+				inviteId: context.req.param('id'),
+				actorUserId: principal.userId,
+				now: now()
+			}))
+		)
 			throw new ApiError('NOT_FOUND', 'Invite not found.');
 		console.log(JSON.stringify({ event: 'invite_cancelled', requestId: context.var.requestId }));
 		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
@@ -955,7 +962,14 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 				'OWNER_CANNOT_LEAVE',
 				'You own this workspace. Delete the workspace, or give it to a member first.'
 			);
-		if (!(await removeMember(identity, { tenantId: context.var.tenantId, userId })))
+		if (
+			!(await removeMember(identity, {
+				tenantId: context.var.tenantId,
+				userId,
+				actorUserId: principal.userId,
+				now: now()
+			}))
+		)
 			throw new ApiError('NOT_FOUND', 'Member not found.');
 		console.log(JSON.stringify({ event: 'member_removed', requestId: context.var.requestId }));
 		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
@@ -972,7 +986,14 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 				'OWNER_CANNOT_LEAVE',
 				'You own this workspace. Delete the workspace, or give it to a member first.'
 			);
-		if (!(await removeMember(identity, { tenantId, userId: principal.userId })))
+		if (
+			!(await removeMember(identity, {
+				tenantId,
+				userId: principal.userId,
+				actorUserId: principal.userId,
+				now: now()
+			}))
+		)
 			throw new ApiError('NOT_FOUND', 'Workspace not found.');
 		console.log(JSON.stringify({ event: 'workspace_left', requestId }));
 		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
@@ -1044,7 +1065,8 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			!(await cancelTransfer(identity, {
 				tenantId,
 				userId: principal.userId,
-				owner: role === 'owner'
+				owner: role === 'owner',
+				now: now()
 			}))
 		)
 			throw new ApiError('NOT_FOUND', 'Offer not found.');

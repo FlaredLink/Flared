@@ -182,7 +182,7 @@ export async function deleteAccount(
 	// A person who only belongs to other owners' workspaces has no workspace to delete: the
 	// account goes at once, and those workspaces stay.
 	if (owned.length === 0) {
-		if (!(await deleteMemberOnlyUser(identity, principal.userId)))
+		if (!(await deleteMemberOnlyUser(identity, principal.userId, now)))
 			return failure('NO_WORKSPACE', 'Your account has no workspace.');
 		return accepted();
 	}

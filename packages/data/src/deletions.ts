@@ -2,6 +2,7 @@
 // Workspace deletion records and the bounded deletes of each store. Every function is safe to
 // repeat, so a deletion job that stops can resume at its step.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
+import { memberEventInsert } from './members';
 
 export const deletionSteps = [
 	'accepted',
@@ -168,6 +169,11 @@ export async function createAccountDeletion(
 				db.prepare(`${statement} AND ${hasJob('?1')}`).bind(workspace.tenantId)
 			)
 		),
+		db
+			.prepare(
+				`${memberEventInsert} tenant_id, 'account_deleted', ?1, ?1, NULL, ?3 FROM tenant_memberships WHERE user_id = ?1 AND role <> 'owner' AND ${hasJob('?2')}`
+			)
+			.bind(userId, first.tenantId, now),
 		...[
 			'DELETE FROM "session" WHERE "userId" = ?1',
 			'DELETE FROM "apikey" WHERE "referenceId" = ?1',
@@ -382,13 +388,22 @@ export async function deleteIdentityRecords(
 	]);
 }
 
-// Deletes a user who owns no workspace: their memberships, then the user row, whose sessions,
-// passkeys, tokens, and connected apps go with it. Returns false, and changes nothing, when the
-// user owns a workspace.
-export async function deleteMemberOnlyUser(db: D1Database, userId: string): Promise<boolean> {
+// Deletes a user who owns no workspace: their memberships with an event in each workspace, then
+// the user row, whose sessions, passkeys, tokens, and connected apps go with it. Returns false,
+// and changes nothing, when the user owns a workspace.
+export async function deleteMemberOnlyUser(
+	db: D1Database,
+	userId: string,
+	now: number
+): Promise<boolean> {
 	const ownsNone =
 		"NOT EXISTS (SELECT 1 FROM tenant_memberships WHERE user_id = ?1 AND role = 'owner')";
-	const [, user] = await db.batch([
+	const [, , user] = await db.batch([
+		db
+			.prepare(
+				`${memberEventInsert} tenant_id, 'account_deleted', ?1, ?1, NULL, ?2 FROM tenant_memberships WHERE user_id = ?1 AND role = 'member' AND ${ownsNone}`
+			)
+			.bind(userId, now),
 		db
 			.prepare(
 				`DELETE FROM tenant_memberships WHERE user_id = ?1 AND role = 'member' AND ${ownsNone}`

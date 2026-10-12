@@ -4,6 +4,7 @@
 import { purgeExpired } from '@flared/data/analytics';
 import { deleteExpiredDomainChallenges } from '@flared/data/domain-challenges';
 import { deleteExpiredCreationRecords } from '@flared/data/links';
+import { deleteExpiredMemberEvents } from '@flared/data/members';
 import { deleteExpiredOAuthRecords } from '@flared/data/oauth';
 import { purgeOperations } from '@flared/data/operations';
 import { deleteExpiredApiTokens } from '@flared/data/tokens';
@@ -123,6 +124,8 @@ async function limitNotices(config: StandaloneConfig, now: number): Promise<void
 async function purgeOperationRecords(config: StandaloneConfig, now: number): Promise<void> {
 	for (let round = 0; round < 20; round += 1)
 		if ((await purgeOperations(config.identity, now, 1000)).deleted === 0) break;
+	for (let round = 0; round < 20; round += 1)
+		if ((await deleteExpiredMemberEvents(config.identity, now, 1000)).deleted === 0) break;
 }
 
 export async function runScheduled(
