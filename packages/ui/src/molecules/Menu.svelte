@@ -66,6 +66,8 @@
 		menu.style.top = below
 			? `${box.bottom + 6}px`
 			: `${Math.max(8, box.top - 6 - menu.offsetHeight)}px`;
+		// The opening motion starts from the trigger's side.
+		menu.dataset.side = below ? 'below' : 'above';
 	}
 
 	function toggled(event: ToggleEvent) {
@@ -103,6 +105,7 @@
 	type="button"
 	class="trigger {className}"
 	class:with-text={text}
+	class:turns={text && caret === 'caretDown'}
 	popovertarget={id}
 	aria-haspopup="menu"
 	aria-expanded={open}
@@ -215,6 +218,33 @@
 	.menu:popover-open {
 		display: grid;
 		gap: 2px;
+		animation: menu-in var(--dur-fast, 140ms) var(--ease-out, ease-out);
+		transform-origin: top;
+	}
+	.menu:global([data-side='above']) {
+		--menu-shift: 0.25rem;
+		transform-origin: bottom;
+	}
+	@keyframes menu-in {
+		from {
+			opacity: 0;
+			transform: translateY(var(--menu-shift, -0.25rem)) scale(0.98);
+		}
+	}
+	.turns > :global(svg:last-child) {
+		flex: none;
+		transition: transform var(--dur-fast, 140ms) var(--ease-out, ease-out);
+	}
+	.turns[aria-expanded='true'] > :global(svg:last-child) {
+		transform: rotate(180deg);
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.menu:popover-open {
+			animation: none;
+		}
+		.turns > :global(svg:last-child) {
+			transition: none;
+		}
 	}
 	[role='menuitem'],
 	[role='menuitemradio'] {
