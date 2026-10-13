@@ -5,7 +5,7 @@ This guide deploys one standalone Flared installation: one owner, one workspace,
 ## Before you start
 
 - A Cloudflare account. Workers Free works; see [Workers Free or Workers Paid](#workers-free-or-workers-paid).
-- A GitHub or GitLab account. Deploy on Cloudflare copies this repository into it.
+- A GitHub or GitLab account. Deploy on Cloudflare copies the latest release of this repository into it.
 - Two random secrets. Generate them at [flared.page/secrets](https://flared.page/secrets), which makes them in your browser, or run `openssl rand -base64 48` once for each. Keep them different.
 
 ## Deploy

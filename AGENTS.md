@@ -6,4 +6,4 @@ Target Cloudflare Workers, with D1 for identity persistence. Use versioned addit
 
 Before changing files, inspect git status. Preserve unrelated changes. Commit manifests and lockfile together. Run available type, format and critical test scripts, inspect their outputs, and run git diff --check. Do not claim unsupported or untested product features work.
 
-Use Conventional Commits and repository-local identity PGHQdev <242389565+PGHQdev@users.noreply.github.com>. Publishing is a separate action governed by the owner's authorization.
+Use Conventional Commits and repository-local identity PGHQdev <242389565+PGHQdev@users.noreply.github.com>. Publishing is a separate action governed by the owner's authorization. Work and pull requests target `main`. The default branch `release` holds the latest release only, because the Deploy button copies it; only `bun run release` moves it.

@@ -19,6 +19,15 @@ Flared has no automatic upgrades. You choose when to upgrade.
 
    Then merge the new tag. Only files that Flared changed since your version change; your database IDs stay.
 
+   If your copy was created before 13 October 2026, it came from a commit before `v0.1.0`, so the step above would skip changes it needs. Use these commands instead, once. They replace every file with the `v0.1.0` version and keep your `wrangler.jsonc`. If you changed code, apply your changes again after them.
+
+   ```sh
+   git merge --allow-unrelated-histories -s ours --no-commit v0.1.0
+   git read-tree -u --reset v0.1.0
+   git checkout HEAD -- wrangler.jsonc
+   git commit -m "Upgrade to Flared v0.1.0"
+   ```
+
 3. Read the new files in `packages/data/migrations/`. A migration cannot be undone by deploying older code.
 4. Push. Workers Builds runs `bun run build`, then `bun run deploy`, which applies the migrations before it deploys the Worker.
 
