@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Checks every push and pull request from a fresh checkout: types, formatting, the Workers/D1
-# tests, and a standalone build with a Wrangler dry run, as Deploy on Cloudflare builds it.
+# tests, the upgrade workflow's steps, and a standalone build with a Wrangler dry run, as Deploy
+# on Cloudflare builds it.
 name: Check
 
 on:
@@ -25,4 +26,5 @@ jobs:
       - run: bun run test
       - run: bun run test:cli
       - run: bun run test:standalone
+      - run: bun run test:upgrade
       - run: bun run build:dry-run

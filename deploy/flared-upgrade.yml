@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Upgrade Flared. Add this file to your copy of Flared as .github/workflows/flared-upgrade.yml,
+# and allow GitHub Actions to create and approve pull requests (Settings > Actions > General).
+# Each day, and when you run it, it merges the newest Flared release into the branch
+# flared-upgrade/vX.Y.Z and opens a pull request, or an issue when you must act. Set the repository variable
+# FLARED_AUTO_UPGRADE to true, and it also merges a clean pull request of a release that is not
+# marked breaking. It uses only this repository's token and never touches Cloudflare. The steps
+# are in deploy/upgrade.ts, which each upgrade updates; this file rarely changes.
+name: Upgrade Flared
+
+on:
+  schedule:
+    - cron: '41 5 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'A Flared release, such as v0.2.0. Leave empty for the newest.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: flared-upgrade
+  cancel-in-progress: false
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # The Bun version comes from packageManager in package.json.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun deploy/upgrade.ts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FLARED_TAG: ${{ inputs.tag }}
+          FLARED_AUTO_UPGRADE: ${{ vars.FLARED_AUTO_UPGRADE }}

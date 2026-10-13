@@ -26,6 +26,7 @@
 	import { limitFields, toLimitsView, type Limits } from '$lib/limits';
 	import { appRoutes } from '$lib/routes';
 	import { availableRelease } from '$lib/updates';
+	import upgradeWorkflow from '../../../../../../deploy/flared-upgrade.yml?raw';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -521,6 +522,35 @@
 				</p>
 			{/if}
 		{/if}
+		<details class="workflow">
+			<summary>Upgrade with a GitHub workflow</summary>
+			<p>
+				The workflow checks for a new release each day. It opens a pull request that merges the
+				release into your repository, or an issue when you must act. Set it up once:
+			</p>
+			<ol>
+				<li>
+					Add this file to your repository as <code>.github/workflows/flared-upgrade.yml</code>.
+				</li>
+				<li>
+					In the repository settings, open <strong>Actions → General</strong> and allow GitHub Actions
+					to create and approve pull requests.
+				</li>
+				<li>
+					Optional: add the repository variable <code>FLARED_AUTO_UPGRADE</code> with the value
+					<code>true</code>. The workflow then merges each upgrade that merges cleanly and is not
+					marked breaking, and Workers Builds deploys it.
+				</li>
+			</ol>
+			<div class="commands">
+				<pre><code>{upgradeWorkflow}</code></pre>
+				<CopyButton text={upgradeWorkflow} label="Copy the workflow" kind="button" size="sm" />
+			</div>
+			<p>
+				Merge its pull requests with <strong>Create a merge commit</strong>. A squash or rebase
+				merge drops the Flared history that the next upgrade needs.
+			</p>
+		</details>
 	</section>
 {/if}
 
@@ -564,6 +594,24 @@
 	.upgrade-heading {
 		margin-top: 0.5rem;
 		font-size: 1rem;
+	}
+	.workflow {
+		display: grid;
+		gap: 0.75rem;
+	}
+	.workflow summary {
+		color: var(--color-strong);
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.workflow ol {
+		display: grid;
+		gap: 0.4rem;
+		padding-left: 1.25rem;
+	}
+	.workflow code {
+		font-family: var(--font-mono);
+		font-size: 0.85em;
 	}
 	.commands {
 		display: grid;

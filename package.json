@@ -13,11 +13,12 @@
 		"owner:reset-password": "bun apps/standalone/scripts/owner-reset-password.ts",
 		"test:auth-probe": "vitest run --config tests/vitest.config.ts tests/auth-proof-probe.test.ts",
 		"check": "tsc --noEmit && svelte-check --workspace packages/ui --tsconfig ./tsconfig.json --fail-on-warnings && bun run --cwd apps/standalone check",
-		"format:check": "prettier --check package.json tsconfig.json .prettierrc.json wrangler.jsonc packages apps tests scripts",
+		"format:check": "prettier --check package.json tsconfig.json .prettierrc.json wrangler.jsonc packages apps tests scripts deploy",
 		"test": "vitest run --config tests/vitest.config.ts",
 		"test:cli": "vitest run --config packages/cli/vitest.config.ts",
 		"build:cli": "bun run --cwd packages/cli build && bun run --cwd packages/cli smoke",
 		"test:standalone": "bun run --cwd apps/standalone test",
+		"test:upgrade": "vitest run --config deploy/vitest.config.ts",
 		"build:dry-run": "bun run build && wrangler deploy --dry-run"
 	},
 	"dependencies": {

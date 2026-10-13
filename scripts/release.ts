@@ -7,6 +7,7 @@
 // that opt in read it.
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { breakingTrailer } from '../deploy/upgrade';
 
 const repository = 'FlaredLink/Flared';
 const versionPattern = /^\d+\.\d+\.\d+$/;
@@ -107,7 +108,19 @@ const feed = {
 };
 
 const steps: [string, string[]][] = [
-	['git', ['tag', '-a', tag, '-m', `Flared ${options.version}`]],
+	// The upgrade workflow (deploy/upgrade.ts) reads the trailer: auto mode waits for a person.
+	[
+		'git',
+		[
+			'tag',
+			'-a',
+			tag,
+			'-m',
+			options.breaking
+				? `Flared ${options.version}\n\n${breakingTrailer}`
+				: `Flared ${options.version}`
+		]
+	],
 	['git', ['push', options.remote, tag]],
 	// Fast-forward only: the release branch never moves back or sideways.
 	['git', ['push', options.remote, 'HEAD:refs/heads/release']],
