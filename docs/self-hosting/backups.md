@@ -15,6 +15,7 @@ D1 keeps a point-in-time history of each database (Time Travel): 7 days on Worke
 
 A restore replaces the database with its state at that time.
 
+- The restore can go back up to about a minute before the time you give, so changes from that minute can also go back. After the restore, check your latest links and settings.
 - Restore the identity and routing databases to the same time, so accounts, workspaces, and links match.
 - A routing restore also removes the slug reservations made after that time. A link address deleted later could then be used again for another destination. Restore the routing database only when you accept that.
 - Redirects keep each link for up to 60 seconds, so a restored link can take a minute to change.
