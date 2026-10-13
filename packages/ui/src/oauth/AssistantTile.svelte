@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import Glyph from '../icons/Glyph.svelte';
 	import AssistantMark from './AssistantMark.svelte';
 	import type { AssistantId } from './assistants';
@@ -15,8 +16,15 @@
 			? assistant
 			: null
 	);
-	// Microsoft's VS Code icon, unchanged; an image, so its own ids stay apart from the page.
-	const vscode = new URL('./vscode.svg?no-inline', import.meta.url).href;
+	// Microsoft's VS Code icon, unchanged; an image, so its own ids stay apart from the page. The
+	// bundler rewrites this pattern in the browser build only, so it runs after mount.
+	function vscodeUrl(): string {
+		return new URL('./vscode.svg?no-inline', import.meta.url).href;
+	}
+	let mounted = $state(false);
+	onMount(() => {
+		mounted = true;
+	});
 </script>
 
 <span
@@ -28,7 +36,12 @@
 	{#if mark}
 		<AssistantMark assistant={mark} size={Math.round(size * 0.82)} />
 	{:else if assistant === 'vscode'}
-		<img src={vscode} alt="" width={Math.round(size * 0.7)} height={Math.round(size * 0.7)} />
+		{#if mounted}<img
+				src={vscodeUrl()}
+				alt=""
+				width={Math.round(size * 0.7)}
+				height={Math.round(size * 0.7)}
+			/>{/if}
 	{:else}
 		<Glyph name="share" size={Math.round(size * 0.66)} />
 	{/if}
