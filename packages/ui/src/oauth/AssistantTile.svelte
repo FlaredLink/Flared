@@ -15,13 +15,20 @@
 			? assistant
 			: null
 	);
+	// Microsoft's VS Code icon, unchanged; an image, so its own ids stay apart from the page.
+	const vscode = new URL('./vscode.svg?no-inline', import.meta.url).href;
 </script>
 
-<span class="tile {assistant}" class:framed={!mark} style:--size="{size}px" aria-hidden="true">
+<span
+	class="tile {assistant}"
+	class:framed={!mark && assistant !== 'vscode'}
+	style:--size="{size}px"
+	aria-hidden="true"
+>
 	{#if mark}
 		<AssistantMark assistant={mark} size={Math.round(size * 0.82)} />
 	{:else if assistant === 'vscode'}
-		<Glyph name="code" size={Math.round(size * 0.6)} />
+		<img src={vscode} alt="" width={Math.round(size * 0.7)} height={Math.round(size * 0.7)} />
 	{:else}
 		<Glyph name="share" size={Math.round(size * 0.66)} />
 	{/if}
