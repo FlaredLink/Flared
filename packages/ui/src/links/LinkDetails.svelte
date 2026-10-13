@@ -171,6 +171,7 @@
 <style>
 	.details {
 		display: grid;
+		grid-template-columns: minmax(0, 1fr);
 		gap: 1rem;
 		min-width: 0;
 	}
@@ -202,6 +203,7 @@
 	}
 	.block {
 		display: grid;
+		grid-template-columns: minmax(0, 1fr);
 		gap: 0.6rem;
 		padding-top: 1.1rem;
 		border-top: 1px solid var(--color-rule);

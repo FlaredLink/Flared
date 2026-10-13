@@ -70,6 +70,8 @@
 	.body {
 		display: grid;
 		flex: 1;
+		/* One column no wider than the panel, so a long line cannot widen it. */
+		grid-template-columns: minmax(0, 1fr);
 		align-content: start;
 		gap: 1.25rem;
 		min-width: 0;
