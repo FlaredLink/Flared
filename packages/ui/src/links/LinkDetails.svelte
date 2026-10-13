@@ -5,7 +5,6 @@
 	import Button from '../atoms/Button.svelte';
 	import StatusDot from '../atoms/StatusDot.svelte';
 	import CopyButton from '../molecules/CopyButton.svelte';
-	import Menu, { type MenuItem } from '../molecules/Menu.svelte';
 	import Sparkline from '../molecules/Sparkline.svelte';
 	import { blockLabel } from './messages';
 
@@ -54,17 +53,6 @@
 			qrStatus = 'This browser cannot copy images. Download the QR code instead.';
 		}
 	}
-
-	const more = $derived<MenuItem[]>([
-		...(analyticsHref
-			? [{ label: 'View analytics', icon: 'chart' as const, href: analyticsHref }]
-			: []),
-		...(editHref && !link.blocked
-			? [{ label: 'Edit link', icon: 'pencil' as const, href: editHref }]
-			: []),
-		{ label: 'Open short link', icon: 'arrowUpRight', href: link.shortUrl, external: true },
-		{ label: 'Open destination', icon: 'external', href: link.destination, external: true }
-	]);
 </script>
 
 <div class="details">
@@ -78,7 +66,10 @@
 			<StatusDot tone="neutral">Disabled</StatusDot>
 		{/if}
 	</div>
-	<p class="short"><span>{link.hostname}/</span><strong>{link.slug}</strong></p>
+	<!-- Opens the short link, so the owner can try the redirect. -->
+	<a class="short" href={link.shortUrl} target="_blank" rel="noopener noreferrer"
+		><span>{link.hostname}/</span><strong>{link.slug}</strong></a
+	>
 	<CopyButton
 		text={link.shortUrl}
 		label="Copy link"
@@ -156,16 +147,6 @@
 		<dt>Updated</dt>
 		<dd>{dateFormat.format(new Date(link.updatedAt))}</dd>
 	</dl>
-
-	<div class="block more">
-		<Menu
-			id="link-details-more-{link.id}"
-			label="More actions"
-			text="More actions"
-			align="start"
-			items={more}
-		/>
-	</div>
 </div>
 
 <style>
@@ -189,10 +170,15 @@
 	}
 	.short {
 		overflow-wrap: anywhere;
+		text-decoration: none;
 		color: var(--color-strong);
 		font-size: 2.1rem;
 		letter-spacing: -0.04em;
 		line-height: 1.15;
+	}
+	.short:hover strong {
+		text-decoration: underline;
+		text-underline-offset: 4px;
 	}
 	.short span {
 		color: var(--color-lead);
@@ -352,20 +338,6 @@
 		margin: 0;
 		color: var(--color-lead);
 		font-size: 0.9375rem;
-	}
-	.more {
-		margin-inline: -0.75rem;
-		padding-inline: 0;
-		border-top: 0;
-		position: relative;
-	}
-	.more::before {
-		content: '';
-		position: absolute;
-		top: 0;
-		right: 0.75rem;
-		left: 0.75rem;
-		border-top: 1px solid var(--color-rule);
 	}
 	.visually-hidden {
 		position: absolute;
