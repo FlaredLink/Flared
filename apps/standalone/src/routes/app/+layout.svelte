@@ -5,6 +5,7 @@
 	import AuthFrame from '$lib/components/AuthFrame.svelte';
 	import Shell from '$lib/components/Shell.svelte';
 	import { provideShownWorkspace } from '@flared/ui/workspace/shown';
+	import { availableRelease } from '$lib/updates';
 	import type { LayoutData } from './$types';
 
 	let { data, children }: { data: LayoutData; children: Snippet } = $props();
@@ -22,7 +23,8 @@
 	<Shell
 		account={data.auth.principal.user.name}
 		workspaceName={data.workspaceName}
-		usage={data.usage}>{@render children()}</Shell
+		usage={data.usage}
+		release={availableRelease(data.updates, __FLARED_VERSION__)}>{@render children()}</Shell
 	>
 {:else}
 	<AuthFrame>{@render children()}</AuthFrame>

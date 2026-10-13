@@ -20,6 +20,7 @@ import { measureShards } from '@flared/server/operations';
 import { retryProjections } from '@flared/server/tenancy';
 import { checkWaitingDomains, createWorkerDomainProvider } from '@flared/server/worker-domains';
 import type { StandaloneConfig } from './config';
+import { checkForUpdates, defaultFeed, type FeedOptions } from './updates';
 
 // See triggers.crons in the root wrangler.jsonc.
 export const frequentCron = '*/10 * * * *';
@@ -37,7 +38,8 @@ const dailyJobs = [
 	'analytics_purge',
 	'limit_notices',
 	'deletion_cleanup',
-	'operations_purge'
+	'operations_purge',
+	'update_check'
 ] as const;
 type JobName = (typeof frequentJobs)[number] | (typeof dailyJobs)[number];
 
@@ -131,7 +133,8 @@ async function purgeOperationRecords(config: StandaloneConfig, now: number): Pro
 export async function runScheduled(
 	cron: string,
 	scheduledTime: number,
-	config: StandaloneConfig
+	config: StandaloneConfig,
+	feed: FeedOptions = defaultFeed
 ): Promise<void> {
 	const now = Date.now();
 	const run = (list: [JobName, () => Promise<void>][]) =>
@@ -151,7 +154,9 @@ export async function runScheduled(
 					['analytics_purge', () => purgeAnalytics(config, now)],
 					['limit_notices', () => limitNotices(config, now)],
 					['deletion_cleanup', async () => void (await cleanupDeletions(config.identity, now))],
-					['operations_purge', () => purgeOperationRecords(config, now)]
+					['operations_purge', () => purgeOperationRecords(config, now)],
+					// Off unless the owner turned it on; a failed fetch is recorded, not thrown.
+					['update_check', async () => void (await checkForUpdates(config.identity, feed, now))]
 				]);
 	for (const result of results) if (result.status === 'rejected') throw result.reason;
 }

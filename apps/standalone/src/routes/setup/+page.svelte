@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
 	import { utcDay } from '@flared/contracts/analytics';
+	import Checkbox from '@flared/ui/atoms/Checkbox.svelte';
 	import AuthFrame from '$lib/components/AuthFrame.svelte';
 	import { postJson } from '$lib/auth-client';
 	import { appRoutes } from '$lib/routes';
@@ -57,7 +58,23 @@
 		stage = 'wizard';
 	}
 
-	// The wizard.
+	// The wizard. It asks once about update checks; they stay off unless the owner turns them on.
+	let checkUpdates = $state(false);
+	let updatesPending = $state(false);
+	let updatesError = $state('');
+
+	async function changeUpdates() {
+		const enabled = checkUpdates;
+		updatesPending = true;
+		updatesError = '';
+		const result = await postJson('/api/settings/updates', { enabled });
+		updatesPending = false;
+		if (!result.ok) {
+			checkUpdates = !enabled;
+			updatesError = 'We could not save your choice. You can change it later in Settings.';
+		}
+	}
+
 	let destination = $state('');
 	let link = $state<{ id: string; shortUrl: string } | null>(null);
 	let linkError = $state('');
@@ -147,6 +164,17 @@
 						Delete the <code>SETUP_SECRET</code> secret from the Worker now. Setup never opens again,
 						so you no longer need it.
 					</p>
+				</li>
+				<li>
+					<h2>Updates</h2>
+					<Checkbox
+						bind:checked={checkUpdates}
+						disabled={updatesPending}
+						onchange={() => void changeUpdates()}
+						hint="Once a day, the app asks flared.page for the latest release and tells you when a new one is out. The request sends no data about this installation. You can change this in Settings."
+						>Check for updates</Checkbox
+					>
+					{#if updatesError}<p class="error" role="alert">{updatesError}</p>{/if}
 				</li>
 				<li>
 					<h2>A first link</h2>

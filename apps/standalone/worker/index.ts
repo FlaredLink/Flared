@@ -41,6 +41,7 @@ import { readConfig, type StandaloneConfig, type StandaloneEnv } from './config'
 import { deletionDependencies, handleHealthz, runScheduled } from './jobs';
 import { handleLimits } from './limits';
 import { configurationPage, misconfiguredPage, originMovePage } from './pages';
+import { defaultFeed, handleUpdates, readUpdateState } from './updates';
 
 export type { StandaloneEnv };
 
@@ -311,6 +312,14 @@ async function appHost(
 			site.auth,
 			site.fixedTenantId
 		);
+	if (path === '/api/settings/updates')
+		return handleUpdates(
+			rebuilt(request, ['cookie', 'origin', 'content-type']),
+			config,
+			site.auth,
+			site.fixedTenantId,
+			defaultFeed
+		);
 	if (path.startsWith('/api/')) return notFound();
 	// The OAuth authorization server for connected apps such as AI assistants.
 	if (isOAuthPath(path)) return handleOAuth(request, site.oauthSite(), config.identity);
@@ -373,6 +382,7 @@ function page(
 			LIMITS_SERVICE: {
 				fetch: (incoming: Request) => handleLimits(incoming, config, site.auth, site.fixedTenantId)
 			},
+			UPDATES: { read: () => readUpdateState(config.identity) },
 			INSTALLATION: {
 				state: status.state,
 				moving: status.appOrigin !== null && status.appOrigin !== config.origin

@@ -2,6 +2,12 @@
 
 Flared has no automatic upgrades. You choose when to upgrade.
 
+## Update notices
+
+The app can tell the owner when a new release is out. The setup wizard asks once, and **Settings → Updates** changes it later; it is off until the owner turns it on. While it is on, the daily job reads `https://flared.page/releases/latest.json`: one HTTPS request with no cookie, no version, and no data about your installation. Like any website, flared.page sees the request's network address, which is a Cloudflare address. The app then shows the owner a notice with the new version, its summary, whether it changes the databases, and the commands below. Turning it on checks at once. A failed check changes nothing else, and the app tries again the next day. Turning it off stops the requests and clears the result.
+
+## Upgrade a copy
+
 1. Read the release notes of the tag, such as `v0.2.0`, on [GitHub](https://github.com/FlaredLink/Flared/releases).
 2. In your copy, fetch and merge the tag:
 

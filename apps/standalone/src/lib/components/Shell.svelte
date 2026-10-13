@@ -6,6 +6,7 @@
 	import { Collapsible } from 'bits-ui';
 	import type { Usage } from '@flared/contracts/analytics';
 	import UsageBanner from '@flared/ui/usage/UsageBanner.svelte';
+	import Callout from '@flared/ui/molecules/Callout.svelte';
 	import Avatar from '@flared/ui/atoms/Avatar.svelte';
 	import Menu from '@flared/ui/molecules/Menu.svelte';
 	import Brand from './Brand.svelte';
@@ -13,14 +14,22 @@
 	import SourceFooter from './SourceFooter.svelte';
 	import { postJson } from '$lib/auth-client';
 	import { appRoutes } from '$lib/routes';
+	import type { Release } from '$lib/updates';
 
 	let {
 		account,
 		workspaceName,
 		usage,
+		release,
 		children
-	}: { account: string; workspaceName: string | null; usage: Usage | null; children: Snippet } =
-		$props();
+	}: {
+		account: string;
+		workspaceName: string | null;
+		usage: Usage | null;
+		// A newer Flared release, for the owner who turned on update checks.
+		release: Release | null;
+		children: Snippet;
+	} = $props();
 	// The tile shows the first letter of the name, as the mockups and most workspace switchers do.
 	const workspaceInitial = $derived(
 		workspaceName ? (Array.from(workspaceName)[0] ?? '').toLocaleUpperCase() : ''
@@ -130,6 +139,13 @@
 					usage={bannerUsage}
 					href={`${appRoutes.settings}#limits`}
 				/>{/if}
+			{#if release && path !== appRoutes.settings}
+				<div class="update">
+					<Callout tone="info" icon="download" title={`Flared ${release.version} is available`}>
+						<p>{release.summary} <a href="{appRoutes.settings}#updates">How to upgrade</a></p>
+					</Callout>
+				</div>
+			{/if}
 			{@render children()}
 			<SourceFooter />
 		</div>
@@ -268,6 +284,9 @@
 	.app-content {
 		max-width: 92rem;
 		margin-inline: auto;
+	}
+	.update {
+		margin-bottom: 1.5rem;
 	}
 	@media (max-width: 860px) {
 		.app-shell {

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The standalone Worker entry against real D1: the configuration gate, the setup gate, host
 // routing, credential separation between the session API, the token API, and MCP, the limits
-// route, an app host move, the scheduled jobs, the click Queue, and the closed installation.
+// and update routes, an app host move, the scheduled jobs, the click Queue, and the closed
+// installation.
 import { env } from 'cloudflare:workers';
 import {
 	applyD1Migrations,
@@ -11,7 +12,7 @@ import {
 	getQueueResult,
 	waitOnExecutionContext
 } from 'cloudflare:test';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ClickEvent } from '@flared/contracts/analytics';
 import { routeSettleMs, runDeletions } from '@flared/server/deletion';
 import worker, { type StandaloneEnv } from '../worker/index';
@@ -320,12 +321,81 @@ describe('the app host after setup', () => {
 			})
 		});
 		expect([refused.status, await code(refused)]).toEqual([403, 'OWNER_REQUIRED']);
+		const updates = await call(`${origin}/api/settings/updates`, {
+			method: 'POST',
+			headers: browser(member),
+			body: JSON.stringify({ enabled: true })
+		});
+		expect([updates.status, await code(updates)]).toEqual([403, 'OWNER_REQUIRED']);
 		// The workspace header reaches the API, so the member can leave the shown workspace.
 		const left = await call(`${origin}/api/v1/workspace/leave`, {
 			method: 'POST',
 			headers: browser(member, shown)
 		});
 		expect(left.status).toBe(204);
+	});
+});
+
+describe('update checks', () => {
+	const change = (headers: Record<string, string>, body: unknown) =>
+		call(`${origin}/api/settings/updates`, {
+			method: 'POST',
+			headers: { cookie: owner, 'content-type': 'application/json', ...headers },
+			body: JSON.stringify(body)
+		});
+
+	it('lets the owner turn them on, which checks at once, and off, which clears the result', async () => {
+		const release = {
+			version: '0.2.0',
+			publishedAt: '2026-11-02T09:00:00.000Z',
+			notesUrl: 'https://github.com/FlaredLink/Flared/releases/tag/v0.2.0',
+			summary: 'Update notices.',
+			migrations: false,
+			breaking: false
+		};
+		const feed = vi
+			.spyOn(globalThis, 'fetch')
+			.mockImplementation(async () => Response.json(release));
+		try {
+			expect(await code(await change({ origin: 'https://evil.example' }, { enabled: true }))).toBe(
+				'ORIGIN_REJECTED'
+			);
+			expect(await code(await change({ origin }, { enabled: 'yes' }))).toBe('VALIDATION_FAILED');
+			expect(feed).not.toHaveBeenCalled();
+			const on = await change({ origin }, { enabled: true });
+			expect(await on.json()).toMatchObject({
+				ok: true,
+				updates: { enabled: true, latest: release }
+			});
+			expect(feed).toHaveBeenCalledTimes(1);
+			const [request] = feed.mock.calls[0];
+			expect(
+				request instanceof Request ? request.headers.get('cookie') : 'not a request'
+			).toBeNull();
+			const off = await change({ origin }, { enabled: false });
+			expect(await off.json()).toMatchObject({
+				ok: true,
+				updates: { enabled: false, latest: null }
+			});
+			expect(feed).toHaveBeenCalledTimes(1);
+		} finally {
+			feed.mockRestore();
+		}
+		expect(
+			(await call(`${origin}/api/settings/updates`, { headers: { cookie: owner } })).status
+		).toBe(405);
+	});
+
+	it('gives pages the stored check', async () => {
+		calls.length = 0;
+		await call(`${origin}/app/settings`, { headers: { cookie: owner } });
+		const updates = calls.at(-1)?.env.UPDATES as { read(): Promise<unknown> } | undefined;
+		expect(await updates?.read()).toEqual({
+			enabled: false,
+			checkedAt: null,
+			failedAt: null,
+			latest: null
+		});
 	});
 });
 
@@ -397,7 +467,7 @@ describe('jobs, the click Queue, and deletion', () => {
 		const daily = createScheduledController({ cron: '17 3 * * *', scheduledTime: Date.now() });
 		await worker.scheduled(daily, baseEnv(moved));
 		expect(await count("SELECT COUNT(*) AS n FROM job_runs WHERE last_outcome = 'succeeded'")).toBe(
-			11
+			12
 		);
 		expect((await call(`${movedOrigin}/healthz`, {}, moved)).status).toBe(200);
 	});

@@ -14,6 +14,9 @@
 	import ThemeSetting from '@flared/ui/theme/ThemeSetting.svelte';
 	import PageHeader from '@flared/ui/molecules/PageHeader.svelte';
 	import SectionHeader from '@flared/ui/molecules/SectionHeader.svelte';
+	import Callout from '@flared/ui/molecules/Callout.svelte';
+	import CopyButton from '@flared/ui/molecules/CopyButton.svelte';
+	import Checkbox from '@flared/ui/atoms/Checkbox.svelte';
 	import {
 		confirmWithPasskey,
 		passkeyErrorMessage,
@@ -22,6 +25,7 @@
 	import { authErrorMessage, postJson } from '$lib/auth-client';
 	import { limitFields, toLimitsView, type Limits } from '$lib/limits';
 	import { appRoutes } from '$lib/routes';
+	import { availableRelease } from '$lib/updates';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -155,6 +159,32 @@
 		} finally {
 			limitsPending = false;
 		}
+	}
+
+	// Update checks: only the owner sees and changes them.
+	const times = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+	const release = $derived(availableRelease(data.updates, __FLARED_VERSION__));
+	const upgradeCommands = $derived(
+		release ? `git fetch upstream --tags\ngit merge v${release.version}\ngit push` : ''
+	);
+	let updatesEnabled = $state(false);
+	let updatesPending = $state(false);
+	let updatesError = $state('');
+	$effect(() => {
+		updatesEnabled = data.updates?.enabled ?? false;
+	});
+
+	async function changeUpdates(enabled: boolean) {
+		updatesPending = true;
+		updatesError = '';
+		const result = await postJson('/api/settings/updates', { enabled });
+		updatesPending = false;
+		if (!result.ok) {
+			updatesEnabled = !enabled;
+			updatesError = 'We could not save your choice. Try again.';
+			return;
+		}
+		await invalidateAll();
 	}
 
 	function megabytes(bytes: number): string {
@@ -426,6 +456,74 @@
 	{/if}
 </section>
 
+{#if owner && data.updates}
+	<div class="divider"></div>
+
+	<section id="updates" class="section anchor" aria-labelledby="updates-heading">
+		<h2 id="updates-heading">Updates</h2>
+		<p>
+			{__FLARED_VERSION__
+				? `This app runs Flared ${__FLARED_VERSION__}.`
+				: 'This copy does not name its Flared version.'}
+		</p>
+		<Checkbox
+			bind:checked={updatesEnabled}
+			disabled={updatesPending}
+			onchange={() => void changeUpdates(updatesEnabled)}
+			hint="Once a day, the app asks flared.page for the latest release. The request sends no data about this installation."
+			>Check for updates</Checkbox
+		>
+		{#if updatesPending}<p role="status">{updatesEnabled ? 'Checking…' : 'Saving…'}</p>{/if}
+		{#if updatesError}<p class="error" role="alert">{updatesError}</p>{/if}
+		{#if data.updates.enabled && !updatesPending}
+			{#if release}
+				<Callout tone="info" icon="download" title={`Flared ${release.version} is available`}>
+					<p>{release.summary}</p>
+					{#if release.breaking}
+						<p>
+							This release changes how something works. Read the release notes before you upgrade.
+						</p>
+					{/if}
+					{#if release.migrations}
+						<p>
+							It changes the databases, and older code cannot undo that. Before you upgrade, note
+							the time for a Time Travel restore.
+						</p>
+					{/if}
+					<p><a href={release.notesUrl} rel="noopener">Release notes</a></p>
+				</Callout>
+				<h3 class="upgrade-heading">Upgrade</h3>
+				<p>
+					In your copy of the repository, merge the release and push. Workers Builds deploys it and
+					applies the database changes first.
+				</p>
+				<div class="commands">
+					<pre><code>{upgradeCommands}</code></pre>
+					<CopyButton text={upgradeCommands} label="Copy the commands" kind="button" size="sm" />
+				</div>
+				<p>
+					For the first upgrade, add the Flared remote and record the version your copy came from.
+					The <a
+						href={`https://github.com/FlaredLink/Flared/blob/v${release.version}/docs/self-hosting/upgrade.md`}
+						rel="noopener">upgrade guide</a
+					> has the steps.
+				</p>
+			{:else if data.updates.checkedAt !== null}
+				<p>
+					{__FLARED_VERSION__ ? 'This is the latest release.' : 'No newer release was found.'} Last checked
+					{times.format(data.updates.checkedAt)}.
+				</p>
+			{/if}
+			{#if data.updates.failedAt !== null}
+				<p role="status">
+					We could not check for updates on {times.format(data.updates.failedAt)}. The app tries
+					again each day.
+				</p>
+			{/if}
+		{/if}
+	</section>
+{/if}
+
 <div class="divider"></div>
 
 <SectionHeader title="Your data" />
@@ -462,6 +560,25 @@
 	}
 	.group {
 		display: grid;
+	}
+	.upgrade-heading {
+		margin-top: 0.5rem;
+		font-size: 1rem;
+	}
+	.commands {
+		display: grid;
+		justify-items: start;
+		gap: 0.5rem;
+		max-width: 38rem;
+	}
+	.commands pre {
+		width: 100%;
+		overflow-x: auto;
+		padding: 0.75rem 1rem;
+		border: var(--rule);
+		border-radius: var(--radius-md);
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
 	}
 	.link-button {
 		padding: 0;

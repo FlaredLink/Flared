@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { SetupState } from '@flared/data/setup';
 import type { AuthService } from '@flared/server/web';
+import type { UpdateState } from '$lib/updates';
 
 declare global {
 	// The commit of this build, or '' (vite.config.ts).
@@ -14,6 +15,8 @@ declare global {
 				API_SERVICE?: AuthService;
 				OAUTH_SERVICE?: AuthService;
 				LIMITS_SERVICE?: AuthService;
+				// The stored result of the opt-in update check.
+				UPDATES?: { read(): Promise<UpdateState> };
 				INSTALLATION?: { state: SetupState; moving: boolean };
 				SOURCE_URL?: string;
 			};
