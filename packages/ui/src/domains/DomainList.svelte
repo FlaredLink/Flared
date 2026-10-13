@@ -53,9 +53,11 @@
 	}: Props = $props();
 	const workspace = shownWorkspace();
 
-	let hostname = $state('');
+	let subdomain = $state('');
+	let domain = $state('');
 	let hostnameInput = $state<HTMLInputElement>();
 	let fieldError = $state('');
+	let errorField = $state<'subdomain' | 'domain' | null>(null);
 	let adding = $state(false);
 	// "add", "check:<id>", or "remove:<id>" while a request runs.
 	let pending = $state<string | null>(null);
@@ -173,28 +175,53 @@
 		hostnameInput?.focus();
 	}
 
+	// The field that holds the error, so only that field shows it.
+	function refuse(message: string, field: 'subdomain' | 'domain' | null) {
+		fieldError = message;
+		errorField = field;
+	}
+
 	async function add() {
-		fieldError = '';
+		refuse('', null);
+		const trimDots = (value: string) =>
+			value
+				.trim()
+				.toLowerCase()
+				.replace(/^\.+|\.+$/g, '');
+		const label = trimDots(subdomain);
+		const base = trimDots(domain);
+		if (!label) return refuse('Enter a subdomain, such as go.', 'subdomain');
+		// www usually serves the website, which a short-link domain would replace.
+		if (label === 'www')
+			return refuse(
+				'Use a subdomain other than www, such as go or links. www usually shows your website.',
+				'subdomain'
+			);
+		if (!base) return refuse('Enter your domain, such as yourbrand.com.', 'domain');
+		if (!base.includes('.'))
+			return refuse('Enter your full domain, such as yourbrand.com.', 'domain');
 		let normalized: string;
 		try {
-			normalized = normalizeHostname(hostname);
+			normalized = normalizeHostname(`${label}.${base}`);
 		} catch (cause) {
-			fieldError =
+			return refuse(
 				cause instanceof LinkInputError
 					? cause.message
-					: 'Enter a hostname such as go.example.com.';
-			return;
+					: 'Enter a hostname such as go.example.com.',
+				null
+			);
 		}
 		begin('add');
 		try {
 			const result = await addDomain(apiBase, normalized, workspace());
 			if (!result.ok) {
 				if (result.failure.field === 'hostname' || result.failure.code === 'DOMAIN_TAKEN')
-					fieldError = domainErrorMessage(result.failure);
+					refuse(domainErrorMessage(result.failure), null);
 				else error = domainErrorMessage(result.failure);
 				return;
 			}
-			hostname = '';
+			subdomain = '';
+			domain = '';
 			adding = false;
 			await onChanged();
 			setupChoice = result.value.state === 'active' ? null : result.value.id;
@@ -407,9 +434,11 @@
 				{:else if page.limit > 0}
 					<p class="hero-lead">Add a subdomain you own, such as go.yourbrand.com.</p>
 					<DomainAddForm
-						bind:hostname
+						bind:subdomain
+						bind:domain
 						bind:input={hostnameInput}
 						error={fieldError}
+						{errorField}
 						pending={pending === 'add'}
 						disabled={atLimit || pending !== null}
 						onsubmit={() => void add()}
@@ -457,15 +486,17 @@
 				<section class="add-card" aria-labelledby="domain-add-heading">
 					<h2 id="domain-add-heading" class="small-heading">Add a custom domain</h2>
 					<DomainAddForm
-						bind:hostname
+						bind:subdomain
+						bind:domain
 						bind:input={hostnameInput}
 						error={fieldError}
+						{errorField}
 						pending={pending === 'add'}
 						disabled={pending !== null}
 						onsubmit={() => void add()}
 						oncancel={() => {
 							adding = false;
-							fieldError = '';
+							refuse('', null);
 						}}
 					/>
 				</section>

@@ -4,8 +4,11 @@
 	import Button from '../atoms/Button.svelte';
 
 	interface Props {
-		hostname: string;
+		subdomain: string;
+		domain: string;
 		error: string;
+		// The field the error is about; null marks both, as for a hostname the server refused.
+		errorField?: 'subdomain' | 'domain' | null;
 		pending: boolean;
 		disabled: boolean;
 		onsubmit: () => void;
@@ -15,8 +18,10 @@
 		centered?: boolean;
 	}
 	let {
-		hostname = $bindable(),
+		subdomain = $bindable(),
+		domain = $bindable(),
 		error,
+		errorField = null,
 		pending,
 		disabled,
 		onsubmit,
@@ -24,6 +29,15 @@
 		input = $bindable(),
 		centered = false
 	}: Props = $props();
+	const invalidSubdomain = $derived(Boolean(error) && errorField !== 'domain');
+	const invalidDomain = $derived(Boolean(error) && errorField !== 'subdomain');
+	const described = (invalid: boolean) =>
+		invalid ? 'domain-hostname-error domain-hostname-hint' : 'domain-hostname-hint';
+	const preview = $derived(
+		subdomain.trim() && domain.trim()
+			? `${subdomain.trim().toLowerCase()}.${domain.trim().toLowerCase()}`
+			: ''
+	);
 </script>
 
 <form
@@ -36,24 +50,38 @@
 	}}
 >
 	<div class="row">
-		<div class="group" class:invalid={error}>
-			<label for="domain-hostname">Subdomain</label>
+		<div class="group subdomain" class:invalid={invalidSubdomain}>
+			<label for="domain-subdomain">Subdomain</label>
 			<input
-				id="domain-hostname"
+				id="domain-subdomain"
 				bind:this={input}
-				bind:value={hostname}
+				bind:value={subdomain}
+				type="text"
+				autocomplete="off"
+				autocapitalize="none"
+				spellcheck="false"
+				maxlength="63"
+				placeholder="go"
+				required
+				aria-invalid={invalidSubdomain || undefined}
+				aria-describedby={described(invalidSubdomain)}
+			/>
+		</div>
+		<div class="group domain" class:invalid={invalidDomain}>
+			<label for="domain-domain">Domain</label>
+			<input
+				id="domain-domain"
+				bind:value={domain}
 				type="text"
 				inputmode="url"
 				autocomplete="off"
 				autocapitalize="none"
 				spellcheck="false"
 				maxlength="253"
-				placeholder="go.yourbrand.com"
+				placeholder="yourbrand.com"
 				required
-				aria-invalid={error ? true : undefined}
-				aria-describedby={error
-					? 'domain-hostname-error domain-hostname-hint'
-					: 'domain-hostname-hint'}
+				aria-invalid={invalidDomain || undefined}
+				aria-describedby={described(invalidDomain)}
 			/>
 		</div>
 		<button type="submit" class="submit" disabled={disabled || pending}
@@ -63,8 +91,9 @@
 	</div>
 	{#if error}<p id="domain-hostname-error" class="error" role="alert">{error}</p>{/if}
 	<p id="domain-hostname-hint" class="hint">
-		You need access to your domain’s DNS settings.<br />Root domains such as example.com are not
-		supported.
+		{#if preview}Your links will start with <strong>{preview}/</strong>.{:else}For example,
+			go.yourbrand.com or links.yourbrand.com.{/if}<br />You need access to your domain’s DNS
+		settings.
 	</p>
 </form>
 
@@ -81,17 +110,20 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.75rem;
-		width: min(100%, 40rem);
+		width: min(100%, 48rem);
 	}
 	.group {
 		display: flex;
-		flex: 1 1 18rem;
+		flex: 1 1 13rem;
 		min-width: 0;
 		min-height: 3rem;
 		border: 1px solid var(--color-rule);
 		border-radius: var(--radius-control, 0.5rem);
 		background: var(--color-input);
 		overflow: hidden;
+	}
+	.group.domain {
+		flex: 1.4 1 16rem;
 	}
 	.group:focus-within {
 		border-color: var(--color-strong);
@@ -160,6 +192,11 @@
 		color: var(--color-lead);
 		font-size: 0.875rem;
 		line-height: 1.55;
+		overflow-wrap: anywhere;
+	}
+	.hint strong {
+		color: var(--color-strong);
+		font-weight: 600;
 	}
 	.error {
 		color: var(--color-danger);
