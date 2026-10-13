@@ -8,6 +8,7 @@
 	let { assistant, size = 44 }: { assistant: AssistantId; size?: number } = $props();
 	const mark = $derived(
 		assistant === 'claude' ||
+			assistant === 'claude-code' ||
 			assistant === 'chatgpt' ||
 			assistant === 'cursor' ||
 			assistant === 'grok'
@@ -19,8 +20,6 @@
 <span class="tile {assistant}" class:framed={!mark} style:--size="{size}px" aria-hidden="true">
 	{#if mark}
 		<AssistantMark assistant={mark} size={Math.round(size * 0.82)} />
-	{:else if assistant === 'claude-code'}
-		<Glyph name="terminal" size={Math.round(size * 0.6)} />
 	{:else if assistant === 'vscode'}
 		<Glyph name="code" size={Math.round(size * 0.6)} />
 	{:else}
@@ -41,11 +40,6 @@
 	.framed {
 		border: 1px solid var(--color-rule);
 		background: var(--color-paper);
-	}
-	.claude-code {
-		border-color: var(--color-tile-charcoal);
-		background: var(--color-tile-charcoal);
-		color: var(--color-tile-charcoal-icon);
 	}
 	.other {
 		border: 0;
