@@ -4,7 +4,7 @@ import type { BlockReason } from '@flared/contracts/links';
 
 // Plain-language messages for the errors a person can act on in the dashboard.
 const messages: Partial<Record<ErrorCode, string>> = {
-	SLUG_TAKEN: 'That slug is already taken. Try another one.',
+	SLUG_TAKEN: 'That ending is already taken. Try another one.',
 	PLAN_LIMIT_REACHED: 'You have reached your active link limit. Disable a link to create another.',
 	RATE_LIMITED: 'You are creating links too quickly. Wait a minute and try again.',
 	DEFAULT_DOMAIN_UNAVAILABLE: 'Short links are not available right now. Try again soon.',
