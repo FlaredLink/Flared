@@ -3,6 +3,7 @@
 	import EmptyState from '../empty/EmptyState.svelte';
 	import Glyph from '../icons/Glyph.svelte';
 	import Select from '../atoms/Select.svelte';
+	import SegmentedControl from '../molecules/SegmentedControl.svelte';
 	import Tabs, { tabPanelId, tabId, type TabItem } from '../molecules/Tabs.svelte';
 	import DimensionIcon, { type IconKind } from './DimensionIcon.svelte';
 	import type { DimensionClicks, LinkAnalytics } from '@flared/contracts/analytics';
@@ -174,6 +175,7 @@
 		technology.map((item) => ({ value: item.id, label: item.id === 'systems' ? 'OS' : item.title }))
 	);
 	let technologyTab = $state('devices');
+	let dailyView = $state('chart');
 	const shownTechnology = $derived(
 		technology.find((item) => item.id === technologyTab) ?? technology[0]
 	);
@@ -294,54 +296,73 @@
 			Open the short link in a browser; the click shows here within a few minutes.
 		</EmptyState>
 	{:else}
-		<figure class="chart">
-			<figcaption class="visually-hidden">Clicks over time</figcaption>
-			<div
-				class="plot"
-				role="img"
-				aria-label={`Daily clicks from ${formatDay(analytics.from)} to ${formatDay(analytics.to)}. Highest day: ${numbers.format(peak)}.`}
-			>
-				{#each ticks as tick (tick)}
-					<span class="tick" style:top="{100 - (tick / scale) * 100}%" aria-hidden="true"
-						>{numbers.format(tick)}</span
+		<section class="daily" aria-labelledby="{id}-daily">
+			<div class="daily-bar">
+				<h3 id="{id}-daily">Clicks per day</h3>
+				<SegmentedControl
+					options={[
+						{ value: 'chart', label: 'Chart', icon: 'chart' },
+						{ value: 'table', label: 'Table', icon: 'list' }
+					]}
+					bind:value={dailyView}
+					name="{id}-daily-view"
+					label="Show clicks per day as"
+				/>
+			</div>
+			{#if dailyView === 'chart'}
+				<figure class="chart">
+					<figcaption class="visually-hidden">Clicks over time</figcaption>
+					<div
+						class="plot"
+						role="img"
+						aria-label={`Daily clicks from ${formatDay(analytics.from)} to ${formatDay(analytics.to)}. Highest day: ${numbers.format(peak)}.`}
 					>
-				{/each}
-				<div class="area" aria-hidden="true">
-					{#each ticks as tick (tick)}
-						<span class="grid" class:base={tick === 0} style:top="{100 - (tick / scale) * 100}%"
-						></span>
-					{/each}
-					<!-- One bar per day: daily bars keep a sparse count from looking like a trend. -->
-					<div class="columns">
-						{#each analytics.days as day (day.day)}
-							<div class="column">
-								{#if day.clicks > 0}<span
-										class="day-bar"
-										style:height={`${(day.clicks / scale) * 100}%`}
-									></span>{/if}
-								<span class="tip">{formatDay(day.day)}: {numbers.format(day.clicks)}</span>
+						{#each ticks as tick (tick)}
+							<span class="tick" style:top="{100 - (tick / scale) * 100}%" aria-hidden="true"
+								>{numbers.format(tick)}</span
+							>
+						{/each}
+						<div class="area" aria-hidden="true">
+							{#each ticks as tick (tick)}
+								<span class="grid" class:base={tick === 0} style:top="{100 - (tick / scale) * 100}%"
+								></span>
+							{/each}
+							<!-- One bar per day: daily bars keep a sparse count from looking like a trend. -->
+							<div class="columns">
+								{#each analytics.days as day (day.day)}
+									<div class="column">
+										{#if day.clicks > 0}<span
+												class="day-bar"
+												style:height={`${(day.clicks / scale) * 100}%`}
+											></span>{/if}
+										<span class="tip">{formatDay(day.day)}: {numbers.format(day.clicks)}</span>
+									</div>
+								{/each}
 							</div>
+						</div>
+					</div>
+					<div class="axis" aria-hidden="true">
+						{#each labels as label (label.day)}
+							<span style:left={`${label.left}%`}>{formatDay(label.day)}</span>
 						{/each}
 					</div>
+				</figure>
+			{:else}
+				<!-- Same height as the chart, so the page below does not move when the view changes.
+				     A keyboard reaches the region to scroll it, so it takes focus. -->
+				<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+				<div class="table-scroll" role="region" aria-labelledby="{id}-daily" tabindex="0">
+					<table>
+						<thead><tr><th scope="col">Day (UTC)</th><th scope="col">Clicks</th></tr></thead>
+						<tbody>
+							{#each analytics.days as day (day.day)}
+								<tr><td>{formatDay(day.day)}</td><td>{numbers.format(day.clicks)}</td></tr>
+							{/each}
+						</tbody>
+					</table>
 				</div>
-			</div>
-			<div class="axis" aria-hidden="true">
-				{#each labels as label (label.day)}
-					<span style:left={`${label.left}%`}>{formatDay(label.day)}</span>
-				{/each}
-			</div>
-		</figure>
-		<details class="daily">
-			<summary><Glyph name="caretDown" size={18} />Daily numbers</summary>
-			<table>
-				<thead><tr><th scope="col">Day (UTC)</th><th scope="col">Clicks</th></tr></thead>
-				<tbody>
-					{#each analytics.days as day (day.day)}
-						<tr><td>{formatDay(day.day)}</td><td>{numbers.format(day.clicks)}</td></tr>
-					{/each}
-				</tbody>
-			</table>
-		</details>
+			{/if}
+		</section>
 
 		<div class="breakdowns">
 			<section class="breakdown" aria-labelledby="{id}-countries">
@@ -536,44 +557,50 @@
 		transform: translateX(-100%);
 	}
 	.daily {
+		display: grid;
+		gap: 1rem;
 		padding-bottom: 1.25rem;
 		border-bottom: 1px solid var(--color-rule);
 	}
-	.daily summary {
-		display: inline-flex;
+	.daily-bar {
+		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
-		gap: 0.6rem;
-		min-height: 2.25rem;
-		color: var(--color-ink);
-		font-size: 0.9375rem;
-		list-style: none;
-		cursor: pointer;
+		justify-content: space-between;
+		gap: 0.75rem;
 	}
-	.daily summary::-webkit-details-marker {
-		display: none;
+	/* The chart's plot and axis rows together. */
+	.table-scroll {
+		height: 11.75rem;
+		overflow-y: auto;
+		border: 1px solid var(--color-rule);
+		border-radius: var(--radius-sm, 0.375rem);
 	}
-	.daily summary :global(svg) {
-		transition: transform var(--dur-fast, 140ms) var(--ease-out, ease);
-	}
-	.daily:not([open]) summary :global(svg) {
-		transform: rotate(-90deg);
+	.table-scroll:focus-visible {
+		outline: 2px solid var(--color-focus);
+		outline-offset: 2px;
 	}
 	table {
-		width: min(100%, 24rem);
-		margin-top: 0.75rem;
+		width: 100%;
 		border-collapse: collapse;
 		font-size: 0.875rem;
 		font-variant-numeric: tabular-nums;
 	}
 	th {
+		position: sticky;
+		top: 0;
+		background: var(--color-paper);
 		color: var(--color-lead);
 		font-weight: 600;
 		text-align: left;
+		box-shadow: inset 0 -1px var(--color-rule);
 	}
 	th,
 	td {
-		padding: 0.4rem 0.5rem;
-		border-bottom: 1px solid var(--color-rule);
+		padding: 0.4rem 0.75rem;
+	}
+	tbody tr + tr td {
+		border-top: 1px solid var(--color-rule);
 	}
 	th:last-child,
 	td:last-child {
