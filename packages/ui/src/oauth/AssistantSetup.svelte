@@ -66,7 +66,7 @@
 			: 'Connect through MCP. No API token needed.'}
 	</p>
 	<div class="url">
-		<label for="mcp-url">MCP server URL</label>
+		<span class="label">MCP server URL</span>
 		<CopyField id="mcp-url" label="MCP server URL" value={mcpUrl} />
 	</div>
 
@@ -235,7 +235,7 @@
 		padding-bottom: 1.25rem;
 		border-bottom: 1px solid var(--color-rule);
 	}
-	label {
+	.label {
 		color: var(--color-strong);
 		font-size: 0.9375rem;
 	}
