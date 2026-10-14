@@ -29,15 +29,19 @@ export interface PullRequest {
 
 // The GitHub calls the workflow makes, on the copy's repository unless named.
 export interface GitHub {
+	// The copy's page, such as https://github.com/owner/flared.
+	webUrl: string;
 	defaultBranch(): Promise<string>;
 	// Open pull requests whose branch starts with flared-upgrade/.
 	upgradePullRequests(): Promise<PullRequest[]>;
+	// null when GitHub does not let the workflow open pull requests: the repository setting
+	// "Allow GitHub Actions to create and approve pull requests" is off.
 	createPullRequest(change: {
 		title: string;
 		branch: string;
 		base: string;
 		body: string;
-	}): Promise<PullRequest>;
+	}): Promise<PullRequest | null>;
 	updatePullRequest(number: number, change: { title: string; body: string }): Promise<void>;
 	closePullRequest(number: number, comment: string): Promise<void>;
 	// false when GitHub refuses, such as for branch protection.
@@ -361,6 +365,15 @@ export async function upgrade(options: UpgradeOptions): Promise<UpgradeResult> {
 	const open = await github.upgradePullRequests();
 	const existing = open.find((pull) => pull.branch === branch);
 	const pullRequest = existing ?? (await github.createPullRequest({ title, branch, base, body }));
+	if (!pullRequest) {
+		log('GitHub does not let this workflow open pull requests.');
+		return needsAttention(github, [
+			`Flared ${target} is ready on the branch \`${branch}\`, but GitHub does not let this workflow open pull requests.`,
+			'',
+			`- To upgrade now, [open the pull request](${github.webUrl}/compare/${base}...${branch}?expand=1) and merge it with **Create a merge commit**.`,
+			`- To let this workflow open them, go to [Settings → Actions → General](${github.webUrl}/settings/actions), turn on **Allow GitHub Actions to create and approve pull requests**, and save.`
+		]);
+	}
 	if (existing) await github.updatePullRequest(existing.number, { title, body });
 	for (const older of open.filter((pull) => pull.branch !== branch))
 		await github.closePullRequest(older.number, `Replaced by #${pullRequest.number}.`);
@@ -383,7 +396,8 @@ export async function upgrade(options: UpgradeOptions): Promise<UpgradeResult> {
 export function restGitHub(
 	repository: string,
 	token: string,
-	api = 'https://api.github.com'
+	api = 'https://api.github.com',
+	web = 'https://github.com'
 ): GitHub {
 	async function call(method: string, path: string, body?: unknown): Promise<unknown> {
 		const response = await fetch(`${api}${path}`, {
@@ -410,6 +424,7 @@ export function restGitHub(
 	const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 	const repo = `/repos/${repository}`;
 	return {
+		webUrl: `${web}/${repository}`,
 		async defaultBranch() {
 			return String(field(await call('GET', repo), 'default_branch'));
 		},
@@ -423,7 +438,13 @@ export function restGitHub(
 				.filter((pull) => pull.branch.startsWith(branchPrefix));
 		},
 		async createPullRequest({ title, branch, base, body }) {
-			const pull = await call('POST', `${repo}/pulls`, { title, head: branch, base, body });
+			let pull: unknown;
+			try {
+				pull = await call('POST', `${repo}/pulls`, { title, head: branch, base, body });
+			} catch (error) {
+				if (field(error, 'status') === 403) return null;
+				throw error;
+			}
 			return {
 				number: Number(field(pull, 'number')),
 				branch,
@@ -483,7 +504,12 @@ async function main(): Promise<void> {
 	if (!repository || !token) throw new Error('Run this in GitHub Actions with GITHUB_TOKEN set.');
 	const result = await upgrade({
 		cwd: process.cwd(),
-		github: restGitHub(repository, token, process.env.GITHUB_API_URL || undefined),
+		github: restGitHub(
+			repository,
+			token,
+			process.env.GITHUB_API_URL || undefined,
+			process.env.GITHUB_SERVER_URL || undefined
+		),
 		tag: process.env.FLARED_TAG?.trim() || undefined,
 		auto: process.env.FLARED_AUTO_UPGRADE === 'true',
 		log: (line) => console.log(line)

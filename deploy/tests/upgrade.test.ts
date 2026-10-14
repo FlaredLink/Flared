@@ -99,6 +99,7 @@ interface FakeGitHub extends GitHub {
 	issues: { number: number; body: string; open: boolean }[];
 	calls: string[];
 	refuseMerge: boolean;
+	refusePulls: boolean;
 }
 
 function fakeGitHub(): FakeGitHub {
@@ -108,6 +109,8 @@ function fakeGitHub(): FakeGitHub {
 		issues: [],
 		calls: [],
 		refuseMerge: false,
+		refusePulls: false,
+		webUrl: 'https://github.example/owner/flared',
 		async defaultBranch() {
 			return 'main';
 		},
@@ -118,6 +121,7 @@ function fakeGitHub(): FakeGitHub {
 		},
 		async createPullRequest({ title, branch, body }) {
 			fake.calls.push(`create pull ${branch}`);
+			if (fake.refusePulls) return null;
 			const number = next++;
 			const url = `https://github.example/pull/${number}`;
 			fake.pulls.push({ number, branch, url, title, body, open: true, merged: false });
@@ -257,6 +261,26 @@ describe('the upgrade workflow', () => {
 		expect(github.calls).toContain('close pull 1');
 		const wrong = await upgrade({ cwd: copy, github, upstream: source, committer, tag: 'v9.9' });
 		expect(wrong.outcome).toBe('attention');
+	});
+
+	it('asks for the pull request setting when GitHub refuses to open the pull request', async () => {
+		const source = upstream();
+		const copy = copyOf(source, 'v0.1.0');
+		const github = fakeGitHub();
+		github.refusePulls = true;
+		const run = () => upgrade({ cwd: copy, github, upstream: source, committer, auto: true });
+		expect(await run()).toEqual({ outcome: 'attention', issue: 1 });
+		expect(remoteBranches(copy)).toContain('flared-upgrade/v0.3.0');
+		const [issue] = github.issues;
+		expect(issue.body).toContain(
+			'https://github.example/owner/flared/compare/main...flared-upgrade/v0.3.0?expand=1'
+		);
+		expect(issue.body).toContain('https://github.example/owner/flared/settings/actions');
+		expect(github.calls).not.toContain('merge pull 1');
+
+		github.refusePulls = false;
+		expect(await run()).toMatchObject({ outcome: 'merged', tag: 'v0.3.0' });
+		expect(github.issues[0].open).toBe(false);
 	});
 
 	it('merges a pre-release only when asked for its tag', async () => {
