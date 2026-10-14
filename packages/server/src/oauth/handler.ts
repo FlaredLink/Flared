@@ -107,13 +107,13 @@ export function aiCatalogDocument(
 				description: 'Create, edit, and measure short links from an AI assistant. Uses OAuth.',
 				type: 'application/mcp-server-card+json',
 				url: `${site.origin}/.well-known/mcp/server-card.json`,
+				// The ARD schema allows 2 to 5 queries.
 				representativeQueries: [
 					'shorten this URL',
 					'how many clicks did my link get this week',
 					'change where my short link points',
 					'add UTM parameters to my link',
-					'send iPhone and Android visitors to my app',
-					'turn off a short link'
+					'send iPhone and Android visitors to my app'
 				]
 			}
 		]

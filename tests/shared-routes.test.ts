@@ -573,10 +573,15 @@ describe('discovery documents', () => {
 		expect(card).toMatchObject({ transport: { endpoint: resource } });
 		const catalog = aiCatalogDocument(get, { origin, resource, displayName: 'Flared' });
 		expect(catalog.headers.get('access-control-allow-origin')).toBe('*');
-		expect(await catalog.json()).toMatchObject({
+		const body = await catalog.json();
+		expect(body).toMatchObject({
 			host: { displayName: 'Flared', identifier: 'did:web:app.example' },
 			entries: [{ url: `${origin}/.well-known/mcp/server-card.json` }]
 		});
+		// The ARD schema refuses more than 5 representative queries.
+		const queries: unknown = (body as { entries: { representativeQueries: unknown }[] }).entries[0]
+			.representativeQueries;
+		expect(Array.isArray(queries) && queries.length >= 2 && queries.length <= 5).toBe(true);
 		const post = serverCardDocument(new Request(`${origin}/x`, { method: 'POST' }), resource);
 		expect(post.status).toBe(405);
 	});
