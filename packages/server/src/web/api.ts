@@ -117,7 +117,15 @@ export async function createLink(
 	service: ApiService,
 	headers: Headers,
 	idempotencyKey: string,
-	input: { destination: string; slug: string; title: string; domainId: string }
+	input: {
+		destination: string;
+		slug: string;
+		title: string;
+		domainId: string;
+		// Empty or absent means no device destination.
+		iosDestination?: string;
+		androidDestination?: string;
+	}
 ): Promise<{ ok: true; link: Link } | { ok: false; failure: ApiFailure }> {
 	const response = await service.fetch(
 		apiRequest('/v1/links', {
@@ -130,6 +138,8 @@ export async function createLink(
 				destination: input.destination,
 				slug: input.slug || null,
 				title: input.title || null,
+				iosDestination: input.iosDestination || null,
+				androidDestination: input.androidDestination || null,
 				// Empty means the installation default.
 				...(input.domainId ? { domainId: input.domainId } : {})
 			})
@@ -236,8 +246,11 @@ export async function fetchLink(
 		: { ok: false, failure: malformed };
 }
 
-// The fields of PATCH /v1/links/:id. An empty title clears it.
-export type LinkChange = { destination: string; title: string } | { enabled: boolean };
+// The fields of PATCH /v1/links/:id. An empty title or device destination clears it; an absent
+// device destination stays as it is.
+export type LinkChange =
+	| { destination: string; title: string; iosDestination?: string; androidDestination?: string }
+	| { enabled: boolean };
 
 // The change that LinkEditForm submits: intent "edit" with the fields, or "enable" or "disable".
 export function linkChangeOf(form: FormData): LinkChange | null {
@@ -247,7 +260,15 @@ export function linkChangeOf(form: FormData): LinkChange | null {
 	};
 	switch (text('intent')) {
 		case 'edit':
-			return { destination: text('destination'), title: text('title') };
+			return {
+				destination: text('destination'),
+				title: text('title'),
+				// A form without these fields leaves them unchanged.
+				...(form.has('iosDestination') ? { iosDestination: text('iosDestination') } : {}),
+				...(form.has('androidDestination')
+					? { androidDestination: text('androidDestination') }
+					: {})
+			};
 		case 'enable':
 			return { enabled: true };
 		case 'disable':
@@ -266,7 +287,16 @@ export async function updateLink(
 	const body =
 		'enabled' in change
 			? { enabled: change.enabled }
-			: { destination: change.destination, title: change.title || null };
+			: {
+					destination: change.destination,
+					title: change.title || null,
+					...(change.iosDestination === undefined
+						? {}
+						: { iosDestination: change.iosDestination || null }),
+					...(change.androidDestination === undefined
+						? {}
+						: { androidDestination: change.androidDestination || null })
+				};
 	const response = await service.fetch(
 		apiRequest(`/v1/links/${encodeURIComponent(id)}`, {
 			method: 'PATCH',

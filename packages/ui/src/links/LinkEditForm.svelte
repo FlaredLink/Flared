@@ -1,18 +1,28 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
 	import ShownWorkspaceField from '../workspace/ShownWorkspaceField.svelte';
+	import { untrack } from 'svelte';
 	import type { Action } from 'svelte/action';
 	import type { Link } from '@flared/contracts/links';
 	import Button from '../atoms/Button.svelte';
 	import TextInput from '../atoms/TextInput.svelte';
 	import FormField from '../molecules/FormField.svelte';
+	import DeviceFields from './DeviceFields.svelte';
+	import UtmFields from './UtmFields.svelte';
+
+	interface EditValues {
+		destination: string;
+		title: string;
+		iosDestination?: string;
+		androidDestination?: string;
+	}
 
 	interface Props {
 		// Form action URL. The app wrapper sends the fields to PATCH /v1/links/:id.
 		action: string;
 		link: Link;
 		// The submitted edit after a failure, so the form keeps what the person typed.
-		values?: { destination: string; title: string } | null;
+		values?: EditValues | null;
 		error?: { message: string; field: string | null } | null;
 		pending?: boolean;
 		enhance?: Action<HTMLFormElement>;
@@ -30,12 +40,24 @@
 		oncancel
 	}: Props = $props();
 
-	const shown = $derived(values ?? { destination: link.destination, title: link.title ?? '' });
+	// A submitted value wins; a device destination that was not submitted shows the link's.
+	const shown = $derived({
+		destination: values?.destination ?? link.destination,
+		title: values?.title ?? link.title ?? '',
+		iosDestination: values?.iosDestination ?? link.iosDestination ?? '',
+		androidDestination: values?.androidDestination ?? link.androidDestination ?? ''
+	});
+	// Bound to the destination field, so the UTM fields can write into it.
+	let destination = $state(untrack(() => shown.destination));
+	$effect(() => {
+		destination = shown.destination;
+	});
+	const ownFields = ['destination', 'title', 'iosDestination', 'androidDestination'];
 	const invalid = (field: string) => error?.field === field;
 	const fieldError = (field: string) => (invalid(field) ? error?.message : null);
 	// An error that belongs to no field shows under the buttons.
 	const formError = $derived(
-		error && error.field !== 'destination' && error.field !== 'title' ? error.message : null
+		error && !ownFields.includes(error.field ?? '') ? error.message : null
 	);
 </script>
 
@@ -52,7 +74,7 @@
 			maxlength={4096}
 			required
 			icon="link"
-			value={shown.destination}
+			bind:value={destination}
 			invalid={invalid('destination')}
 			aria-describedby={invalid('destination') ? 'edit-destination-error' : 'edit-hint'}
 		/>
@@ -69,6 +91,8 @@
 			aria-describedby={invalid('title') ? 'edit-title-error' : undefined}
 		/>
 	</FormField>
+	<UtmFields bind:destination idPrefix="edit" />
+	<DeviceFields idPrefix="edit" values={shown} {error} />
 	<p id="edit-hint" class="hint">
 		The short link {link.hostname}/{link.slug} stays the same. New clicks go to the new destination.
 	</p>

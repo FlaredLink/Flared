@@ -14,7 +14,13 @@ import {
 	normalizeHostname,
 	type Domain
 } from '@flared/contracts/domains';
-import { blockReasons, type Link } from '@flared/contracts/links';
+import {
+	blockReasons,
+	LinkInputError,
+	maxUtmLength,
+	withUtm,
+	type Link
+} from '@flared/contracts/links';
 import { tokenScopes, type TokenScope } from '@flared/contracts/tokens';
 import { countMcpCall, findAccessToken } from '@flared/data/oauth';
 import type { ApiPrincipal } from './api';
@@ -85,6 +91,24 @@ const toolScopes: Record<string, TokenScope> = {
 	enable_link: 'links:write'
 };
 
+const deviceDestination = (os: string, extra = '') =>
+	z
+		.string()
+		.max(4096)
+		.describe(
+			`Where ${os} visitors go instead of destination: an https URL or an app link such as myapp://path${os === 'Android' ? ' or intent://…' : ''}.${extra}`
+		);
+const utmValue = z.string().max(maxUtmLength);
+const utmInput = z
+	.object({
+		source: utmValue.optional(),
+		medium: utmValue.optional(),
+		campaign: utmValue.optional(),
+		term: utmValue.optional(),
+		content: utmValue.optional()
+	})
+	.describe('utm_source, utm_medium, utm_campaign, utm_term, and utm_content for the destination.');
+
 // Results carry the link ID and nothing else internal. Output objects are loose, so a client
 // with an earlier tool list still accepts a result after a field is added.
 const linkOutput = z.looseObject({
@@ -94,6 +118,8 @@ const linkOutput = z.looseObject({
 	slug: z.string(),
 	destination: z.string(),
 	title: z.string().nullable(),
+	iosDestination: z.string().nullable(),
+	androidDestination: z.string().nullable(),
 	enabled: z.boolean(),
 	blocked: z.looseObject({ reason: z.enum(blockReasons) }).nullable(),
 	createdAt: z.string(),
@@ -135,6 +161,8 @@ function linkResult(link: Link): LinkOutput {
 		slug: link.slug,
 		destination: link.destination,
 		title: link.title,
+		iosDestination: link.iosDestination ?? null,
+		androidDestination: link.androidDestination ?? null,
 		enabled: link.enabled,
 		blocked: link.blocked,
 		createdAt: link.createdAt,
@@ -153,6 +181,18 @@ function success<T extends Record<string, unknown>>(value: T, extra: ImageConten
 }
 
 function failure(error: unknown) {
+	if (error instanceof LinkInputError)
+		return {
+			content: [
+				{
+					type: 'text' as const,
+					text: JSON.stringify({
+						error: { code: 'INVALID_INPUT', message: error.message, field: error.field }
+					})
+				}
+			],
+			isError: true
+		};
 	const known = error instanceof FlaredApiError;
 	const body = {
 		error: {
@@ -172,7 +212,7 @@ async function attempt<T extends Record<string, unknown>>(
 		const value = await operation();
 		return success(value, await extra(value));
 	} catch (error) {
-		if (!(error instanceof FlaredApiError))
+		if (!(error instanceof FlaredApiError) && !(error instanceof LinkInputError))
 			console.error(JSON.stringify({ event: 'mcp_tool_failed' }));
 		return failure(error);
 	}
@@ -451,7 +491,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 		{
 			title: 'Create a link',
 			description:
-				'Creates a public short link to a destination URL. The same request repeated within five minutes returns the first link.',
+				'Creates a public short link to a destination URL. Optional utm values are added to the destination; optional iPhone and Android destinations, such as app links, receive visitors on those devices. The same request repeated within five minutes returns the first link.',
 			inputSchema: z.object({
 				destination: z.string().min(1).max(4096).describe('The full URL, starting with https://.'),
 				slug: slug.optional().describe('The path after the domain. Generated when absent.'),
@@ -461,7 +501,10 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 					.min(1)
 					.max(253)
 					.optional()
-					.describe('An active hostname from list_domains. The default domain when absent.')
+					.describe('An active hostname from list_domains. The default domain when absent.'),
+				iosDestination: deviceDestination('iPhone').optional(),
+				androidDestination: deviceDestination('Android').optional(),
+				utm: utmInput.optional()
 			}),
 			outputSchema: z.looseObject({ link: linkOutput, replayed: z.boolean() }),
 			annotations: {
@@ -475,7 +518,8 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 		},
 		(input) =>
 			attempt(async () => {
-				const { domain, ...fields } = input;
+				const { domain, utm, ...given } = input;
+				const fields = utm ? { ...given, destination: withUtm(given.destination, utm) } : given;
 				const hostname = domain === undefined ? undefined : hostnameOf(domain);
 				const domainId = hostname === undefined ? undefined : (await findActiveDomain(hostname)).id;
 				const window = Math.floor(now() / 300_000);
@@ -495,11 +539,19 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 		'update_link',
 		{
 			title: 'Update a link',
-			description: 'Changes the destination or title of a link. The short URL stays the same.',
+			description:
+				'Changes the destination, title, UTM parameters, or iPhone and Android destinations of a link. The short URL stays the same.',
 			inputSchema: z.object({
 				link: z.string().min(1).max(100).describe('The link ID or slug.'),
 				destination: z.string().min(1).max(4096).optional(),
-				title: z.string().max(200).nullable().optional().describe('null removes the title.')
+				title: z.string().max(200).nullable().optional().describe('null removes the title.'),
+				iosDestination: deviceDestination('iPhone', ' null removes it.').nullable().optional(),
+				androidDestination: deviceDestination('Android', ' null removes it.').nullable().optional(),
+				utm: utmInput
+					.optional()
+					.describe(
+						'Set on the new destination, or on the current one when destination is absent. An empty value removes the parameter.'
+					)
 			}),
 			outputSchema: z.looseObject({ link: linkOutput }),
 			annotations: {
@@ -510,10 +562,20 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 				openWorldHint: true
 			}
 		},
-		({ link, destination, title }) =>
+		({ link, destination, title, iosDestination, androidDestination, utm }) =>
 			attempt(async () => {
 				const found = await findLink(link);
-				return { link: linkResult(await client.updateLink(found.id, { destination, title })) };
+				const target = utm ? withUtm(destination ?? found.destination, utm) : destination;
+				return {
+					link: linkResult(
+						await client.updateLink(found.id, {
+							destination: target,
+							title,
+							iosDestination,
+							androidDestination
+						})
+					)
+				};
 			})
 	);
 

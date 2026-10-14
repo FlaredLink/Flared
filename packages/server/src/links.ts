@@ -56,6 +56,8 @@ export function toApiLink(row: LinkRow): Link {
 		shortUrl: `https://${row.hostname}/${row.slug}`,
 		destination: row.destination,
 		title: row.title,
+		iosDestination: row.iosDestination,
+		androidDestination: row.androidDestination,
 		enabled: row.active,
 		blocked: row.blockedReason ? { reason: row.blockedReason } : null,
 		createdAt: new Date(row.createdAt).toISOString(),
@@ -80,13 +82,19 @@ export function generateSlug(
 }
 
 // Hash of the validated input. The omitted domain has its own marker, so a later change of
-// the default domain cannot make a replay match a different request.
+// the default domain cannot make a replay match a different request. Device destinations are
+// added only when set, so a request without them keeps the hash it had before they existed.
 export async function hashCreateInput(input: CreateLinkInput): Promise<string> {
+	const devices =
+		input.iosDestination === null && input.androidDestination === null
+			? []
+			: [{ ios: input.iosDestination, android: input.androidDestination }];
 	const canonical = JSON.stringify([
 		input.destination,
 		input.slug,
 		input.title,
-		input.domainId === null ? { default: true } : { id: input.domainId }
+		input.domainId === null ? { default: true } : { id: input.domainId },
+		...devices
 	]);
 	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical));
 	return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -138,6 +146,8 @@ export async function createLink(
 			slug,
 			destination: input.destination,
 			title: input.title,
+			iosDestination: input.iosDestination,
+			androidDestination: input.androidDestination,
 			active: true,
 			blockedReason: null,
 			createdAt: now,
@@ -153,6 +163,8 @@ export async function createLink(
 			generatedSlug: input.slug === null,
 			destination: input.destination,
 			title: input.title,
+			iosDestination: input.iosDestination,
+			androidDestination: input.androidDestination,
 			now,
 			expiresAt: now + createKeyLifetimeMs,
 			bodies: {
@@ -267,6 +279,8 @@ export async function changeLink(
 	const updated = await updateLink(routing, tenantId, linkId, {
 		destination: change.destination,
 		title: change.title,
+		iosDestination: change.iosDestination,
+		androidDestination: change.androidDestination,
 		active: change.enabled,
 		now
 	});

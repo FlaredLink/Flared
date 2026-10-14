@@ -229,6 +229,13 @@ describe('link blocks', () => {
 		});
 		expect(edit.status).toBe(409);
 		expect(errorCode(edit)).toBe('LINK_BLOCKED');
+		for (const field of ['iosDestination', 'androidDestination']) {
+			const device = await call(userId, `/links/${linkId}`, {
+				method: 'PATCH',
+				body: JSON.stringify({ [field]: 'https://example.com/app', enabled: false })
+			});
+			expect(errorCode(device), field).toBe('LINK_BLOCKED');
+		}
 
 		const off = await call(userId, `/links/${linkId}`, {
 			method: 'PATCH',

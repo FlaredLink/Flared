@@ -2,6 +2,7 @@
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { parseUtm, utmOf, withUtm } from '../packages/contracts/src/links';
 import { listReservedSlugs, setSlugReserved } from '../packages/data/src/links';
 import { createTenant } from '../packages/data/src/tenancy';
 import { createApi } from '../packages/server/src/api';
@@ -256,7 +257,14 @@ describe('link creation', () => {
 		const result = await createLink(routing(), {
 			tenantId: 'tenant-a',
 			key: nextKey(),
-			input: { destination: 'https://example.com/retry', slug: null, title: null, domainId: null },
+			input: {
+				destination: 'https://example.com/retry',
+				slug: null,
+				title: null,
+				domainId: null,
+				iosDestination: null,
+				androidDestination: null
+			},
 			requestId: 'request-1',
 			now: clock,
 			newSlug: () => slugs.shift() ?? 'unused',
@@ -291,7 +299,14 @@ describe('link creation', () => {
 		const result = await createLink(routing(), {
 			tenantId: 'tenant-a',
 			key: nextKey(),
-			input: { destination: 'https://example.com/g', slug: null, title: null, domainId: null },
+			input: {
+				destination: 'https://example.com/g',
+				slug: null,
+				title: null,
+				domainId: null,
+				iosDestination: null,
+				androidDestination: null
+			},
 			requestId: 'request-2',
 			now: clock,
 			newSlug: () => generated.shift() ?? 'unused',
@@ -535,6 +550,125 @@ describe('validation', () => {
 	});
 });
 
+describe('device destinations', () => {
+	it('stores, returns, and clears the iPhone and Android destinations', async () => {
+		const response = await create('user-a', {
+			destination: 'https://example.com/item',
+			iosDestination: ' myapp://item/42 ',
+			androidDestination: 'intent://item/42#Intent;scheme=myapp;end'
+		});
+		expect(response.status).toBe(201);
+		const { link } = await json(response);
+		expect(link).toMatchObject({
+			iosDestination: 'myapp://item/42',
+			androidDestination: 'intent://item/42#Intent;scheme=myapp;end'
+		});
+		const cleared = await call('user-a', 'PATCH', `/v1/links/${link.id}`, {
+			iosDestination: null,
+			androidDestination: 'https://example.com/android'
+		});
+		expect((await json(cleared)).link).toMatchObject({
+			destination: 'https://example.com/item',
+			iosDestination: null,
+			androidDestination: 'https://example.com/android'
+		});
+		const read = await json(await call('user-a', 'GET', `/v1/links/${link.id}`));
+		expect(read.link).toMatchObject({
+			iosDestination: null,
+			androidDestination: 'https://example.com/android'
+		});
+		const plain = await json(await create('user-a', { destination: 'https://example.com/p' }));
+		expect(plain.link).toMatchObject({ iosDestination: null, androidDestination: null });
+	});
+
+	it('refuses unsafe and malformed app links with the field', async () => {
+		const before = await linkCount('tenant-a');
+		const cases: [string, unknown][] = [
+			['iosDestination', 'javascript://alert(1)'],
+			['iosDestination', 'JavaScript://%0aalert(1)'],
+			['iosDestination', 'data://text/html,hi'],
+			['iosDestination', 'file:///etc/passwd'],
+			['iosDestination', 'myapp:item'],
+			['iosDestination', 'myapp://item 42'],
+			['iosDestination', 'intent://item#Intent;end'],
+			['androidDestination', 'chrome-extension://abc/page'],
+			['androidDestination', 'ms-browser-extension://x'],
+			['androidDestination', 'chrome-untrusted://x'],
+			['androidDestination', 'Chrome-Search://x'],
+			['androidDestination', 'resource://x'],
+			['androidDestination', 'ms-msdt://x'],
+			['androidDestination', 'search-ms://x'],
+			['iosDestination', 'itms-services://?action=download-manifest&url=https://e.com/m.plist'],
+			['androidDestination', 'content://com.example/data'],
+			['androidDestination', 'smb://host/share'],
+			['iosDestination', 'livescript://x'],
+			['androidDestination', 'https://user:pass@example.com'],
+			['androidDestination', `myapp://${'a'.repeat(4096)}`],
+			['androidDestination', 42]
+		];
+		for (const [field, value] of cases) {
+			const response = await create('user-a', {
+				destination: 'https://example.com/web',
+				[field]: value
+			});
+			expect(response.status, `${field} ${String(value).slice(0, 40)}`).toBe(422);
+			expect((await json(response)).error.field).toBe(field);
+		}
+		expect(await linkCount('tenant-a')).toBe(before);
+		for (const app of [
+			'myapp://x',
+			'fb123://x',
+			'twitter://user',
+			'msteams-app://x',
+			'itms-apps://apps.apple.com/app/id1',
+			'market://details?id=com.example'
+		])
+			expect(
+				(await create('user-a', { destination: 'https://example.com/ok', iosDestination: app }))
+					.status,
+				app
+			).toBe(201);
+	});
+
+	it('does not replay a stored create for a request that adds a device destination', async () => {
+		const key = nextKey();
+		const body = { destination: 'https://example.com/keyed' };
+		expect((await create('user-a', body, key)).status).toBe(201);
+		const changed = await create(
+			'user-a',
+			{ ...body, iosDestination: 'https://example.com/ios' },
+			key
+		);
+		expect((await json(changed)).error.code).toBe('IDEMPOTENCY_KEY_REUSED');
+	});
+});
+
+describe('UTM parameters', () => {
+	it('sets, replaces, and removes utm_* values and keeps the other parameters', () => {
+		const url = withUtm('https://example.com/p?q=1&utm_source=old', {
+			source: 'newsletter',
+			medium: 'email',
+			campaign: 'spring sale'
+		});
+		expect(url).toBe(
+			'https://example.com/p?q=1&utm_source=newsletter&utm_medium=email&utm_campaign=spring+sale'
+		);
+		expect(utmOf(url)).toEqual({ source: 'newsletter', medium: 'email', campaign: 'spring sale' });
+		expect(withUtm(url, { medium: '', term: 'shoes' })).toBe(
+			'https://example.com/p?q=1&utm_source=newsletter&utm_campaign=spring+sale&utm_term=shoes'
+		);
+		expect(utmOf('not a url')).toEqual({});
+	});
+
+	it('refuses a destination that is not a URL and unknown or long values', () => {
+		expect(() => withUtm('example.com', { source: 'x' })).toThrow();
+		expect(() => withUtm('javascript:alert(1)', { source: 'x' })).toThrow();
+		expect(() => parseUtm({ ref: 'x' })).toThrow('Unknown UTM field');
+		expect(() => parseUtm({ source: 'x'.repeat(201) })).toThrow();
+		expect(parseUtm({ source: ' news ' })).toEqual({ source: 'news' });
+	});
+});
+
 describe('dashboard edit form', () => {
 	// The app forwards only the cookie and Origin; the test principal rides on the same request.
 	const service = (user: string) => ({
@@ -576,6 +710,44 @@ describe('dashboard edit form', () => {
 		);
 		expect(disabled.ok && disabled.link.enabled).toBe(false);
 		expect(linkChangeOf(form({ intent: 'delete' }))).toBeNull();
+	});
+
+	it('changes device destinations only when the form has their fields', async () => {
+		const { link } = await json(
+			await create('user-a', {
+				destination: 'https://example.com/d',
+				iosDestination: 'myapp://d',
+				androidDestination: 'https://example.com/android'
+			})
+		);
+		const headers = new Headers({ origin });
+		const without = await updateLink(
+			service('user-a'),
+			headers,
+			link.id,
+			change({ intent: 'edit', destination: 'https://example.com/d2', title: '' })
+		);
+		expect(without.ok && without.link).toMatchObject({
+			destination: 'https://example.com/d2',
+			iosDestination: 'myapp://d',
+			androidDestination: 'https://example.com/android'
+		});
+		const cleared = await updateLink(
+			service('user-a'),
+			headers,
+			link.id,
+			change({
+				intent: 'edit',
+				destination: 'https://example.com/d2',
+				title: '',
+				iosDestination: '',
+				androidDestination: 'myapp://android'
+			})
+		);
+		expect(cleared.ok && cleared.link).toMatchObject({
+			iosDestination: null,
+			androidDestination: 'myapp://android'
+		});
 	});
 
 	it('returns the field of a rejected edit and refuses another tenant', async () => {

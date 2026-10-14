@@ -15,6 +15,8 @@ export interface LinkRow {
 	slug: string;
 	destination: string;
 	title: string | null;
+	iosDestination: string | null;
+	androidDestination: string | null;
 	active: boolean;
 	blockedReason: BlockReason | null;
 	createdAt: number;
@@ -38,6 +40,8 @@ export interface NewLinkRecord {
 	generatedSlug: boolean;
 	destination: string;
 	title: string | null;
+	iosDestination: string | null;
+	androidDestination: string | null;
 	now: number;
 	expiresAt: number;
 	bodies: { created: string; slugTaken: string; limitReached: string };
@@ -49,15 +53,18 @@ export interface StoredResult {
 	body: string;
 }
 
+// undefined keeps a field; null clears a title or a device destination.
 export interface LinkChange {
 	destination?: string;
 	title?: string | null;
+	iosDestination?: string | null;
+	androidDestination?: string | null;
 	active?: boolean;
 	now: number;
 }
 
 const linkColumns =
-	'l.id, l.domain_id, n.hostname, l.slug, l.destination, l.title, l.status, l.blocked_reason, l.created_at, l.updated_at';
+	'l.id, l.domain_id, n.hostname, l.slug, l.destination, l.title, l.ios_destination, l.android_destination, l.status, l.blocked_reason, l.created_at, l.updated_at';
 
 function text(value: unknown, field: string): string {
 	if (typeof value !== 'string' || !value) throw new Error(`Invalid stored ${field}`);
@@ -68,6 +75,11 @@ function time(value: unknown, field: string): number {
 	if (typeof value !== 'number' || !Number.isSafeInteger(value))
 		throw new Error(`Invalid stored ${field}`);
 	return value;
+}
+
+function optionalText(value: unknown, field: string): string | null {
+	if (value === null) return null;
+	return text(value, field);
 }
 
 function toLink(row: Record<string, unknown>): LinkRow {
@@ -82,6 +94,8 @@ function toLink(row: Record<string, unknown>): LinkRow {
 		slug: text(row.slug, 'slug'),
 		destination: text(row.destination, 'destination'),
 		title: row.title,
+		iosDestination: optionalText(row.ios_destination, 'iOS destination'),
+		androidDestination: optionalText(row.android_destination, 'Android destination'),
 		active: row.status === 'active',
 		blockedReason: row.blocked_reason,
 		createdAt: time(row.created_at, 'creation time'),
@@ -191,8 +205,8 @@ export async function createLinkRecord(
 				.bind(t, k, record.domainId, record.slug),
 			db
 				.prepare(
-					`INSERT INTO links (id, tenant_id, domain_id, slug, destination, title, status, created_at, updated_at)
-					SELECT ?3, ?1, ?4, ?5, ?6, ?7, 'active', ?8, ?8 WHERE (${outcomeOf}) = 'created'`
+					`INSERT INTO links (id, tenant_id, domain_id, slug, destination, title, ios_destination, android_destination, status, created_at, updated_at)
+					SELECT ?3, ?1, ?4, ?5, ?6, ?7, ?9, ?10, 'active', ?8, ?8 WHERE (${outcomeOf}) = 'created'`
 				)
 				.bind(
 					t,
@@ -202,7 +216,9 @@ export async function createLinkRecord(
 					record.slug,
 					record.destination,
 					record.title,
-					record.now
+					record.now,
+					record.iosDestination,
+					record.androidDestination
 				),
 			db
 				.prepare(
@@ -315,10 +331,12 @@ export async function updateLink(
 			`UPDATE links SET
 				destination = COALESCE(?3, destination),
 				title = CASE WHEN ?4 = 1 THEN ?5 ELSE title END,
+				ios_destination = CASE WHEN ?8 = 1 THEN ?9 ELSE ios_destination END,
+				android_destination = CASE WHEN ?10 = 1 THEN ?11 ELSE android_destination END,
 				status = COALESCE(?6, status),
 				updated_at = ?7
 			WHERE tenant_id = ?1 AND id = ?2
-			AND (blocked_at IS NULL OR (?3 IS NULL AND ?4 = 0 AND ?6 = 'disabled'))
+			AND (blocked_at IS NULL OR (?3 IS NULL AND ?4 = 0 AND ?8 = 0 AND ?10 = 0 AND ?6 = 'disabled'))
 			AND NOT (
 				status = 'disabled' AND ?6 = 'active' AND
 				(SELECT COUNT(*) FROM links WHERE tenant_id = ?1 AND status = 'active') >=
@@ -332,7 +350,11 @@ export async function updateLink(
 			change.title === undefined ? 0 : 1,
 			change.title ?? null,
 			status,
-			change.now
+			change.now,
+			change.iosDestination === undefined ? 0 : 1,
+			change.iosDestination ?? null,
+			change.androidDestination === undefined ? 0 : 1,
+			change.androidDestination ?? null
 		)
 		.run();
 	return result.meta.changes === 1;
@@ -364,6 +386,8 @@ export interface RedirectTarget {
 	linkId: string;
 	analyticsShardId: string;
 	destination: string;
+	iosDestination: string | null;
+	androidDestination: string | null;
 }
 
 // blocked: the link would open, but the operator blocked it or suspended its tenant.
@@ -380,7 +404,7 @@ export async function findRedirectTarget(
 	const row = await db
 		.withSession('first-primary')
 		.prepare(
-			`SELECT l.tenant_id, l.id, p.analytics_shard_id, l.destination,
+			`SELECT l.tenant_id, l.id, p.analytics_shard_id, l.destination, l.ios_destination, l.android_destination,
 				l.blocked_at IS NOT NULL OR p.suspended_at IS NOT NULL AS blocked
 			FROM domain_namespaces n
 			JOIN domains d ON d.id = n.id AND d.state = 'active'
@@ -398,7 +422,9 @@ export async function findRedirectTarget(
 			tenantId: text(row.tenant_id, 'tenant'),
 			linkId: text(row.id, 'link'),
 			analyticsShardId: text(row.analytics_shard_id, 'shard'),
-			destination: text(row.destination, 'destination')
+			destination: text(row.destination, 'destination'),
+			iosDestination: optionalText(row.ios_destination, 'iOS destination'),
+			androidDestination: optionalText(row.android_destination, 'Android destination')
 		}
 	};
 }

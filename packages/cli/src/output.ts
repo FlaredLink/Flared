@@ -47,6 +47,8 @@ export function linkDetails(link: Link): string {
 		['Short URL', link.shortUrl],
 		['Destination', link.destination],
 		['Title', link.title ?? '-'],
+		...(link.iosDestination ? [['iPhone', link.iosDestination]] : []),
+		...(link.androidDestination ? [['Android', link.androidDestination]] : []),
 		['Status', linkStatus(link)],
 		['Created', utc(link.createdAt)],
 		['Updated', utc(link.updatedAt)],

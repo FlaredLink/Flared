@@ -72,7 +72,9 @@ export const actions: Actions = {
 			slug: form ? text(form, 'slug') : '',
 			title: form ? text(form, 'title') : '',
 			// Empty means the default domain; the API checks that an ID is active and ours.
-			domainId: form ? text(form, 'domainId') : ''
+			domainId: form ? text(form, 'domainId') : '',
+			iosDestination: form ? text(form, 'iosDestination') : '',
+			androidDestination: form ? text(form, 'androidDestination') : ''
 		};
 		const key = form ? text(form, 'idempotencyKey') : '';
 		const service = platform?.env.API_SERVICE;

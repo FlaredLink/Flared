@@ -13,26 +13,40 @@ Create an API token in the Flared app under Settings. `flared login` asks for it
 
 ## Commands
 
-| Command                                                                                   | What it does                                                        |
-| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `flared login [--token-stdin]`                                                            | Save an API token after the API accepts it.                         |
-| `flared logout`                                                                           | Delete the saved token. Revoke it in Settings to stop it working.   |
-| `flared whoami`                                                                           | Show the workspace, the token, its scopes, and the API URL.         |
-| `flared link create URL [--slug S] [--title T] [--domain HOSTNAME] [--idempotency-key K]` | Create a link and print its short URL. Reuse a key to retry safely. |
-| `flared link list [--search Q] [--limit N] [--cursor C] [--all]`                          | List links, newest first.                                           |
-| `flared link get LINK`                                                                    | Show one link.                                                      |
-| `flared link update LINK [--destination URL] [--title T \| --clear-title]`                | Change the destination or the title.                                |
-| `flared link disable LINK`, `flared link enable LINK`                                     | Stop or restart redirects. A disabled link keeps its slug.          |
-| `flared link qr LINK [--format svg\|png] [--out FILE]`                                    | Make a QR code. SVG goes to standard output without `--out`.        |
-| `flared domain list`                                                                      | List domains, their status, and the DNS records to create.          |
-| `flared domain add HOSTNAME`                                                              | Add a subdomain you own and print the CNAME record to create.       |
-| `flared domain check DOMAIN`                                                              | Check the DNS record and the HTTPS certificate now.                 |
-| `flared domain remove DOMAIN --yes`                                                       | Remove a domain. Its links stop redirecting until you add it again. |
-| `flared analytics LINK [--from YYYY-MM-DD] [--to YYYY-MM-DD]`                             | Clicks by day, country, referrer, and device.                       |
-| `flared usage`                                                                            | Usage against the workspace limits, with warnings.                  |
-| `flared export --out FILE`                                                                | Save every link and the retained daily analytics as one JSON file.  |
+| Command                                                                                                                                                                                                     | What it does                                                           |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `flared login [--token-stdin]`                                                                                                                                                                              | Save an API token after the API accepts it.                            |
+| `flared logout`                                                                                                                                                                                             | Delete the saved token. Revoke it in Settings to stop it working.      |
+| `flared whoami`                                                                                                                                                                                             | Show the workspace, the token, its scopes, and the API URL.            |
+| `flared link create URL [--slug S] [--title T] [--domain HOSTNAME] [--ios URL] [--android URL] [--utm-source V] [--utm-medium V] [--utm-campaign V] [--utm-term V] [--utm-content V] [--idempotency-key K]` | Create a link and print its short URL. Reuse a key to retry safely.    |
+| `flared link list [--search Q] [--limit N] [--cursor C] [--all]`                                                                                                                                            | List links, newest first.                                              |
+| `flared link get LINK`                                                                                                                                                                                      | Show one link.                                                         |
+| `flared link update LINK [--destination URL] [--title T \| --clear-title] [--ios URL \| --clear-ios] [--android URL \| --clear-android] [--utm-* V]`                                                        | Change the destination, title, UTM parameters, or device destinations. |
+| `flared link disable LINK`, `flared link enable LINK`                                                                                                                                                       | Stop or restart redirects. A disabled link keeps its slug.             |
+| `flared link qr LINK [--format svg\|png] [--out FILE]`                                                                                                                                                      | Make a QR code. SVG goes to standard output without `--out`.           |
+| `flared domain list`                                                                                                                                                                                        | List domains, their status, and the DNS records to create.             |
+| `flared domain add HOSTNAME`                                                                                                                                                                                | Add a subdomain you own and print the CNAME record to create.          |
+| `flared domain check DOMAIN`                                                                                                                                                                                | Check the DNS record and the HTTPS certificate now.                    |
+| `flared domain remove DOMAIN --yes`                                                                                                                                                                         | Remove a domain. Its links stop redirecting until you add it again.    |
+| `flared analytics LINK [--from YYYY-MM-DD] [--to YYYY-MM-DD]`                                                                                                                                               | Clicks by day, country, referrer, and device.                          |
+| `flared usage`                                                                                                                                                                                              | Usage against the workspace limits, with warnings.                     |
+| `flared export --out FILE`                                                                                                                                                                                  | Save every link and the retained daily analytics as one JSON file.     |
 
 `LINK` is a link ID or a slug. `DOMAIN` is a domain hostname or ID. Every command accepts `--json` for machine-readable output and `--api-url URL`.
+
+## UTM parameters and app links
+
+`--utm-source`, `--utm-medium`, `--utm-campaign`, `--utm-term`, and `--utm-content` add `utm_*` parameters to the destination. On `link update` without `--destination`, they change the current destination; an empty value removes that parameter.
+
+```sh
+flared link create https://example.com/launch --slug launch --utm-source newsletter --utm-medium email
+```
+
+`--ios` and `--android` send visitors on those devices somewhere else, such as to your app. Use an https universal or app link, or an app link such as `myapp://item/42`; `--android` also takes `intent://` links. Everyone else, and link previews, go to the destination. `--clear-ios` and `--clear-android` remove them.
+
+```sh
+flared link create https://example.com/item/42 --ios myapp://item/42 --android https://example.com/app/item/42
+```
 
 ## Custom domains
 

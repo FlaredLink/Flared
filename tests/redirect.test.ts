@@ -136,6 +136,71 @@ describe('redirects', () => {
 	});
 });
 
+describe('device destinations', () => {
+	const iphone =
+		'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+	const android =
+		'Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36';
+	const desktop =
+		'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+	const preview = 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)';
+
+	function setDevices(slug: string, ios: string | null, androidTarget: string | null) {
+		return routing()
+			.prepare('UPDATE links SET ios_destination = ?, android_destination = ? WHERE slug = ?')
+			.bind(ios, androidTarget, slug)
+			.run();
+	}
+
+	function as(app: ReturnType<typeof handler>, url: string, agent: string | null) {
+		const headers = new Headers();
+		if (agent !== null) headers.set('user-agent', agent);
+		return app.fetch(new Request(url, { headers, redirect: 'manual' }));
+	}
+
+	it('sends iPhone and Android visitors to their destination and everyone else to the web', async () => {
+		await addLink('app-item', 'https://example.com/item/42');
+		await setDevices('app-item', 'myapp://item/42', 'intent://item/42#Intent;scheme=myapp;end');
+		const app = handler();
+		const url = 'https://short.example/app-item';
+		const cases: [string | null, string][] = [
+			[iphone, 'myapp://item/42'],
+			[android, 'intent://item/42#Intent;scheme=myapp;end'],
+			[desktop, 'https://example.com/item/42'],
+			[preview, 'https://example.com/item/42'],
+			[null, 'https://example.com/item/42']
+		];
+		for (const [agent, location] of cases) {
+			const response = await as(app, url, agent);
+			expect(response.status).toBe(302);
+			expect(response.headers.get('location')).toBe(location);
+			expect(response.headers.get('vary')).toBe('User-Agent');
+			expect(response.headers.get('cache-control')).toBe('no-store');
+		}
+	});
+
+	it('uses the destination for a device without its own and keeps a snapshot of both', async () => {
+		await addLink('ios-only', 'https://example.com/web');
+		await setDevices('ios-only', 'https://apps.example/open', null);
+		let time = start;
+		const app = handler({ now: () => time });
+		const url = 'https://short.example/ios-only';
+		expect((await as(app, url, android)).headers.get('location')).toBe('https://example.com/web');
+		// The database no longer has the device destination; the snapshot still does.
+		await setDevices('ios-only', null, null);
+		expect((await as(app, url, iphone)).headers.get('location')).toBe('https://apps.example/open');
+		time += snapshotLifetimeMs;
+		expect((await as(app, url, iphone)).headers.get('location')).toBe('https://example.com/web');
+	});
+
+	it('does not vary a link without device destinations', async () => {
+		await addLink('web-only', 'https://example.com/plain');
+		const response = await as(handler(), 'https://short.example/web-only', iphone);
+		expect(response.headers.get('location')).toBe('https://example.com/plain');
+		expect(response.headers.get('vary')).toBeNull();
+	});
+});
+
 describe('reserved paths', () => {
 	it('go to the app origin and are never looked up as slugs', async () => {
 		// A stored link on a reserved path must stay unreachable.

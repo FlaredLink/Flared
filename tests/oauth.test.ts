@@ -989,6 +989,44 @@ describe('MCP endpoint', () => {
 			usage: { clicks: 0, clickLimit: 5000 }
 		});
 
+		const app = await call(token, 'create_link', {
+			destination: 'https://example.com/app?q=1',
+			slug: 'mcp-app',
+			iosDestination: 'myapp://item/1',
+			utm: { source: 'assistant', campaign: 'launch' }
+		});
+		expect(app.body.result?.structuredContent).toMatchObject({
+			link: {
+				destination: 'https://example.com/app?q=1&utm_source=assistant&utm_campaign=launch',
+				iosDestination: 'myapp://item/1',
+				androidDestination: null
+			}
+		});
+		const tagged = await call(token, 'update_link', {
+			link: 'mcp-app',
+			utm: { source: '', medium: 'chat' },
+			iosDestination: null,
+			androidDestination: 'https://example.com/android'
+		});
+		expect(tagged.body.result?.structuredContent).toMatchObject({
+			link: {
+				destination: 'https://example.com/app?q=1&utm_campaign=launch&utm_medium=chat',
+				iosDestination: null,
+				androidDestination: 'https://example.com/android'
+			}
+		});
+		const badUtm = await call(token, 'create_link', {
+			destination: 'example.com',
+			utm: { source: 'x' }
+		});
+		expect(badUtm.body.result?.isError).toBe(true);
+		expect(badUtm.body.result?.content[0].text).toContain('INVALID_INPUT');
+		const badApp = await call(token, 'create_link', {
+			destination: 'https://example.com/x',
+			iosDestination: 'javascript://alert(1)'
+		});
+		expect(badApp.body.result?.content[0].text).toContain('iosDestination');
+
 		const invalid = await call(token, 'create_link', { destination: 'ftp://example.com' });
 		expect(invalid.status).toBe(200);
 		expect(invalid.body.result?.isError).toBe(true);

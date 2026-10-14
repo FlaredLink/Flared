@@ -6,6 +6,9 @@
 		title: string;
 		// Empty or absent means the installation default.
 		domainId?: string;
+		// Empty or absent means no device destination.
+		iosDestination?: string;
+		androidDestination?: string;
 	}
 
 	export interface LinkFormDomain {
@@ -20,6 +23,9 @@
 	import { onMount, untrack } from 'svelte';
 	import type { Action } from 'svelte/action';
 	import Glyph from '../icons/Glyph.svelte';
+	import { utmOf } from '@flared/contracts/links';
+	import DeviceFields from './DeviceFields.svelte';
+	import UtmFields from './UtmFields.svelte';
 
 	interface Props {
 		// Form action URL. The app wrapper sends the fields to POST /v1/links.
@@ -53,8 +59,15 @@
 	// The extra fields stay folded unless they hold a value or an error. Without script they
 	// stay open, so the form works before hydration too.
 	const customized = $derived(
-		Boolean(values.slug || values.title) || invalid('slug') || invalid('title')
+		Boolean(values.slug || values.title || values.iosDestination || values.androidDestination) ||
+			Object.keys(utmOf(values.destination)).length > 0 ||
+			['slug', 'title', 'iosDestination', 'androidDestination'].some(invalid)
 	);
+	// Bound to the destination field, so the UTM fields can write into it.
+	let destination = $state(untrack(() => values.destination));
+	$effect(() => {
+		destination = values.destination;
+	});
 	let mounted = $state(false);
 	let customOpen = $state(untrack(() => customized));
 	$effect(() => {
@@ -108,6 +121,7 @@
 	// A successful create resets the form; keep the domain that was just used.
 	function restoreAfterReset() {
 		ending = '';
+		destination = '';
 		setTimeout(() => {
 			const value = remembered();
 			if (picker) picker.value = value;
@@ -142,7 +156,7 @@
 				maxlength="4096"
 				required
 				bind:this={destinationInput}
-				value={values.destination}
+				bind:value={destination}
 				aria-invalid={invalid('destination') || undefined}
 				aria-describedby={invalid('destination') ? 'link-form-error' : undefined}
 			/>
@@ -185,7 +199,7 @@
 				aria-expanded={customOpen}
 				aria-controls="link-custom"
 				onclick={() => (customOpen = !customOpen)}
-				><Glyph name="caretDown" size={18} />Custom ending and title</button
+				><Glyph name="caretDown" size={18} />More options</button
 			>
 		{/if}
 	</div>
@@ -228,6 +242,20 @@
 				value={values.title}
 				aria-invalid={invalid('title') || undefined}
 				aria-describedby={invalid('title') ? 'link-form-error' : undefined}
+			/>
+		</div>
+		<div class="custom-wide">
+			<UtmFields bind:destination idPrefix="link" />
+		</div>
+		<div class="custom-wide">
+			<DeviceFields
+				idPrefix="link"
+				values={{
+					iosDestination: values.iosDestination ?? '',
+					androidDestination: values.androidDestination ?? ''
+				}}
+				{error}
+				errorId="link-form-error"
 			/>
 		</div>
 	</div>
@@ -427,6 +455,9 @@
 	}
 	.custom[hidden] {
 		display: none;
+	}
+	.custom-wide {
+		grid-column: 1 / -1;
 	}
 	.custom-field {
 		display: grid;

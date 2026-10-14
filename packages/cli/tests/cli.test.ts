@@ -432,6 +432,48 @@ describe('flared CLI', () => {
 		expect(JSON.parse(json.stdout)).toMatchObject({ replayed: false, link: { slug: 'launch' } });
 	});
 
+	it('adds UTM parameters and device destinations on create and update', async () => {
+		const api = fakeApi();
+		await cli(
+			[
+				'link',
+				'create',
+				'https://example.com/launch?q=1',
+				'--utm-source',
+				'newsletter',
+				'--utm-campaign',
+				'spring sale',
+				'--ios',
+				'myapp://launch',
+				'--android',
+				'https://example.com/android'
+			],
+			{ env: signedIn, api }
+		);
+		expect(api.seen.at(-1)?.body).toEqual({
+			destination: 'https://example.com/launch?q=1&utm_source=newsletter&utm_campaign=spring+sale',
+			iosDestination: 'myapp://launch',
+			androidDestination: 'https://example.com/android'
+		});
+		// Without --destination, UTM values go on the current destination.
+		await cli(['link', 'update', launch.id, '--utm-medium', 'email', '--clear-ios'], {
+			env: signedIn,
+			api
+		});
+		expect(api.seen.at(-1)?.body).toEqual({
+			destination: 'https://example.com/launch?utm_medium=email',
+			iosDestination: null
+		});
+		const both = await cli(['link', 'update', launch.id, '--ios', 'myapp://x', '--clear-ios'], {
+			env: signedIn
+		});
+		expect(both.code).toBe(exitCodes.usage);
+		const notUrl = await cli(['link', 'create', 'example.com', '--utm-source', 'x'], {
+			env: signedIn
+		});
+		expect(notUrl.code).toBe(exitCodes.usage);
+	});
+
 	it('finds a link by slug and refuses an ambiguous or unknown slug', async () => {
 		const shown = await cli(['link', 'get', 'launch'], { env: signedIn });
 		expect(shown.code).toBe(0);

@@ -105,6 +105,14 @@
 		<a class="destination" href={link.destination} target="_blank" rel="noopener noreferrer"
 			><span>{link.destination}</span><Glyph name="external" size={20} /></a
 		>
+		{#if link.iosDestination || link.androidDestination}
+			<dl class="devices">
+				{#if link.iosDestination}<dt>iPhone</dt>
+					<dd>{link.iosDestination}</dd>{/if}
+				{#if link.androidDestination}<dt>Android</dt>
+					<dd>{link.androidDestination}</dd>{/if}
+			</dl>
+		{/if}
 	</div>
 
 	<div class="block">
@@ -382,5 +390,20 @@
 		overflow: hidden;
 		clip-path: inset(50%);
 		white-space: nowrap;
+	}
+	.devices {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		gap: 0.35rem 0.75rem;
+		margin-top: 0.75rem;
+		font-size: 0.875rem;
+	}
+	.devices dt {
+		color: var(--color-lead);
+	}
+	.devices dd {
+		margin: 0;
+		overflow-wrap: anywhere;
+		color: var(--color-strong);
 	}
 </style>

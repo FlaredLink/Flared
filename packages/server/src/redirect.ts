@@ -2,14 +2,16 @@
 // Short-link redirects for every redirect domain. A resolved link is kept in a private Workers
 // Cache entry until 60 seconds after its lookup started, so an edit, disable, or block reaches
 // every visitor within that bound. Each counted GET sends one minimized click event after the
-// response. Imports only routing and contract code.
+// response. iPhone and Android visitors go to the link's device destination when it has one;
+// automated clients always get the destination, so link previews show the web page. Imports
+// only routing and contract code.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
 import type { ClickEvent } from '@flared/contracts/analytics';
 import { slugPattern } from '@flared/contracts/links';
 import { isReservedPath } from '@flared/contracts/reserved';
 import { activeDomainKind } from '@flared/data/domains';
 import { findRedirectTarget, type RedirectLookup, type RedirectTarget } from '@flared/data/links';
-import { buildClickEvent, isAutomated } from './clicks';
+import { buildClickEvent, isAutomated, osFamily } from './clicks';
 import {
 	unavailablePage,
 	unavailablePageHeaders,
@@ -85,8 +87,26 @@ function unavailable(
 	});
 }
 
-function redirect(location: string): Response {
-	return new Response(null, { status: 302, headers: { location, 'cache-control': 'no-store' } });
+function redirect(location: string, headers: Record<string, string> = {}): Response {
+	return new Response(null, {
+		status: 302,
+		headers: { location, 'cache-control': 'no-store', ...headers }
+	});
+}
+
+// The location for this visitor. A link with a device destination varies by user agent.
+function targetResponse(request: Request, target: RedirectTarget): Response {
+	if (target.iosDestination === null && target.androidDestination === null)
+		return redirect(target.destination);
+	const agent = request.headers.get('user-agent');
+	const os = isAutomated(agent) ? null : osFamily(agent);
+	const device =
+		os === 'ios' ? target.iosDestination : os === 'android' ? target.androidDestination : null;
+	return redirect(device ?? target.destination, { vary: 'User-Agent' });
+}
+
+function optionalText(value: unknown): string | null | undefined {
+	return value === null || typeof value === 'string' ? value : undefined;
 }
 
 function toSnapshot(value: unknown): Snapshot | null {
@@ -97,17 +117,30 @@ function toSnapshot(value: unknown): Snapshot | null {
 		!('linkId' in value && typeof value.linkId === 'string') ||
 		!('analyticsShardId' in value && typeof value.analyticsShardId === 'string') ||
 		!('destination' in value && typeof value.destination === 'string') ||
+		!('iosDestination' in value) ||
+		!('androidDestination' in value) ||
 		!('validUntil' in value && typeof value.validUntil === 'number')
 	)
 		return null;
+	const iosDestination = optionalText(value.iosDestination);
+	const androidDestination = optionalText(value.androidDestination);
+	if (iosDestination === undefined || androidDestination === undefined) return null;
 	const { tenantId, linkId, analyticsShardId, destination, validUntil } = value;
-	return { tenantId, linkId, analyticsShardId, destination, validUntil };
+	return {
+		tenantId,
+		linkId,
+		analyticsShardId,
+		destination,
+		iosDestination,
+		androidDestination,
+		validUntil
+	};
 }
 
 export function createRedirectHandler(dependencies: RedirectDependencies) {
 	const now = dependencies.now ?? Date.now;
-	// v2: snapshots carry the analytics shard ID.
-	const cacheName = dependencies.cacheName ?? 'flared-redirect-v2';
+	// v2: snapshots carry the analytics shard ID. v3: and the device destinations.
+	const cacheName = dependencies.cacheName ?? 'flared-redirect-v3';
 
 	// A cache fault only costs a database read, so it counts as a miss.
 	async function readSnapshot(key: Request): Promise<Snapshot | null> {
@@ -150,7 +183,7 @@ export function createRedirectHandler(dependencies: RedirectDependencies) {
 		work: Promise<unknown>[] = []
 	): Promise<Response> | Response {
 		const pending = Promise.all([...work, recordClick(request, target)]);
-		const response = redirect(target.destination);
+		const response = targetResponse(request, target);
 		if (background) {
 			background.waitUntil(pending);
 			return response;

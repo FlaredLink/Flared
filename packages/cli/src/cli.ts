@@ -5,7 +5,13 @@ import { createClient, FlaredApiError, type FlaredClient } from '@flared/client'
 import { writeExport } from '@flared/client/export';
 import { defaultQrSize, qrPng, qrSvg } from '@flared/client/qr';
 import { normalizeHostname, type Domain } from '@flared/contracts/domains';
-import type { ListedLink } from '@flared/contracts/links';
+import {
+	LinkInputError,
+	withUtm,
+	type ListedLink,
+	type Utm,
+	type UtmKey
+} from '@flared/contracts/links';
 import {
 	checkToken,
 	configDir,
@@ -65,8 +71,46 @@ const optionTypes = {
 	from: { type: 'string' },
 	to: { type: 'string' },
 	domain: { type: 'string' },
+	ios: { type: 'string' },
+	android: { type: 'string' },
+	'clear-ios': { type: 'boolean' },
+	'clear-android': { type: 'boolean' },
+	'utm-source': { type: 'string' },
+	'utm-medium': { type: 'string' },
+	'utm-campaign': { type: 'string' },
+	'utm-term': { type: 'string' },
+	'utm-content': { type: 'string' },
 	yes: { type: 'boolean' }
 } as const;
+
+const utmFlags = [
+	['utm-source', 'source'],
+	['utm-medium', 'medium'],
+	['utm-campaign', 'campaign'],
+	['utm-term', 'term'],
+	['utm-content', 'content']
+] as const satisfies readonly (readonly [keyof typeof optionTypes, UtmKey])[];
+const utmOptions = utmFlags.map(([option]) => option);
+
+// The --utm-* values given; an empty value removes the parameter.
+function utmFrom(options: Options): Utm | null {
+	const utm: Utm = {};
+	for (const [option, key] of utmFlags) {
+		const value = options[option];
+		if (value !== undefined) utm[key] = value;
+	}
+	return Object.keys(utm).length ? utm : null;
+}
+
+function addUtm(destination: string, utm: Utm | null): string {
+	if (!utm) return destination;
+	try {
+		return withUtm(destination, utm);
+	} catch (error) {
+		if (error instanceof LinkInputError) throw new UsageError(error.message);
+		throw error;
+	}
+}
 
 type Options = {
 	[K in keyof typeof optionTypes]?: (typeof optionTypes)[K]['type'] extends 'boolean'
@@ -197,9 +241,10 @@ const commands: Record<string, Command> = {
 	},
 	'link create': {
 		usage:
-			'flared link create URL [--slug SLUG] [--title TITLE] [--domain HOSTNAME] [--idempotency-key KEY]',
-		summary: 'Create a short link and print its URL. Without --domain, it uses the default domain.',
-		options: ['slug', 'title', 'domain', 'idempotency-key'],
+			'flared link create URL [--slug SLUG] [--title TITLE] [--domain HOSTNAME] [--ios URL] [--android URL] [--utm-source VALUE] [--utm-medium VALUE] [--utm-campaign VALUE] [--utm-term VALUE] [--utm-content VALUE] [--idempotency-key KEY]',
+		summary:
+			'Create a short link and print its URL. Without --domain, it uses the default domain. --ios and --android send visitors on those devices to an app link; --utm-* adds UTM parameters to URL.',
+		options: ['slug', 'title', 'domain', 'ios', 'android', ...utmOptions, 'idempotency-key'],
 		args: 1,
 		async run({ args, options, client, print }) {
 			const api = await client();
@@ -215,8 +260,10 @@ const commands: Record<string, Command> = {
 				domainId = domain.id;
 			}
 			const result = await api.createLink({
-				destination: args[0],
+				destination: addUtm(args[0], utmFrom(options)),
 				...(domainId ? { domainId } : {}),
+				...(options.ios ? { iosDestination: options.ios } : {}),
+				...(options.android ? { androidDestination: options.android } : {}),
 				...(options.slug ? { slug: options.slug } : {}),
 				...(options.title ? { title: options.title } : {}),
 				...(options['idempotency-key'] ? { idempotencyKey: options['idempotency-key'] } : {})
@@ -262,22 +309,51 @@ const commands: Record<string, Command> = {
 		}
 	},
 	'link update': {
-		usage: 'flared link update ID_OR_SLUG [--destination URL] [--title TITLE | --clear-title]',
-		summary: 'Change the destination or the title.',
-		options: ['destination', 'title', 'clear-title'],
+		usage:
+			'flared link update ID_OR_SLUG [--destination URL] [--title TITLE | --clear-title] [--ios URL | --clear-ios] [--android URL | --clear-android] [--utm-source VALUE] [--utm-medium VALUE] [--utm-campaign VALUE] [--utm-term VALUE] [--utm-content VALUE]',
+		summary:
+			'Change the destination, title, UTM parameters, or iPhone and Android destinations. An empty --utm-* value removes that parameter.',
+		options: [
+			'destination',
+			'title',
+			'clear-title',
+			'ios',
+			'clear-ios',
+			'android',
+			'clear-android',
+			...utmOptions
+		],
 		args: 1,
 		async run({ args, options, client, print }) {
-			if (options.title !== undefined && options['clear-title'])
-				throw new UsageError('Use --title or --clear-title, not both.');
+			for (const [set, clear] of [
+				['title', 'clear-title'],
+				['ios', 'clear-ios'],
+				['android', 'clear-android']
+			] as const)
+				if (options[set] !== undefined && options[clear])
+					throw new UsageError(`Use --${set} or --${clear}, not both.`);
+			const utm = utmFrom(options);
 			const change = {
 				...(options.destination !== undefined ? { destination: options.destination } : {}),
 				...(options.title !== undefined ? { title: options.title } : {}),
-				...(options['clear-title'] ? { title: null } : {})
+				...(options['clear-title'] ? { title: null } : {}),
+				...(options.ios !== undefined ? { iosDestination: options.ios } : {}),
+				...(options['clear-ios'] ? { iosDestination: null } : {}),
+				...(options.android !== undefined ? { androidDestination: options.android } : {}),
+				...(options['clear-android'] ? { androidDestination: null } : {})
 			};
-			if (Object.keys(change).length === 0)
-				throw new UsageError('Give --destination, --title, or --clear-title.');
+			if (Object.keys(change).length === 0 && !utm)
+				throw new UsageError(
+					'Give --destination, --title, --clear-title, --ios, --clear-ios, --android, --clear-android, or a --utm-* option.'
+				);
 			const api = await client();
-			const link = await api.updateLink(await resolveLink(api, args[0]), change);
+			const id = await resolveLink(api, args[0]);
+			if (utm) {
+				// Without --destination, the UTM values go on the current destination.
+				const base = change.destination ?? (await api.getLink(id)).destination;
+				change.destination = addUtm(base, utm);
+			}
+			const link = await api.updateLink(id, change);
 			print(linkDetails(link), { link });
 		}
 	},

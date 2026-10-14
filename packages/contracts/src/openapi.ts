@@ -18,13 +18,18 @@ import { tokenScopes, type TokenScope } from './tokens';
 // Duplicated from the client's QR module, which this package cannot import.
 const qrSizes = { minimum: 128, maximum: 2048, default: 512 };
 
-export const openApiVersion = '1.2.0';
+export const openApiVersion = '1.3.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const dateTime = { type: 'string', format: 'date-time' };
 const day = { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' };
 const count = { type: 'integer', minimum: 0 };
 const nullable = (schema: Record<string, unknown>) => ({ anyOf: [schema, { type: 'null' }] });
+const device = (os: string) => ({
+	type: 'string',
+	maxLength: maxDestinationLength,
+	description: `Where ${os} visitors go instead of destination: an http(s) URL or an app link in the scheme://… form${os === 'Android' ? ', including intent://' : ''}. Link previews and other visitors get destination.`
+});
 const object = (properties: Record<string, unknown>, required = Object.keys(properties)) => ({
 	type: 'object',
 	properties,
@@ -52,6 +57,8 @@ const schemas = {
 		shortUrl: { type: 'string', format: 'uri' },
 		destination: { type: 'string', format: 'uri' },
 		title: nullable({ type: 'string' }),
+		iosDestination: nullable(device('iPhone')),
+		androidDestination: nullable(device('Android')),
 		enabled: { type: 'boolean' },
 		blocked: {
 			...nullable(object({ reason: { type: 'string', enum: [...blockReasons] } })),
@@ -95,7 +102,9 @@ const schemas = {
 				description: 'Omit for a generated slug. Reserved paths are refused.'
 			},
 			title: { type: 'string', maxLength: maxTitleLength },
-			domainId: { type: 'string', description: 'Omit for the default short-link domain.' }
+			domainId: { type: 'string', description: 'Omit for the default short-link domain.' },
+			iosDestination: nullable(device('iPhone')),
+			androidDestination: nullable(device('Android'))
 		},
 		['destination']
 	),
@@ -104,6 +113,8 @@ const schemas = {
 			{
 				destination: { type: 'string', format: 'uri', maxLength: maxDestinationLength },
 				title: nullable({ type: 'string', maxLength: maxTitleLength }),
+				iosDestination: { ...nullable(device('iPhone')), description: 'null clears it.' },
+				androidDestination: { ...nullable(device('Android')), description: 'null clears it.' },
 				enabled: { type: 'boolean' }
 			},
 			[]

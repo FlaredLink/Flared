@@ -55,13 +55,19 @@ export interface CreateLinkRequest {
 	slug?: string;
 	title?: string;
 	domainId?: string;
+	// Where iPhone and Android visitors go instead of destination.
+	iosDestination?: string;
+	androidDestination?: string;
 	// Reuse the same key to retry a create safely; a new one is generated when it is absent.
 	idempotencyKey?: string;
 }
 
+// null clears a title or a device destination.
 export interface UpdateLinkRequest {
 	destination?: string;
 	title?: string | null;
+	iosDestination?: string | null;
+	androidDestination?: string | null;
 	enabled?: boolean;
 }
 
