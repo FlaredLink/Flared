@@ -22,4 +22,4 @@ A restore replaces the database with its state at that time.
 
 ## Export
 
-**Settings → Export** downloads your links and daily click totals as files.
+**Settings → General → Export** downloads your links and daily click totals as files.

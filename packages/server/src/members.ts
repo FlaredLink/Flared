@@ -15,7 +15,7 @@ export interface EmailInviteSettings {
 	// https://example.com/app/invite#<token>.
 	inviteUrl(token: string): string;
 	// The page that lists the members, where a member accepts an offer of the workspace, such as
-	// https://example.com/app/settings?tab=members.
+	// https://example.com/app/settings/members.
 	membersUrl: string;
 	// Invite emails each workspace may send in a UTC day. 20 when absent.
 	emailsPerDay?: number;

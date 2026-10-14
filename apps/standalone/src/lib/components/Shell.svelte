@@ -13,7 +13,7 @@
 	import Icon, { type IconName } from './Icon.svelte';
 	import SourceFooter from './SourceFooter.svelte';
 	import { postJson } from '$lib/auth-client';
-	import { appRoutes } from '$lib/routes';
+	import { appRoutes, settingsRoutes } from '$lib/routes';
 	import type { Release } from '$lib/updates';
 
 	let {
@@ -35,10 +35,10 @@
 		workspaceName ? (Array.from(workspaceName)[0] ?? '').toLocaleUpperCase() : ''
 	);
 	// The links and domains pages leave out the domain warning; the domain list shows its own.
-	// Settings shows the same usage as meters.
+	// Limits and usage shows the same usage as meters.
 	const path = $derived(page.url.pathname);
 	const bannerUsage = $derived.by(() => {
-		if (!usage || path === appRoutes.settings) return null;
+		if (!usage || path === settingsRoutes.limits) return null;
 		const linksOrDomains =
 			path === appRoutes.app || path.startsWith('/app/links/') || path === appRoutes.domains;
 		return linksOrDomains
@@ -66,7 +66,7 @@
 			label: 'Settings',
 			href: appRoutes.settings,
 			icon: 'settings',
-			current: path === appRoutes.settings
+			current: path.startsWith(`${appRoutes.settings}/`)
 		}
 	]);
 
@@ -86,7 +86,7 @@
 {#snippet menu(place: string)}
 	<div class="group">
 		{#if workspaceName}
-			<a class="workspace" href="{appRoutes.settings}#workspace" onclick={() => (open = false)}
+			<a class="workspace" href={settingsRoutes.workspace} onclick={() => (open = false)}
 				><span class="workspace-initial" aria-hidden="true">{workspaceInitial}</span><span
 					class="workspace-name">{workspaceName}</span
 				></a
@@ -109,7 +109,7 @@
 				class="account-trigger"
 				align="start"
 				items={[
-					{ label: 'Settings', icon: 'gear', href: appRoutes.settings },
+					{ label: 'Account settings', icon: 'gear', href: settingsRoutes.account },
 					{ label: pending ? 'Signing out…' : 'Sign out', icon: 'signOut', onselect: signOut }
 				]}
 			>
@@ -135,14 +135,11 @@
 	</Collapsible.Root>
 	<main id="main" class="app-main">
 		<div class="app-content">
-			{#if bannerUsage}<UsageBanner
-					usage={bannerUsage}
-					href={`${appRoutes.settings}#limits`}
-				/>{/if}
-			{#if release && path !== appRoutes.settings}
+			{#if bannerUsage}<UsageBanner usage={bannerUsage} href={settingsRoutes.limits} />{/if}
+			{#if release && path !== settingsRoutes.updates}
 				<div class="update">
 					<Callout tone="info" icon="download" title={`Flared ${release.version} is available`}>
-						<p>{release.summary} <a href="{appRoutes.settings}#updates">How to upgrade</a></p>
+						<p>{release.summary} <a href={settingsRoutes.updates}>How to upgrade</a></p>
 					</Callout>
 				</div>
 			{/if}

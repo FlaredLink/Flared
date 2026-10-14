@@ -16,7 +16,7 @@ The first password sign-in at the new address ends, in one step:
 
 - every other session;
 - every connected app (OAuth grant), because the issuer changed;
-- every passkey, because passkeys belong to the old address. Add them again in Settings.
+- every passkey, because passkeys belong to the old address. Add them again in **Settings → Security**.
 
 API tokens keep working.
 
