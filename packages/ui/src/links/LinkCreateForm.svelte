@@ -128,7 +128,7 @@
 	<h2 id="create-link-heading" class="visually-hidden">Create a short link</h2>
 	<input type="hidden" name="idempotencyKey" value={idempotencyKey} />
 	<ShownWorkspaceField />
-	<label for="link-destination" class="field-label">Destination URL</label>
+	<label for="link-destination" class="destination-label">Destination URL</label>
 	<div class="bar">
 		<div class="composer" class:invalid={invalid('destination')}>
 			<Glyph name="link" size={22} />
@@ -238,7 +238,7 @@
 		display: grid;
 		gap: 0.6rem;
 	}
-	.field-label {
+	.destination-label {
 		color: var(--color-strong);
 		font-size: 0.9375rem;
 		font-weight: 600;
