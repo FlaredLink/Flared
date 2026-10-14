@@ -175,6 +175,13 @@
 		color: var(--color-ink);
 		cursor: pointer;
 	}
+	/* Touch screens get a 44px target; the icon keeps its size. */
+	@media (pointer: coarse) {
+		.trigger:not(.with-text) {
+			width: 2.75rem;
+			height: 2.75rem;
+		}
+	}
 	.trigger.with-text {
 		display: flex;
 		width: 100%;

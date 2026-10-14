@@ -5,6 +5,7 @@
 	import Button from '../atoms/Button.svelte';
 	import StatusDot from '../atoms/StatusDot.svelte';
 	import CopyButton from '../molecules/CopyButton.svelte';
+	import Menu, { type MenuItem } from '../molecules/Menu.svelte';
 	import Sparkline from '../molecules/Sparkline.svelte';
 	import { blockLabel } from './messages';
 
@@ -38,7 +39,23 @@
 		const start = end - (shown.length - 1) * 86_400_000;
 		return { start: dayFormat.format(start), end: dayFormat.format(end) };
 	});
+	// The busiest day gives the sparkline a scale: its top is this many clicks.
+	const busiest = $derived.by(() => {
+		if (!shown || !range || total === 0) return null;
+		const most = Math.max(...shown);
+		const index = shown.lastIndexOf(most);
+		const today = new Date();
+		const end = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+		return {
+			clicks: most,
+			day: dayFormat.format(end - (shown.length - 1 - index) * 86_400_000)
+		};
+	});
 	const qr = $derived(`${apiBase}/links/${encodeURIComponent(link.id)}/qr`);
+	const qrDownloads = $derived<MenuItem[]>([
+		{ label: 'PNG image', icon: 'image', href: `${qr}?format=png&size=1024&download=1` },
+		{ label: 'SVG image', icon: 'image', href: `${qr}?format=svg&download=1` }
+	]);
 	let qrStatus = $state('');
 
 	// Copies the PNG where the browser allows images on the clipboard.
@@ -82,7 +99,8 @@
 	<div class="block">
 		<div class="row">
 			<h4>Destination</h4>
-			{#if editHref && !link.blocked}<a class="edit" href={editHref}>Edit</a>{/if}
+			{#if editHref && !link.blocked}<Button size="sm" icon="pencil" href={editHref}>Edit</Button
+				>{/if}
 		</div>
 		<a class="destination" href={link.destination} target="_blank" rel="noopener noreferrer"
 			><span>{link.destination}</span><Glyph name="external" size={20} /></a
@@ -107,6 +125,12 @@
 			</p>
 			<Sparkline values={shown} height={72} />
 			<p class="dates"><span>{range.start}</span><span>{range.end}</span></p>
+			{#if busiest}
+				<p class="note">
+					Busiest day: {busiest.day}, {numbers.format(busiest.clicks)}
+					{busiest.clicks === 1 ? 'click' : 'clicks'}
+				</p>
+			{/if}
 			<div class="row">
 				<p class="note">{total === 0 ? 'No clicks in this period.' : ''}</p>
 				{#if analyticsHref}<a class="link" href={analyticsHref}
@@ -127,15 +151,19 @@
 		/>
 		<div class="qr-body">
 			<h4>QR code</h4>
-			<p class="formats">
-				<a href="{qr}?format=png&size=1024&download=1" download>PNG</a> ·
-				<a href="{qr}?format=svg&download=1" download>SVG</a>
-			</p>
+			<!-- One download control: the format is its choice. -->
 			<div class="qr-actions">
+				<Menu
+					id="link-qr-download-{link.id}"
+					label="Download QR code"
+					text="Download"
+					icon="download"
+					caret="caretDown"
+					align="start"
+					items={qrDownloads}
+					class="qr-download"
+				/>
 				<Button size="sm" icon="copy" onclick={copyQr}>Copy QR</Button>
-				<Button size="sm" icon="download" href="{qr}?format=png&size=1024&download=1" download
-					>Download</Button
-				>
 			</div>
 			<p class="qr-status" role="status">{qrStatus}</p>
 		</div>
@@ -206,14 +234,10 @@
 		font-size: 1rem;
 		font-weight: 600;
 	}
-	.edit,
-	.link,
-	.formats a {
+	.link {
 		color: var(--color-link);
 	}
-	.edit:hover,
-	.link:hover,
-	.formats a:hover {
+	.link:hover {
 		text-decoration: underline;
 		text-underline-offset: 3px;
 	}
@@ -308,15 +332,27 @@
 		display: grid;
 		gap: 0.3rem;
 	}
-	.formats {
-		color: var(--color-lead);
-		font-size: 0.875rem;
-	}
 	.qr-actions {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.5rem;
 		margin-top: 0.35rem;
+	}
+	/* The download menu looks like the small button beside it. */
+	.qr-actions :global(.qr-download) {
+		width: auto;
+		min-height: 2.25rem;
+		gap: 0.5rem;
+		padding: 0 0.75rem;
+		border-color: var(--color-rule);
+		background: var(--color-paper);
+		font-size: 0.875rem;
+		font-weight: 600;
+	}
+	@media (pointer: coarse) {
+		.qr-actions :global(.qr-download) {
+			min-height: 2.75rem;
+		}
 	}
 	.qr-status {
 		color: var(--color-lead);

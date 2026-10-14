@@ -355,7 +355,7 @@
 	.columns,
 	li {
 		display: grid;
-		grid-template-columns: 2.5rem minmax(0, 1fr) 9rem 2.25rem;
+		grid-template-columns: 2.5rem minmax(0, 1fr) 9rem auto;
 		align-items: center;
 		gap: 0 1rem;
 	}
@@ -567,7 +567,7 @@
 			flex-basis: 100%;
 		}
 		li {
-			grid-template-columns: 2.25rem minmax(0, 1fr) 2.25rem;
+			grid-template-columns: 2.25rem minmax(0, 1fr) auto;
 			gap: 0.4rem 0.75rem;
 			padding-inline: 0.85rem 0.5rem;
 		}

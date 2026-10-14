@@ -100,7 +100,6 @@
 			</div>
 			<div class="short">
 				<a href={link.shortUrl} target="_blank" rel="noopener noreferrer">{shortName}</a>
-				<CopyButton text={link.shortUrl} label="Copy {shortName}" size="sm" />
 			</div>
 			<a class="destination" href={link.destination} target="_blank" rel="noopener noreferrer"
 				><span>{link.destination}</span><Glyph name="arrowUpRight" size={18} /></a

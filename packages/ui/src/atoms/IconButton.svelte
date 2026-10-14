@@ -49,6 +49,13 @@
 		width: 2.75rem;
 		height: 2.75rem;
 	}
+	/* Touch screens get a 44px target; the icon keeps its size. */
+	@media (pointer: coarse) {
+		.sm {
+			width: 2.75rem;
+			height: 2.75rem;
+		}
+	}
 	.outlined {
 		border-color: var(--color-rule);
 		background: var(--color-paper);

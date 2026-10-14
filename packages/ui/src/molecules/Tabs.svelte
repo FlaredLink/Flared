@@ -71,7 +71,23 @@
 		gap: 1.75rem;
 		overflow-x: auto;
 		box-shadow: inset 0 -1px var(--color-rule);
-		scrollbar-width: none;
+		scrollbar-width: thin;
+	}
+	/* A tab strip wider than its box fades at the right edge until it scrolls, so the hidden
+	   tabs are visible as more. A strip that fits has no scroll timeline and no fade. */
+	@supports (animation-timeline: scroll()) {
+		.tabs {
+			animation: more-tabs linear both;
+			animation-timeline: scroll(self inline);
+		}
+		@keyframes more-tabs {
+			from {
+				mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent);
+			}
+			to {
+				mask-image: none;
+			}
+		}
 	}
 	.sm {
 		gap: 1.25rem;

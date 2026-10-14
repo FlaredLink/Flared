@@ -82,6 +82,12 @@
 		padding: 0 0.85rem;
 		font-size: 0.875rem;
 	}
+	/* Touch screens get a 44px target. */
+	@media (pointer: coarse) {
+		.sm {
+			min-height: 2.75rem;
+		}
+	}
 	.md {
 		min-height: 2.75rem;
 		padding: 0 1.15rem;

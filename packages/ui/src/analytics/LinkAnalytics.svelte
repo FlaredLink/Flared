@@ -99,7 +99,7 @@
 	}
 
 	const peak = $derived(Math.max(0, ...analytics.days.map((day) => day.clicks)));
-	// A round top tick at or above the peak, close enough that the line fills the plot.
+	// A round top tick at or above the peak, close enough that the tallest bar fills the plot.
 	const scale = $derived.by(() => {
 		if (peak <= 1) return 1;
 		const power = 10 ** Math.floor(Math.log10(peak));
@@ -115,26 +115,17 @@
 		return Array.from({ length: count + 1 }, (_, index) => (scale / count) * index);
 	});
 
-	// The plot is 100 units high and one unit wide per day; the SVG stretches to the box.
-	const points = $derived.by(() => {
-		const values = analytics.days.map((day) => 100 - (day.clicks / scale) * 100);
-		const ys = values.length === 1 ? [values[0], values[0]] : values;
-		return ys.map((y, x) => `${x},${y.toFixed(2)}`);
-	});
-	const width = $derived(Math.max(1, points.length - 1));
-	const line = $derived(`M${points.join(' L')}`);
-	const area = $derived(`M0,100 L${points.join(' L')} L${width},100 Z`);
-	// Up to four day labels, evenly spaced, always with the first and the last day.
+	// Up to four day labels under their bars, always with the first and the last day. The first
+	// and last align with the plot's edges, so they cannot overflow it.
 	const labels = $derived.by(() => {
-		const last = analytics.days.length - 1;
+		const count = analytics.days.length;
+		const last = count - 1;
 		const indexes = [0, 1, 2, 3].map((step) => Math.round((step * last) / 3));
 		return [...new Set(indexes)].map((index) => ({
 			day: analytics.days[index].day,
-			left: last === 0 ? 0 : (index / last) * 100
+			left: index === 0 ? 0 : index === last ? 100 : ((index + 0.5) / count) * 100
 		}));
 	});
-	// Dots on every day stay readable up to about a month.
-	const showDots = $derived(analytics.days.length <= 31);
 
 	const countries = $derived(analytics.countries.filter((row) => row.value !== 'unknown').length);
 
@@ -179,7 +170,8 @@
 		return list;
 	});
 	const technologyTabs = $derived<TabItem[]>(
-		technology.map((item) => ({ value: item.id, label: item.title }))
+		// A short tab label, so three tabs fit in one of three columns.
+		technology.map((item) => ({ value: item.id, label: item.id === 'systems' ? 'OS' : item.title }))
 	);
 	let technologyTab = $state('devices');
 	const shownTechnology = $derived(
@@ -260,7 +252,7 @@
 
 <section class="analytics" aria-labelledby="{id}-heading">
 	<div class="bar">
-		<h2 id="{id}-heading" class="tab">Analytics</h2>
+		<h2 id="{id}-heading" class="heading">Analytics</h2>
 		<div class="period">
 			{#if ranges.length > 0}
 				<Select
@@ -288,6 +280,14 @@
 			<dd>{numbers.format(countries)}</dd>
 		</div>
 	</dl>
+	<p class="as-of">
+		<Glyph name="refresh" size={18} />
+		<span
+			>Updated {time.format(new Date(analytics.asOf))} UTC. New clicks can take up to five minutes to
+			appear.<span class="sep" aria-hidden="true">·</span>Link previews and known bots are not
+			counted.</span
+		>
+	</p>
 
 	{#if analytics.total === 0}
 		<EmptyState title="No clicks in this range yet" icon="chartLine">
@@ -311,27 +311,14 @@
 						<span class="grid" class:base={tick === 0} style:top="{100 - (tick / scale) * 100}%"
 						></span>
 					{/each}
-					<svg viewBox={`0 0 ${width} 100`} preserveAspectRatio="none">
-						<defs>
-							<linearGradient id={`fill-${id}`} x1="0" x2="0" y1="0" y2="1">
-								<stop offset="0" class="fill-top" />
-								<stop offset="1" class="fill-bottom" />
-							</linearGradient>
-						</defs>
-						<path d={area} fill={`url(#fill-${id})`} />
-						<path d={line} class="line" vector-effect="non-scaling-stroke" />
-					</svg>
-					<div
-						class="columns"
-						style:--half={analytics.days.length > 1 ? `${50 / (analytics.days.length - 1)}%` : '0%'}
-					>
+					<!-- One bar per day: daily bars keep a sparse count from looking like a trend. -->
+					<div class="columns">
 						{#each analytics.days as day (day.day)}
 							<div class="column">
-								<span
-									class="dot"
-									class:always={showDots}
-									style:bottom={`${(day.clicks / scale) * 100}%`}
-								></span>
+								{#if day.clicks > 0}<span
+										class="day-bar"
+										style:height={`${(day.clicks / scale) * 100}%`}
+									></span>{/if}
 								<span class="tip">{formatDay(day.day)}: {numbers.format(day.clicks)}</span>
 							</div>
 						{/each}
@@ -390,14 +377,6 @@
 			</section>
 		</div>
 	{/if}
-	<p class="as-of">
-		<Glyph name="refresh" size={18} />
-		<span
-			>Updated {time.format(new Date(analytics.asOf))} UTC. New clicks can take up to five minutes to
-			appear.<span class="sep" aria-hidden="true">·</span>Link previews and known bots are not
-			counted.</span
-		>
-	</p>
 </section>
 
 <style>
@@ -415,9 +394,8 @@
 		gap: 0.75rem 1.5rem;
 		box-shadow: inset 0 -1px var(--color-rule);
 	}
-	.tab {
-		padding: 0.5rem 0.25rem 0.6rem;
-		border-bottom: 2px solid var(--color-accent);
+	.heading {
+		padding: 0.5rem 0 0.6rem;
 		color: var(--color-strong);
 		font-size: 1.1875rem;
 		font-weight: 650;
@@ -470,7 +448,7 @@
 	}
 	.plot {
 		position: relative;
-		height: 13rem;
+		height: 10rem;
 		margin-left: 2.75rem;
 	}
 	.tick {
@@ -494,53 +472,27 @@
 	.grid.base {
 		border-top-style: solid;
 	}
-	svg {
-		position: absolute;
-		inset: 0;
-		width: 100%;
-		height: 100%;
-		overflow: visible;
-	}
-	.fill-top {
-		stop-color: var(--color-accent);
-		stop-opacity: 0.2;
-	}
-	.fill-bottom {
-		stop-color: var(--color-accent);
-		stop-opacity: 0;
-	}
-	.line {
-		fill: none;
-		stroke: var(--color-accent);
-		stroke-width: 2;
-		stroke-linejoin: round;
-		stroke-linecap: round;
-	}
-	/* One column per day, centred on its point: the first and last columns reach half a column
-	 * past the ends of the line. */
+	/* One column per day; the bar keeps 1px of surface on each side as the gap. */
 	.columns {
 		position: absolute;
 		inset: 0;
 		display: flex;
-		margin: 0 calc(-1 * var(--half));
 	}
 	.column {
 		position: relative;
 		flex: 1;
 		min-width: 0;
 	}
-	.dot {
+	.day-bar {
 		position: absolute;
-		left: 50%;
-		display: none;
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
+		right: 1px;
+		bottom: 0;
+		left: 1px;
+		min-height: 2px;
+		max-width: 2.5rem;
+		margin-inline: auto;
+		border-radius: 4px 4px 0 0;
 		background: var(--color-accent);
-		transform: translate(-50%, 50%);
-	}
-	.dot.always {
-		display: block;
 	}
 	.tip {
 		position: absolute;
@@ -558,12 +510,11 @@
 		pointer-events: none;
 		transform: translateX(-50%);
 	}
-	.column:hover .tip,
-	.column:hover .dot {
-		display: block;
+	.column:hover {
+		background: var(--color-hover);
 	}
-	.column:hover .dot {
-		box-shadow: 0 0 0 3px var(--color-accent-soft);
+	.column:hover .tip {
+		display: block;
 	}
 	.axis {
 		position: relative;
