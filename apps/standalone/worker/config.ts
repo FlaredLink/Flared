@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The deployment configuration of a standalone Worker, validated once per request. Missing or
-// invalid values fail closed with an operator page that names them and never shows a value.
+// The deployment configuration of a standalone Worker, validated once per request. Invalid
+// values fail closed with an operator page that names them and never shows a value. The
+// deployment may leave out APP_ORIGIN and AUTH_SECRET: the app origin is then the one stored at
+// setup, and the auth secret is one the Worker made and stored at its first request.
 import type { ClickEvent } from '@flared/contracts/analytics';
+import { installationAuthSecret } from '@flared/data/setup';
 import type { AnalyticsShards } from '@flared/server/shards';
 import { keyedHash } from '@flared/server/auth/limits';
 import type { ClickSink } from '@flared/server/redirect';
@@ -14,8 +17,8 @@ export interface StandaloneEnv {
 	ANALYTICS_1?: D1Database;
 	// The click Queue producer.
 	CLICKS?: { send(message: ClickEvent): Promise<unknown> };
-	// Secrets: the app origin (an https: origin with no path), the auth signing secret, and the
-	// one-time setup secret.
+	// Secrets: the app origin (an https: origin with no path) and the auth signing secret, both
+	// optional, and the setup secret that the owner types once at /setup.
 	APP_ORIGIN?: string;
 	AUTH_SECRET?: string;
 	SETUP_SECRET?: string;
@@ -23,9 +26,9 @@ export interface StandaloneEnv {
 	SOURCE_URL?: string;
 }
 
-export interface StandaloneConfig {
-	origin: string;
-	host: string;
+export interface DeploymentConfig {
+	// The APP_ORIGIN secret, or null when the deployment leaves it out.
+	configuredOrigin: string | null;
 	secret: string;
 	// Keys request budgets, derived from the auth secret.
 	rateLimitSecret: string;
@@ -36,6 +39,12 @@ export interface StandaloneConfig {
 	shards: AnalyticsShards;
 	analyticsShardId: string;
 	clicks: ClickSink | undefined;
+}
+
+// The configuration of one request, with the app origin resolved.
+export interface StandaloneConfig extends DeploymentConfig {
+	origin: string;
+	host: string;
 }
 
 export type ConfigProblem = 'APP_ORIGIN' | 'AUTH_SECRET' | 'DATABASES';
@@ -69,25 +78,40 @@ function sourceUrl(value: unknown): string {
 	}
 }
 
+// The stored secret never changes, so each isolate reads it once per database.
+const storedSecrets = new WeakMap<D1Database, Promise<string>>();
+
+function storedAuthSecret(identity: D1Database): Promise<string> {
+	let secret = storedSecrets.get(identity);
+	if (!secret) {
+		secret = installationAuthSecret(identity, Date.now());
+		storedSecrets.set(identity, secret);
+		secret.catch(() => storedSecrets.delete(identity));
+	}
+	return secret;
+}
+
+const isSet = (value: unknown): value is string => typeof value === 'string' && value !== '';
+
+// Rejects when the stored secret cannot be read or made.
 export async function readConfig(
 	env: StandaloneEnv
-): Promise<{ ok: true; config: StandaloneConfig } | { ok: false; problem: ConfigProblem }> {
-	const origin = parseAppOrigin(env.APP_ORIGIN);
-	if (!origin) return { ok: false, problem: 'APP_ORIGIN' };
-	const secret = env.AUTH_SECRET;
-	if (typeof secret !== 'string' || secret.length < 32 || secret.length > 256)
+): Promise<{ ok: true; config: DeploymentConfig } | { ok: false; problem: ConfigProblem }> {
+	const configuredOrigin = isSet(env.APP_ORIGIN) ? parseAppOrigin(env.APP_ORIGIN) : null;
+	if (isSet(env.APP_ORIGIN) && !configuredOrigin) return { ok: false, problem: 'APP_ORIGIN' };
+	if (isSet(env.AUTH_SECRET) && (env.AUTH_SECRET.length < 32 || env.AUTH_SECRET.length > 256))
 		return { ok: false, problem: 'AUTH_SECRET' };
 	const identity = database(env.IDENTITY);
 	const routing = database(env.ROUTING);
 	const analytics = database(env.ANALYTICS_1);
 	if (!identity || !routing || !analytics) return { ok: false, problem: 'DATABASES' };
-	const setup = typeof env.SETUP_SECRET === 'string' && env.SETUP_SECRET ? env.SETUP_SECRET : null;
+	const secret = isSet(env.AUTH_SECRET) ? env.AUTH_SECRET : await storedAuthSecret(identity);
+	const setup = isSet(env.SETUP_SECRET) ? env.SETUP_SECRET : null;
 	const queue = env.CLICKS;
 	return {
 		ok: true,
 		config: {
-			origin,
-			host: new URL(origin).host,
+			configuredOrigin,
 			secret,
 			rateLimitSecret: await keyedHash(secret, 'flared-standalone:rate-limit-key'),
 			setupSecret: setup,
@@ -106,4 +130,19 @@ export async function readConfig(
 					: undefined
 		}
 	};
+}
+
+// The APP_ORIGIN secret wins; then the origin stored at setup. Before setup, the request's own
+// origin: only a host that routes to this Worker reaches it, and setup still needs the setup
+// secret. Null without a request, or for a plain http: request.
+export function appOrigin(
+	config: DeploymentConfig,
+	stored: string | null,
+	request: URL | null
+): string | null {
+	return config.configuredOrigin ?? stored ?? (request ? parseAppOrigin(request.origin) : null);
+}
+
+export function withOrigin(config: DeploymentConfig, origin: string): StandaloneConfig {
+	return { ...config, origin, host: new URL(origin).host };
 }

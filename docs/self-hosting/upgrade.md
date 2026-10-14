@@ -54,6 +54,6 @@ GitHub turns off scheduled workflows in a repository with no activity for 60 day
 4. If the merge added files under `.github/workflows/`, remove them: they are Flared's own checks, which Deploy left out of your copy.
 5. Push. Workers Builds runs `bun run build`, then `bun run deploy`, which applies the migrations before it deploys the Worker.
 
-Secrets such as `APP_ORIGIN` stay as they are. If you changed the code, publish your version and set `SOURCE_URL` to it, so the "Source code" link offers your users the code they use (AGPL section 13).
+Secrets such as `APP_ORIGIN` stay as they are. Since v0.1.1, `APP_ORIGIN` and `AUTH_SECRET` are optional, but keep them if your copy has them: without `AUTH_SECRET`, the Worker makes a new key and everyone must sign in again. If you changed the code, publish your version and set `SOURCE_URL` to it, so the "Source code" link offers your users the code they use (AGPL section 13).
 
 Before an upgrade with migrations, note the time for a [Time Travel restore](backups.md).

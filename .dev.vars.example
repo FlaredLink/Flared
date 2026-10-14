@@ -1,12 +1,11 @@
-# Secrets of a standalone Flared Worker. Deploy on Cloudflare asks for each of them.
-# Generate each secret with: openssl rand -base64 48
-
-# The address of the app, with https:// and no path, such as
-# https://flared.YOUR-SUBDOMAIN.workers.dev, where YOUR-SUBDOMAIN is the workers.dev
-# subdomain of your Cloudflare account.
-APP_ORIGIN=
-# Signs sessions. 32 to 256 characters. Never reuse SETUP_SECRET.
-AUTH_SECRET=
-# Proves you own this deployment when you create the owner at /setup. At least 32 bytes.
-# Delete it after setup; setup never opens again.
+# The secret that Deploy on Cloudflare asks for. Choose any value of at least 16 characters and
+# keep it until you have typed it once at /setup, where it proves you own this deployment.
+# Setup closes for good after the owner exists.
 SETUP_SECRET=
+
+# Optional, so Deploy on Cloudflare does not ask for them. Add them in the Cloudflare dashboard
+# only when you need them:
+# APP_ORIGIN: the app address, with https:// and no path. Without it, the app uses the address
+#   where you did the setup. Set it to move the app; see docs/self-hosting/origin.md.
+# AUTH_SECRET: signs sessions, 32 to 256 characters. Without it, the Worker makes its own and
+#   keeps it in the identity database.

@@ -37,14 +37,14 @@ function page(title: string, paragraphs: string[], status = 503): Response {
 export function configurationPage(problem: ConfigProblem, request: Request): Response {
 	const suggested = new URL(request.url).origin;
 	if (problem === 'APP_ORIGIN')
-		return page('Set APP_ORIGIN to finish the deployment', [
-			'This Flared installation does not know its own address yet. In the Cloudflare dashboard, open this Worker, then <b>Settings → Variables and Secrets</b>, and add the secret <code>APP_ORIGIN</code>.',
-			`If people will use this address, the value is <code>${escape(suggested)}</code>. Use <code>https://</code> and no path.`,
-			'Then deploy again. See docs/self-hosting/deploy.md in the repository.'
+		return page('APP_ORIGIN is not a valid address', [
+			'The secret <code>APP_ORIGIN</code> of this Worker must be an address with <code>https://</code> and no path. In the Cloudflare dashboard, open this Worker, then <b>Settings → Variables and Secrets</b>.',
+			`If people will use this address, set the value to <code>${escape(suggested)}</code>. You can also delete the secret: the app then uses the address where you did the setup.`,
+			'Then deploy again. See docs/self-hosting/origin.md in the repository.'
 		]);
 	if (problem === 'AUTH_SECRET')
-		return page('Set AUTH_SECRET to finish the deployment', [
-			'Add the secret <code>AUTH_SECRET</code> to this Worker: a random value of 32 to 256 characters. Do not reuse <code>SETUP_SECRET</code>.',
+		return page('AUTH_SECRET is not valid', [
+			'The secret <code>AUTH_SECRET</code> of this Worker must have 32 to 256 characters. Do not reuse <code>SETUP_SECRET</code>. You can also delete it: the Worker then makes its own secret, and everyone must sign in again.',
 			'Then deploy again. See docs/self-hosting/deploy.md in the repository.'
 		]);
 	return page('The databases are not bound', [

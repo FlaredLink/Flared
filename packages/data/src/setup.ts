@@ -231,3 +231,26 @@ export async function moveAppOrigin(
 	]);
 	return results.at(-1)?.meta.changes === 1;
 }
+
+// The auth secret of a deployment without AUTH_SECRET (migration 0019). The first request makes
+// one; when two first requests race, both read the row that won.
+export async function installationAuthSecret(db: D1Database, now: number): Promise<string> {
+	const read = async () => {
+		const row = await db
+			.prepare('SELECT auth_secret FROM installation_key WHERE id = 1')
+			.first<{ auth_secret: unknown }>();
+		return row ? text(row.auth_secret, 'auth secret') : null;
+	};
+	const stored = await read();
+	if (stored) return stored;
+	const bytes = crypto.getRandomValues(new Uint8Array(48));
+	await db
+		.prepare(
+			'INSERT INTO installation_key (id, auth_secret, created_at) VALUES (1, ?, ?) ON CONFLICT(id) DO NOTHING'
+		)
+		.bind(btoa(String.fromCharCode(...bytes)), now)
+		.run();
+	const kept = await read();
+	if (!kept) throw new Error('Installation key missing');
+	return kept;
+}

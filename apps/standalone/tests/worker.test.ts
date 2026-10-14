@@ -90,8 +90,8 @@ beforeAll(async () => {
 });
 
 describe('configuration gate', () => {
-	it('names a missing or invalid secret and suggests the address only', async () => {
-		for (const value of [undefined, 'https://flared.example.workers.dev/app', 'http://x.example']) {
+	it('names an invalid secret and suggests the address only', async () => {
+		for (const value of ['https://flared.example.workers.dev/app', 'http://x.example', 'pending']) {
 			const response = await call('https://seen.example/app', {}, { APP_ORIGIN: value });
 			expect(response.status).toBe(503);
 			const text = await response.text();

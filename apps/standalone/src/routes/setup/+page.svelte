@@ -28,10 +28,10 @@
 			'Setup has already started with another username or password. Use the ones you entered first.',
 		SETUP_CLOSED: 'This installation is already set up. Sign in instead.',
 		SETUP_UNAVAILABLE:
-			'Setup is not available. Check that SETUP_SECRET has at least 32 bytes and differs from AUTH_SECRET, then try again. The Worker log names the problem.',
+			'Setup is not available. Check that SETUP_SECRET has at least 16 characters and differs from AUTH_SECRET, then try again. The Worker log names the problem.',
 		INVALID_REQUEST:
 			'Check the fields: a username of 3 to 30 letters, digits, dots, or underscores, a password of 12 to 128 characters, and a workspace name.',
-		INVALID_ORIGIN: 'Open this page at the address in APP_ORIGIN and try again.'
+		INVALID_ORIGIN: 'Open this page at the app address and try again.'
 	};
 
 	async function submit() {
@@ -160,10 +160,6 @@
 						The app and your short links use <strong>{data.host}</strong>. You can add your own
 						domain later in Domains.
 					</p>
-					<p>
-						Delete the <code>SETUP_SECRET</code> secret from the Worker now. Setup never opens again,
-						so you no longer need it.
-					</p>
 				</li>
 				<li>
 					<h2>Updates</h2>
@@ -233,10 +229,7 @@
 		<section class="card" aria-labelledby="done-heading">
 			<p class="eyebrow">Flared</p>
 			<h1 id="done-heading">This installation is set up</h1>
-			<p>
-				Sign in with the owner’s username and password. If the <code>SETUP_SECRET</code> secret is still
-				set, delete it; setup never opens again.
-			</p>
+			<p>Sign in with the owner’s username and password. Setup never opens again.</p>
 			<a class="button primary" href={appRoutes.login}>Sign in</a>
 		</section>
 	{:else if data.state === 'misconfigured'}
@@ -249,8 +242,8 @@
 			<p class="eyebrow">Set up Flared</p>
 			<h1 id="setup-heading">Create the owner</h1>
 			<p>
-				Enter the <code>SETUP_SECRET</code> you set when you deployed. It proves this deployment is
-				yours.
+				Enter the setup secret (<code>SETUP_SECRET</code>) you chose when you deployed. It proves
+				this deployment is yours. This address becomes the app address.
 				{#if data.state === 'initializing'}Setup started before; enter the same username and
 					password to finish it.{/if}
 			</p>
@@ -338,7 +331,6 @@
 		font-size: 1rem;
 		margin-bottom: 0.3rem;
 	}
-	.wizard li p + p,
 	.wizard li p + a {
 		margin-top: 0.5rem;
 	}

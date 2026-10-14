@@ -47,14 +47,8 @@
 	],
 	"cloudflare": {
 		"bindings": {
-			"APP_ORIGIN": {
-				"description": "The app address with no path or trailing slash: https://flared.YOUR-SUBDOMAIN.workers.dev, where YOUR-SUBDOMAIN is the workers.dev subdomain of your Cloudflare account. Use the Worker name in place of flared if you change it. Not sure? Leave it empty: after the deploy, the Worker address shows the exact value to set."
-			},
-			"AUTH_SECRET": {
-				"description": "A random value of 32 to 256 characters that signs sessions. Generate one at https://flared.page/secrets or with: openssl rand -base64 48"
-			},
 			"SETUP_SECRET": {
-				"description": "A different random value of at least 32 bytes, from the same page. You type it once at /setup to create the owner; delete it afterwards."
+				"description": "Choose any value of at least 16 characters and keep it for a few minutes. After the deploy, open the Worker address and type it once at /setup to prove this deployment is yours."
 			},
 			"IDENTITY": {
 				"description": "Accounts, sessions, the workspace, and its limits."

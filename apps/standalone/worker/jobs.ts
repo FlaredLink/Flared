@@ -19,7 +19,7 @@ import {
 import { measureShards } from '@flared/server/operations';
 import { retryProjections } from '@flared/server/tenancy';
 import { checkWaitingDomains, createWorkerDomainProvider } from '@flared/server/worker-domains';
-import type { StandaloneConfig } from './config';
+import type { DeploymentConfig } from './config';
 import { checkForUpdates, defaultFeed, type FeedOptions } from './updates';
 
 // See triggers.crons in the root wrangler.jsonc.
@@ -52,7 +52,10 @@ export const jobs = createJobLedger<JobName>({
 // The frequent run must have finished this recently for /healthz to answer 200.
 const healthyWithinMs = 30 * 60 * 1000;
 
-export function deletionDependencies(config: StandaloneConfig): DeletionDependencies {
+// The app host is null only before setup, when no workspace can be deleted.
+export type JobConfig = DeploymentConfig & { host: string | null };
+
+export function deletionDependencies(config: JobConfig): DeletionDependencies {
 	// No email in this edition, and no records of its own beyond the core tables.
 	return {
 		identity: config.identity,
@@ -60,29 +63,29 @@ export function deletionDependencies(config: StandaloneConfig): DeletionDependen
 		shards: config.shards,
 		domains: {
 			provider: createWorkerDomainProvider({ routing: config.routing }),
-			reservedHostnames: [config.host]
+			reservedHostnames: config.host ? [config.host] : []
 		}
 	};
 }
 
-async function retryPolicyProjections(config: StandaloneConfig, now: number): Promise<void> {
+async function retryPolicyProjections(config: JobConfig, now: number): Promise<void> {
 	const stores = { routing: config.routing, analytics: config.shards };
 	const result = await retryProjections(config.identity, stores, now, 100);
 	if (result.failed > 0) throw new Error('Policy projections failed');
 }
 
-async function runAccountDeletions(config: StandaloneConfig): Promise<void> {
+async function runAccountDeletions(config: JobConfig): Promise<void> {
 	const result = await runDeletions(deletionDependencies(config));
 	if (result.failed > 0) throw new Error('A deletion step failed');
 }
 
-async function recordClickNotices(config: StandaloneConfig, now: number): Promise<void> {
+async function recordClickNotices(config: JobConfig, now: number): Promise<void> {
 	const result = await reconcileClickNotices(config.identity, config.shards, now);
 	if (result.failed > 0) throw new Error('Click notices failed');
 }
 
 // One size sample of the analytics database an hour, from the first frequent run of the hour.
-async function sampleShards(config: StandaloneConfig, scheduledTime: number): Promise<void> {
+async function sampleShards(config: JobConfig, scheduledTime: number): Promise<void> {
 	if (new Date(scheduledTime).getUTCMinutes() >= 10) return;
 	const measured = await measureShards(config.identity, config.shards, scheduledTime);
 	if (measured.some((shard) => shard.sample === null)) throw new Error('Shard sampling failed');
@@ -90,7 +93,7 @@ async function sampleShards(config: StandaloneConfig, scheduledTime: number): Pr
 
 // Each check is one fetch and a few queries; the bound keeps the run inside the Free plan's
 // per-invocation limits together with the other frequent jobs.
-async function checkDomains(config: StandaloneConfig, now: number): Promise<void> {
+async function checkDomains(config: JobConfig, now: number): Promise<void> {
 	const result = await checkWaitingDomains({
 		routing: config.routing,
 		provider: createWorkerDomainProvider({ routing: config.routing, now: () => now }),
@@ -100,30 +103,30 @@ async function checkDomains(config: StandaloneConfig, now: number): Promise<void
 	if (result.failed > 0) throw new Error('Domain checks failed');
 }
 
-async function cleanupAuth(config: StandaloneConfig, now: number): Promise<void> {
+async function cleanupAuth(config: JobConfig, now: number): Promise<void> {
 	await cleanupOwnerAuthRecords(config.identity, now, 1000);
 	await deleteExpiredOAuthRecords(config.identity, now, 1000);
 	await deleteExpiredApiTokens(config.identity, now, 1000);
 }
 
-async function maintainRouting(config: StandaloneConfig, now: number): Promise<void> {
+async function maintainRouting(config: JobConfig, now: number): Promise<void> {
 	await deleteExpiredCreationRecords(config.routing, now, 1000);
 	await deleteExpiredDomainChallenges(config.routing, now, 1000);
 }
 
 // Removes aggregates past the retention and receipts past the replay window, in bounded rounds.
-async function purgeAnalytics(config: StandaloneConfig, now: number): Promise<void> {
+async function purgeAnalytics(config: JobConfig, now: number): Promise<void> {
 	for (const db of Object.values(config.shards))
 		for (let round = 0; round < 20; round += 1)
 			if ((await purgeExpired(db, now, 1000)).deleted === 0) break;
 }
 
-async function limitNotices(config: StandaloneConfig, now: number): Promise<void> {
+async function limitNotices(config: JobConfig, now: number): Promise<void> {
 	await reconcileLimitNotices(config.identity, config.routing, now);
 	await cleanupNotices(config.identity, now);
 }
 
-async function purgeOperationRecords(config: StandaloneConfig, now: number): Promise<void> {
+async function purgeOperationRecords(config: JobConfig, now: number): Promise<void> {
 	for (let round = 0; round < 20; round += 1)
 		if ((await purgeOperations(config.identity, now, 1000)).deleted === 0) break;
 	for (let round = 0; round < 20; round += 1)
@@ -133,7 +136,7 @@ async function purgeOperationRecords(config: StandaloneConfig, now: number): Pro
 export async function runScheduled(
 	cron: string,
 	scheduledTime: number,
-	config: StandaloneConfig,
+	config: JobConfig,
 	feed: FeedOptions = defaultFeed
 ): Promise<void> {
 	const now = Date.now();
@@ -162,7 +165,7 @@ export async function runScheduled(
 }
 
 // For an outside uptime monitor: did the frequent run finish in the last 30 minutes?
-export async function handleHealthz(request: Request, config: StandaloneConfig): Promise<Response> {
+export async function handleHealthz(request: Request, config: JobConfig): Promise<Response> {
 	if (request.method !== 'GET' && request.method !== 'HEAD')
 		return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } });
 	const now = Date.now();

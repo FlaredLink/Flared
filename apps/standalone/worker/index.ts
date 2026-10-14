@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The one Worker of a standalone installation: app pages, API, auth, OAuth, MCP, short-link
-// redirects, the click Queue, and the scheduled jobs. It decides by host. The app host
-// (APP_ORIGIN) serves the reserved paths; every other host and every other path is a short
-// link. No request header chooses the app origin.
+// redirects, the click Queue, and the scheduled jobs. It decides by host. The app host (the
+// APP_ORIGIN secret, or else the origin stored at setup) serves the reserved paths; every other
+// host and every other path is a short link. Once setup starts, no request chooses the app
+// origin.
 import sveltekit from 'sveltekit-worker';
 import { isReservedPath } from '@flared/contracts/reserved';
 import { workspaceHeader } from '@flared/contracts/workspace';
@@ -37,7 +38,13 @@ import {
 import { handleSetup } from '@flared/server/setup';
 import type { AuthService } from '@flared/server/web';
 import { forwardAuthRoute, sharedAuthMethods } from '@flared/server/web/auth';
-import { readConfig, type StandaloneConfig, type StandaloneEnv } from './config';
+import {
+	appOrigin,
+	readConfig,
+	withOrigin,
+	type StandaloneConfig,
+	type StandaloneEnv
+} from './config';
 import { deletionDependencies, handleHealthz, runScheduled } from './jobs';
 import { handleLimits } from './limits';
 import { configurationPage, misconfiguredPage, originMovePage } from './pages';
@@ -395,17 +402,29 @@ function page(
 
 export default {
 	async fetch(request, env, ctx) {
-		const loaded = await readConfig(env);
+		let loaded: Awaited<ReturnType<typeof readConfig>>;
+		try {
+			loaded = await readConfig(env);
+		} catch {
+			console.error(JSON.stringify({ event: 'auth_secret_unavailable' }));
+			return unavailable();
+		}
 		if (!loaded.ok) return configurationPage(loaded.problem, request);
-		const { config } = loaded;
 		const url = new URL(request.url);
 		let status: InstallationStatus;
 		try {
-			status = await readInstallationStatus(config.identity);
+			status = await readInstallationStatus(loaded.config.identity);
 		} catch {
 			console.error(JSON.stringify({ event: 'installation_status_unavailable' }));
 			return unavailable();
 		}
+		const origin = appOrigin(loaded.config, status.appOrigin, url);
+		// Only a plain http: request before setup has no origin to use.
+		if (!origin) {
+			url.protocol = 'https:';
+			return Response.redirect(url.toString(), 308);
+		}
+		const config = withOrigin(loaded.config, origin);
 		const site = new Installation(config, status);
 		if (url.host === config.host) return appHost(request, url, env, ctx, site);
 		// Every other host serves short links only: no auth route, cookie, or app page. The one
@@ -418,7 +437,13 @@ export default {
 	async scheduled(controller, env) {
 		const loaded = await readConfig(env);
 		if (!loaded.ok) throw new Error(`Scheduled jobs need ${loaded.problem}`);
-		await runScheduled(controller.cron, controller.scheduledTime, loaded.config);
+		const { config } = loaded;
+		const status = await readInstallationStatus(config.identity);
+		const origin = appOrigin(config, status.appOrigin, null);
+		await runScheduled(controller.cron, controller.scheduledTime, {
+			...config,
+			host: origin ? new URL(origin).host : null
+		});
 	},
 
 	// Click events from the redirect handler, and those that ran out of retries.

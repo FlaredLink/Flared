@@ -1,14 +1,14 @@
 # Move the app to another address
 
-The app address comes from the `APP_ORIGIN` secret. It sets the cookie host, the allowed `Origin`, the passkey relying party, the OAuth issuer, and the MCP endpoint.
+The app address is the address where you did the setup, or the `APP_ORIGIN` secret when you set one. It sets the cookie host, the allowed `Origin`, the passkey relying party, the OAuth issuer, and the MCP endpoint.
 
 ## Steps
 
 1. Add the new hostname as a Custom Domain of the Worker: **Workers & Pages → flared → Settings → Domains & Routes → Add → Custom Domain**. The zone must be on Cloudflare in the same account.
-2. Change the `APP_ORIGIN` secret to the new address, such as `https://links.example.com`. A secret change deploys a new version.
+2. Set the `APP_ORIGIN` secret to the new address, such as `https://links.example.com`: **Settings → Variables and Secrets → Add**, type **Secret**. A secret change deploys a new version.
 3. Open `https://links.example.com/app/login` and sign in with your username and password.
 
-Until that sign-in, the new address shows only the sign-in page and a notice about the move. A wrong value loses nothing: set `APP_ORIGIN` back and deploy again.
+Until that sign-in, the new address shows only the sign-in page and a notice about the move. A wrong value loses nothing: set `APP_ORIGIN` back, or delete it if you had none, and deploy again.
 
 ## What the move ends
 

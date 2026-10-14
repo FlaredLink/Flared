@@ -32,6 +32,21 @@
 			"binding": "RECOVERY_ANALYTICS",
 			"database_name": "recovery-analytics",
 			"database_id": "00000000-0000-0000-0000-000000000106"
+		},
+		{
+			"binding": "DEFAULTS_IDENTITY",
+			"database_name": "defaults-identity",
+			"database_id": "00000000-0000-0000-0000-000000000107"
+		},
+		{
+			"binding": "DEFAULTS_ROUTING",
+			"database_name": "defaults-routing",
+			"database_id": "00000000-0000-0000-0000-000000000108"
+		},
+		{
+			"binding": "DEFAULTS_ANALYTICS",
+			"database_name": "defaults-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000109"
 		}
 	]
 }

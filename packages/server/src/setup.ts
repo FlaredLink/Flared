@@ -36,7 +36,9 @@ import { finalizeAuthResponse } from './web/forward';
 
 export { readSetupState, type SetupState };
 
-export const minSetupSecretBytes = 32;
+// The owner chooses the setup secret and types it again at /setup. Setup allows 30 attempts an
+// hour in all, so 16 characters resist guessing for the short time before setup.
+export const minSetupSecretBytes = 16;
 const maxWorkspaceName = 64;
 
 export interface SetupOptions {
@@ -120,7 +122,7 @@ export async function handleSetup(request: Request, options: SetupOptions): Prom
 			console.error(
 				JSON.stringify({
 					event: 'setup_secret_unusable',
-					detail: `Set SETUP_SECRET to a random value of at least ${minSetupSecretBytes} bytes that differs from AUTH_SECRET.`
+					detail: `Set SETUP_SECRET to a value of at least ${minSetupSecretBytes} characters that differs from AUTH_SECRET.`
 				})
 			);
 			return failure('SETUP_UNAVAILABLE', 503);
