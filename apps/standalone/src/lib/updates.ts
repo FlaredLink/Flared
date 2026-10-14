@@ -91,3 +91,29 @@ export function toUpdateState(value: unknown): UpdateState | null {
 		latest: body.latest === null ? null : parseRelease(body.latest)
 	};
 }
+
+// The operator's copy as owner/name, from what the owner types or a GitHub URL; null otherwise.
+export function parseRepository(value: string): string | null {
+	const name = value
+		.trim()
+		.replace(/^https:\/\/github\.com\//, '')
+		.replace(/\/$/, '')
+		.replace(/\.git$/, '');
+	return /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/.test(name) &&
+		!/\/\.{1,2}$/.test(name)
+		? name
+		: null;
+}
+
+export const workflowPath = '.github/workflows/flared-upgrade.yml';
+
+// GitHub's pages for the one-time workflow setup. The new-file page opens with the path and
+// content filled in, on main, the branch Deploy on Cloudflare creates; the owner commits it.
+export function workflowLinks(repository: string, workflow: string) {
+	const base = `https://github.com/${repository}`;
+	return {
+		file: `${base}/new/main?filename=${encodeURIComponent(workflowPath)}&value=${encodeURIComponent(workflow)}`,
+		actions: `${base}/settings/actions`,
+		variable: `${base}/settings/variables/actions/new`
+	};
+}

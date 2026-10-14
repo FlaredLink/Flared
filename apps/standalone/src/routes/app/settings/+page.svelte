@@ -25,7 +25,8 @@
 	import { authErrorMessage, postJson } from '$lib/auth-client';
 	import { limitFields, toLimitsView, type Limits } from '$lib/limits';
 	import { appRoutes } from '$lib/routes';
-	import { availableRelease } from '$lib/updates';
+	import { defaultSourceUrl } from '$lib/source';
+	import { availableRelease, parseRepository, workflowLinks, workflowPath } from '$lib/updates';
 	import upgradeWorkflow from '../../../../../../deploy/flared-upgrade.yml?raw';
 	import type { PageData } from './$types';
 
@@ -168,6 +169,14 @@
 	const upgradeCommands = $derived(
 		release ? `git fetch upstream --tags\ngit merge v${release.version}\ngit push` : ''
 	);
+	// An operator who publishes their copy as SOURCE_URL needs not type it.
+	let repository = $state(
+		page.data.sourceUrl === defaultSourceUrl ? '' : (parseRepository(page.data.sourceUrl) ?? '')
+	);
+	const links = $derived.by(() => {
+		const name = parseRepository(repository);
+		return name ? workflowLinks(name, upgradeWorkflow) : null;
+	});
 	let updatesEnabled = $state(false);
 	let updatesPending = $state(false);
 	let updatesError = $state('');
@@ -526,26 +535,56 @@
 			<summary>Upgrade with a GitHub workflow</summary>
 			<p>
 				The workflow checks for a new release each day. It opens a pull request that merges the
-				release into your repository, or an issue when you must act. Set it up once:
+				release into your repository, or an issue when you must act. Deploy on Cloudflare leaves
+				workflows out of your copy, so set it up once:
 			</p>
+			<div class="field">
+				<label for="repository">Your repository on GitHub</label>
+				<input
+					id="repository"
+					bind:value={repository}
+					placeholder="owner/flared"
+					autocomplete="off"
+					autocapitalize="none"
+					spellcheck="false"
+				/>
+				<small>The owner and name of your copy, such as <code>owner/flared</code>.</small>
+			</div>
 			<ol>
 				<li>
-					Add this file to your repository as <code>.github/workflows/flared-upgrade.yml</code>.
+					{#if links}
+						<a href={links.file} target="_blank" rel="noopener">Add the workflow file on GitHub</a>.
+						GitHub opens <code>{workflowPath}</code> with its content filled in; select
+						<strong>Commit changes</strong>.
+					{:else}
+						Add the workflow file to your repository as <code>{workflowPath}</code>.
+					{/if}
 				</li>
 				<li>
-					In the repository settings, open <strong>Actions → General</strong> and allow GitHub Actions
-					to create and approve pull requests.
+					{#if links}
+						Open the <a href={links.actions} target="_blank" rel="noopener">Actions settings</a>.
+					{:else}
+						In the repository settings, open <strong>Actions → General</strong>.
+					{/if}
+					Under <strong>Workflow permissions</strong>, select
+					<strong>Allow GitHub Actions to create and approve pull requests</strong>, then
+					<strong>Save</strong>.
 				</li>
 				<li>
 					Optional: add the repository variable <code>FLARED_AUTO_UPGRADE</code> with the value
-					<code>true</code>. The workflow then merges each upgrade that merges cleanly and is not
-					marked breaking, and Workers Builds deploys it.
+					<code>true</code>{#if links}
+						on the <a href={links.variable} target="_blank" rel="noopener">new variable page</a
+						>{/if}. The workflow then merges each upgrade that merges cleanly and is not marked
+					breaking, and Workers Builds deploys it.
 				</li>
 			</ol>
-			<div class="commands">
-				<pre><code>{upgradeWorkflow}</code></pre>
-				<CopyButton text={upgradeWorkflow} label="Copy the workflow" kind="button" size="sm" />
-			</div>
+			<details class="file">
+				<summary>Show the workflow file</summary>
+				<div class="commands">
+					<pre><code>{upgradeWorkflow}</code></pre>
+					<CopyButton text={upgradeWorkflow} label="Copy the workflow" kind="button" size="sm" />
+				</div>
+			</details>
 			<p>
 				Merge its pull requests with <strong>Create a merge commit</strong>. A squash or rebase
 				merge drops the Flared history that the next upgrade needs.
@@ -598,6 +637,9 @@
 	.workflow {
 		display: grid;
 		gap: 0.75rem;
+	}
+	.workflow .file summary {
+		font-weight: 500;
 	}
 	.workflow summary {
 		color: var(--color-strong);

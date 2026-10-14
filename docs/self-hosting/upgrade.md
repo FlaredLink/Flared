@@ -10,7 +10,7 @@ The app can tell the owner when a new release is out. The setup wizard asks once
 
 The workflow [`deploy/flared-upgrade.yml`](../../deploy/flared-upgrade.yml) runs in your copy each day. It merges the newest release into the branch `flared-upgrade/vX.Y.Z` and opens a pull request with the release notes and the list of database changes. Deploy on Cloudflare leaves workflows out of your copy, so add it once:
 
-1. Add the file to your repository as `.github/workflows/flared-upgrade.yml`. Settings → Updates in the app shows it with a copy button.
+1. Add the file to your repository as `.github/workflows/flared-upgrade.yml`. In the app, Settings → Updates asks for your repository's name and opens GitHub's new-file page with the file filled in; select **Commit changes**. It also shows the file with a copy button.
 2. In the repository settings, open **Actions → General** and allow GitHub Actions to create and approve pull requests.
 3. Optional: add the repository variable `FLARED_AUTO_UPGRADE` with the value `true` (**Settings → Secrets and variables → Actions → Variables**). The workflow then merges each pull request whose merge is clean, unless a release in it is marked breaking. The push to your main branch makes Workers Builds deploy.
 
