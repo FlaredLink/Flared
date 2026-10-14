@@ -108,6 +108,7 @@ import {
 	type LinkInviteSettings
 } from './members';
 import { resolveTenant } from './tenancy';
+import { linkChannel, recordProductEvent, type ProductEvents } from './events';
 import {
 	addDomain,
 	checkDomain,
@@ -187,7 +188,16 @@ export interface ApiDependencies {
 	// Hands the workspace to the member who accepts the owner's offer, with the edition's own
 	// rules. Without it, the core transfer runs with none.
 	transferOwnership?: (input: TransferInput) => Promise<OwnershipTransfer>;
+	// The edition's product analytics. Without it, no event is recorded.
+	events?: ProductEvents;
 }
+
+// The limit that each plan-limit error stands for, for the limit_reached event.
+const limitOfError: Partial<Record<ErrorCode, 'links' | 'members' | 'domains'>> = {
+	PLAN_LIMIT_REACHED: 'links',
+	MEMBER_LIMIT_REACHED: 'members',
+	DOMAIN_LIMIT_REACHED: 'domains'
+};
 
 // invalid: no open offer names the member. limit: the member cannot own this workspace now, for
 // the reason in message.
@@ -312,8 +322,26 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	const domainSettings: DomainSettings = dependencies.domains ?? { reservedHostnames: [] };
 	const app = new Hono<{ Variables: Variables }>().basePath('/v1');
 
-	app.onError((error, context) => {
+	// A limit refusal is a product event; the refusal itself does not depend on it.
+	async function recordLimit(
+		context: ApiContext,
+		limit: 'links' | 'members' | 'domains'
+	): Promise<void> {
+		const principal = context.get('principal');
+		const tenantId = context.get('tenantId');
+		if (principal && tenantId)
+			await recordProductEvent(dependencies.events, {
+				type: 'limit_reached',
+				userId: principal.userId,
+				tenantId,
+				limit
+			});
+	}
+
+	app.onError(async (error, context) => {
 		const requestId = context.get('requestId') ?? crypto.randomUUID();
+		const limit = error instanceof ApiError ? limitOfError[error.code] : undefined;
+		if (limit) await recordLimit(context, limit);
 		if (error instanceof ApiError)
 			return failure(
 				error.code,
@@ -435,8 +463,17 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			);
 		const input = parseCreateLink(await readJson(context.req.raw));
 		const result = await createLink(routing, { tenantId, key, input, requestId, now: time });
-		if (result.status === 201 && !result.replayed)
+		if (result.status === 201 && !result.replayed) {
 			await noteLimitUsage(identity, routing, tenantId, time);
+			const { principal } = context.var;
+			await recordProductEvent(dependencies.events, {
+				type: 'link_created',
+				userId: principal.userId,
+				tenantId,
+				channel: linkChannel(principal, context.req.header('user-agent') ?? null)
+			});
+		}
+		if (result.status === 403 && !result.replayed) await recordLimit(context, 'links');
 		return respond(result);
 	});
 

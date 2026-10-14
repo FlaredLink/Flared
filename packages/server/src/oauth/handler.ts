@@ -14,6 +14,7 @@ import { keyedHash } from '../auth/limits';
 import type { IdentityRule } from '../auth/session';
 import { createMetadataFetch } from './provider';
 import { createOAuthRoutes } from './routes';
+import type { ProductEvents } from '../events';
 
 export const loginPath = '/app/login';
 export const consentPath = '/app/oauth/consent';
@@ -28,6 +29,8 @@ export interface OAuthSite {
 	resource: string;
 	// Who may hold a session in this edition.
 	identityRule: IdentityRule;
+	// The edition's product analytics. Without it, no event is recorded.
+	events?: ProductEvents;
 }
 
 export function oauthUnavailable(): Response {
@@ -60,7 +63,8 @@ export function handleOAuth(request: Request, site: OAuthSite, identity: D1Datab
 			fetchClientMetadata: createMetadataFetch()
 		},
 		sourceKey: (incoming) => sourceKey(site.rateLimitSecret, incoming),
-		identityRule: site.identityRule
+		identityRule: site.identityRule,
+		events: site.events
 	}).fetch(request);
 }
 
@@ -124,7 +128,7 @@ export function aiCatalogDocument(
 // their servers without an Origin. api builds the product API for the OAuth principal.
 export async function handleMcp(
 	request: Request,
-	site: Pick<OAuthSite, 'origin' | 'resource'>,
+	site: Pick<OAuthSite, 'origin' | 'resource' | 'events'>,
 	identity: D1Database,
 	api: McpEndpointOptions['api']
 ): Promise<Response> {
@@ -134,7 +138,8 @@ export async function handleMcp(
 			resource: site.resource,
 			issuer: site.origin,
 			allowedOrigins: [site.origin],
-			api
+			api,
+			events: site.events
 		})(request);
 	} catch {
 		console.error(JSON.stringify({ event: 'mcp_request_failed' }));

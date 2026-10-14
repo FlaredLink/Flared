@@ -10,6 +10,7 @@ import { countRegistration } from '@flared/data/oauth';
 import { listWorkspaces } from '@flared/data/tenancy';
 import { authResponseHeaders } from '../web/forward';
 import { readPrincipal, type IdentityRule } from '../auth/session';
+import { recordProductEvent, type ProductEvents } from '../events';
 import { resolveTenant } from '../tenancy';
 import { createOAuthServer, type OAuthServer, type OAuthServerConfig } from './provider';
 
@@ -25,6 +26,8 @@ export interface OAuthRouteDependencies {
 	sourceKey(request: Request): Promise<string | null>;
 	// Who may hold a session in this edition.
 	identityRule: IdentityRule;
+	// The edition's product analytics. Without it, no approval is recorded.
+	events?: ProductEvents;
 	now?: () => number;
 }
 
@@ -262,6 +265,24 @@ export function createOAuthRoutes(dependencies: OAuthRouteDependencies) {
 		return respond(Response.json(body));
 	}
 
+	// An approval is a product event with the app's declared name.
+	async function recordApproval(userId: string, tenantId: string, query: string): Promise<void> {
+		if (!dependencies.events) return;
+		const clientId = new URLSearchParams(query).get('client_id') ?? '';
+		const client = await db
+			.prepare('SELECT "name" FROM "oauthClient" WHERE "clientId" = ?')
+			.bind(clientId)
+			.first<Record<string, unknown>>();
+		if (!client) return;
+		await recordProductEvent(dependencies.events, {
+			type: 'assistant_connected',
+			userId,
+			tenantId,
+			clientId,
+			clientName: storedName(client.name, clientId)
+		});
+	}
+
 	// The consent page posts the decision with the session cookie, from the exact origin. An
 	// approval names the workspace the app may act in.
 	async function consent(request: Request): Promise<Response> {
@@ -307,6 +328,8 @@ export function createOAuthRoutes(dependencies: OAuthRouteDependencies) {
 		if (response.status !== 200) return respond(response);
 		const result = (await response.json()) as Record<string, unknown>;
 		if (typeof result.url !== 'string') throw new Error('Consent returned no redirect');
+		if (accept && typeof workspace === 'string')
+			await recordApproval(principal.user.id, workspace, query);
 		return respond(Response.json({ redirectTo: result.url }));
 	}
 

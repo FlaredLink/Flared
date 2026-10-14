@@ -26,6 +26,7 @@ import { countMcpCall, findAccessToken } from '@flared/data/oauth';
 import type { ApiPrincipal } from './api';
 import { accessTokenPrefix, hashOAuthToken } from './oauth/provider';
 import { resolveTenant } from './tenancy';
+import { recordProductEvent, type ProductEvents } from './events';
 
 export const mcpCallsPerMinute = 60;
 const maxBodyBytes = 65_536;
@@ -42,6 +43,8 @@ export interface McpEndpointOptions {
 	allowedOrigins: readonly string[];
 	// The product API for one principal, such as createApi with authenticate returning it.
 	api(principal: OAuthPrincipal): { fetch(request: Request): Response | Promise<Response> };
+	// The edition's product analytics. Without it, no tool call is recorded.
+	events?: ProductEvents;
 	now?: () => number;
 }
 
@@ -700,6 +703,17 @@ export function createMcpEndpoint(options: McpEndpointOptions) {
 		if (!budget.allowed)
 			return jsonRpcError(429, 'Too many requests. Try again soon.', {
 				'retry-after': String(budget.retryAfterSeconds)
+			});
+
+		// Only the tools this endpoint serves; a client can name anything.
+		const tool = calledTool(body);
+		if (tool && tool in toolScopes)
+			await recordProductEvent(options.events, {
+				type: 'mcp_tool_called',
+				userId: stored.userId,
+				tenantId: stored.tenantId,
+				clientId: stored.clientId,
+				tool
 			});
 
 		const api = options.api({

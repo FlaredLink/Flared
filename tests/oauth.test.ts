@@ -11,6 +11,7 @@ import { reinstateTenant, suspendTenant } from '../packages/server/src/operator'
 import { createApi, type ApiPrincipal } from '../packages/server/src/api';
 import type { DomainProvider } from '../packages/server/src/domains';
 import { qrPng } from '../packages/client/src/qr';
+import type { ProductEvent } from '../packages/server/src/events';
 import { createMcpEndpoint, mcpCallsPerMinute, mcpServerCard } from '../packages/server/src/mcp';
 import { createMetadataFetch, type OAuthServerConfig } from '../packages/server/src/oauth/provider';
 import { createOAuthRoutes, registrationsPerSourceHour } from '../packages/server/src/oauth/routes';
@@ -61,12 +62,16 @@ const config: OAuthServerConfig = {
 			: new Response('not found', { status: 404 });
 	}
 };
+// What the event hook received, for the approval and tool-call checks.
+const productEvents: ProductEvent[] = [];
+const events = { record: async (event: ProductEvent) => void productEvents.push(event) };
 const oauth = () =>
 	createOAuthRoutes({
 		db: identity(),
 		config,
 		sourceKey: async (request) => request.headers.get('x-test-source') ?? 'source-default',
-		identityRule: { kind: 'verified-email' }
+		identityRule: { kind: 'verified-email' },
+		events
 	});
 
 // Only the records matter here: no MCP tool adds, checks, or removes a domain.
@@ -94,7 +99,8 @@ const mcp = () =>
 		resource,
 		issuer: origin,
 		allowedOrigins: [origin],
-		api
+		api,
+		events
 	});
 
 async function addTenant(userId: string, tenantId: string) {
@@ -406,7 +412,17 @@ describe('authorization server', () => {
 			workspaces: [{ id: 'tenant-1', name: 'Workspace' }],
 			selectedWorkspaceId: 'tenant-1'
 		});
+		productEvents.length = 0;
 		const callback = await approve(flow);
+		expect(productEvents).toEqual([
+			{
+				type: 'assistant_connected',
+				userId: 'user-1',
+				tenantId: 'tenant-1',
+				clientId: flow.clientId,
+				clientName: 'Test client'
+			}
+		]);
 		expect(callback.origin + callback.pathname).toBe(redirectUri);
 		expect(callback.searchParams.get('iss')).toBe(origin);
 		expect(callback.searchParams.get('state')).toBe('state-1');
@@ -939,12 +955,16 @@ describe('MCP endpoint', () => {
 	it('creates, finds, edits, turns off, and measures links in the token workspace only', async () => {
 		const { tokens } = await connect('user-4');
 		const token = tokens.access_token;
+		productEvents.length = 0;
 		const created = await call(token, 'create_link', {
 			destination: 'https://example.com/a',
 			slug: 'mcp-first',
 			title: 'First'
 		});
 		expect(created.status).toBe(200);
+		expect(productEvents).toEqual([
+			expect.objectContaining({ type: 'mcp_tool_called', userId: 'user-4', tool: 'create_link' })
+		]);
 		const link = created.body.result?.structuredContent?.link as Record<string, unknown>;
 		expect(link).toMatchObject({
 			slug: 'mcp-first',

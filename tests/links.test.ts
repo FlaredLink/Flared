@@ -5,7 +5,8 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { parseUtm, utmOf, withUtm } from '../packages/contracts/src/links';
 import { listReservedSlugs, setSlugReserved } from '../packages/data/src/links';
 import { createTenant } from '../packages/data/src/tenancy';
-import { createApi } from '../packages/server/src/api';
+import { createApi, type ApiPrincipal } from '../packages/server/src/api';
+import type { ProductEvent } from '../packages/server/src/events';
 import { createLink, createKeyLifetimeMs, generateSlug } from '../packages/server/src/links';
 import { linkChangeOf, updateLink } from '../packages/server/src/web/api';
 import { projectPolicy } from '../packages/server/src/tenancy';
@@ -219,6 +220,78 @@ describe('link creation', () => {
 		});
 		expect(reactivated.status).toBe(403);
 		expect((await json(reactivated)).error.code).toBe('PLAN_LIMIT_REACHED');
+	});
+
+	it('reports each new link with its channel, and a limit refusal, to the event hook', async () => {
+		const events: ProductEvent[] = [];
+		// x-test-kind picks the principal: a dashboard session, an API token, or an MCP app.
+		const app = createApi({
+			identity: identity(),
+			routing: routing(),
+			appOrigin: origin,
+			authenticate: async (request): Promise<ApiPrincipal | null> => {
+				const userId = request.headers.get('x-test-user');
+				const kind = request.headers.get('x-test-kind');
+				if (!userId) return null;
+				const tenantId = userId === 'user-small' ? 'tenant-small' : 'tenant-a';
+				const scopes = ['links:read', 'links:write'] as const;
+				if (kind === 'token')
+					return {
+						kind: 'token',
+						userId,
+						tenantId,
+						scopes,
+						token: { id: 'token-1', name: 'Test', start: 'flr_', expiresAt: null }
+					};
+				if (kind === 'oauth') return { kind: 'oauth', userId, tenantId, scopes, clientId: 'app-1' };
+				return {
+					kind: 'session',
+					sessionId: 'session-test',
+					userId,
+					signedInAt: new Date(clock).toISOString()
+				};
+			},
+			now: () => clock,
+			creationsPerMinute: 1000,
+			events: { record: async (event) => void events.push(event) }
+		});
+		const make = (kind: string, agent: string, key = nextKey(), user = 'user-a') =>
+			call(
+				user,
+				'POST',
+				'/v1/links',
+				{ destination: 'https://example.com/channel' },
+				{ 'idempotency-key': key, 'x-test-kind': kind, 'user-agent': agent },
+				app
+			);
+		const key = nextKey();
+		expect((await make('session', 'Mozilla/5.0', key)).status).toBe(201);
+		expect((await make('token', 'flared-cli/0.5.0')).status).toBe(201);
+		expect((await make('token', 'curl/8.7.1')).status).toBe(201);
+		expect((await make('oauth', 'node')).status).toBe(201);
+		// A replay of the first request creates nothing, so it reports nothing.
+		expect((await make('session', 'Mozilla/5.0', key)).status).toBe(201);
+		expect(events).toEqual(
+			['web', 'cli', 'api', 'mcp'].map((channel) => ({
+				type: 'link_created',
+				userId: 'user-a',
+				tenantId: 'tenant-a',
+				channel
+			}))
+		);
+
+		events.length = 0;
+		const full = await make('session', 'Mozilla/5.0', nextKey(), 'user-small');
+		expect(full.status).toBe(403);
+		expect(events).toEqual([
+			{ type: 'limit_reached', userId: 'user-small', tenantId: 'tenant-small', limit: 'links' }
+		]);
+	});
+
+	it('creates links without an event hook, as the standalone edition does', async () => {
+		expect((await create('user-a', { destination: 'https://example.com/no-hook' })).status).toBe(
+			201
+		);
 	});
 
 	it('allows only one reactivation when two race for the last slot', async () => {
