@@ -259,6 +259,36 @@ describe('the upgrade workflow', () => {
 		expect(wrong.outcome).toBe('attention');
 	});
 
+	it('merges a pre-release only when asked for its tag', async () => {
+		const source = upstream();
+		const tagNext = (tag: string, answer: number) => {
+			write(source, { 'src/app.ts': `export const answer = ${answer};\n` });
+			git(source, 'commit', '-q', '-am', tag);
+			git(source, 'tag', '-a', tag, '-m', `Flared ${tag.slice(1)}`);
+		};
+		tagNext('v0.4.0-rc.1', 4);
+		const copy = copyOf(source, 'v0.1.0');
+		const github = fakeGitHub();
+		const run = (tag?: string) => upgrade({ cwd: copy, github, upstream: source, committer, tag });
+
+		expect(await run()).toMatchObject({ outcome: 'opened', tag: 'v0.3.0' });
+		const test = await run('v0.4.0-rc.1');
+		expect(test).toMatchObject({ outcome: 'opened', tag: 'v0.4.0-rc.1' });
+		const pull = github.pulls.find((item) => item.branch === 'flared-upgrade/v0.4.0-rc.1');
+		expect(pull?.body).toContain('**Pre-release:**');
+		expect(pull?.body).toContain('Notes of v0.3.0.');
+		mergePullRequest(copy, 'flared-upgrade/v0.4.0-rc.1');
+		expect(await run('v0.4.0-rc.1')).toMatchObject({ outcome: 'current' });
+		// The daily run never goes back to an older release, and takes the release once it is out.
+		expect(await run()).toMatchObject({ outcome: 'current', tag: 'v0.3.0' });
+		tagNext('v0.4.0', 5);
+		expect(await run()).toMatchObject({ outcome: 'opened', tag: 'v0.4.0' });
+		const release = github.pulls.find((item) => item.branch === 'flared-upgrade/v0.4.0');
+		expect(release?.body).not.toContain('Pre-release');
+		expect(release?.body).not.toContain('Notes of v0.4.0-rc.1.');
+		expect(release?.body).not.toContain('Notes of v0.3.0.');
+	});
+
 	it('opens one issue on a conflict and pushes nothing', async () => {
 		const source = upstream();
 		const copy = copyOf(source, 'v0.1.0');

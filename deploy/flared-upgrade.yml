@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'A Flared release, such as v0.2.0. Leave empty for the newest.'
+        description: 'A Flared release, such as v0.2.0, or a pre-release to test, such as v0.2.0-rc.1. Leave empty for the newest release.'
         required: false
         default: ''
 

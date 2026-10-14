@@ -16,7 +16,9 @@ export const issueTitle = 'Flared upgrade needs attention';
 // scripts/release.ts writes this line into the tag message of a breaking release.
 export const breakingTrailer = 'Flared-Breaking: true';
 const tagNamespace = 'refs/flared/tags/';
-const versionPattern = /^v(\d+)\.(\d+)\.(\d+)$/;
+// A release vX.Y.Z, or a pre-release vX.Y.Z-rc.N. The daily run only takes releases; a
+// pre-release merges only when the operator asks for its tag, such as for a test copy.
+const versionPattern = /^v(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?$/;
 const guideUrl = 'https://github.com/FlaredLink/Flared/blob/main/docs/self-hosting/upgrade.md';
 
 export interface PullRequest {
@@ -70,17 +72,25 @@ const actionsBot = {
 	email: '41898283+github-actions[bot]@users.noreply.github.com'
 };
 
-type Version = [number, number, number];
+// Major, minor, patch, and the pre-release number; a release sorts after its pre-releases.
+type Version = [number, number, number, number];
 
 function parseVersion(tag: string): Version | null {
 	const match = versionPattern.exec(tag);
-	return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+	if (!match) return null;
+	const rc = match[4] === undefined ? Number.POSITIVE_INFINITY : Number(match[4]);
+	return [Number(match[1]), Number(match[2]), Number(match[3]), rc];
 }
 
+const isRelease = (tag: string) => parseVersion(tag)?.[3] === Number.POSITIVE_INFINITY;
+
 function compare(a: Version, b: Version): number {
-	for (let index = 0; index < 3; index += 1) if (a[index] !== b[index]) return a[index] - b[index];
+	for (let index = 0; index < 4; index += 1)
+		if (a[index] !== b[index]) return a[index] < b[index] ? -1 : 1;
 	return 0;
 }
+
+const none: Version = [0, 0, 0, 0];
 
 class Git {
 	constructor(
@@ -184,6 +194,11 @@ async function pullRequestBody(
 ): Promise<string> {
 	const target = tags[tags.length - 1];
 	const lines = [`This pull request merges Flared ${target} into your copy.`, ''];
+	if (!isRelease(target))
+		lines.push(
+			`**Pre-release:** ${target} is for testing. The workflow merges it only because you asked for it.`,
+			''
+		);
 	if (breaking.length > 0)
 		lines.push(
 			`**Breaking:** ${breaking.join(', ')} changes how something works. Read the release notes before you merge.${auto ? ' Auto mode leaves this pull request for you.' : ''}`,
@@ -230,13 +245,14 @@ export async function upgrade(options: UpgradeOptions): Promise<UpgradeResult> {
 	const releases = git
 		.lines(['for-each-ref', '--format=%(refname:strip=3)', tagNamespace])
 		.filter((tag) => parseVersion(tag) !== null)
-		.sort((a, b) => compare(parseVersion(a) ?? [0, 0, 0], parseVersion(b) ?? [0, 0, 0]));
-	if (releases.length === 0) throw new Error('Flared has no release tags.');
-	const target = options.tag || releases[releases.length - 1];
+		.sort((a, b) => compare(parseVersion(a) ?? none, parseVersion(b) ?? none));
+	const newest = releases.filter(isRelease).at(-1);
+	if (!newest) throw new Error('Flared has no release tags.');
+	const target = options.tag || newest;
 	const targetVersion = parseVersion(target);
 	if (!targetVersion || !releases.includes(target))
 		return needsAttention(github, [
-			`The workflow was asked for \`${target}\`, which is not a Flared release tag such as \`v0.2.0\`.`
+			`The workflow was asked for \`${target}\`, which is not a Flared release tag such as \`v0.2.0\` or a pre-release tag such as \`v0.2.0-rc.1\`.`
 		]);
 	if (git.ok(['merge-base', '--is-ancestor', `${tagRef(target)}^{commit}`, 'HEAD'])) {
 		log(`This copy already contains Flared ${target}.`);
@@ -271,11 +287,13 @@ export async function upgrade(options: UpgradeOptions): Promise<UpgradeResult> {
 		current = version;
 		graft = true;
 	}
-	const currentVersion = parseVersion(current) ?? [0, 0, 0];
+	const currentVersion = parseVersion(current) ?? none;
+	// The releases this upgrade brings, and the target when it is a pre-release.
 	const included = releases.filter((tag) => {
 		const version = parseVersion(tag);
 		return (
 			version !== null &&
+			(isRelease(tag) || tag === target) &&
 			compare(version, currentVersion) > 0 &&
 			compare(version, targetVersion) <= 0
 		);

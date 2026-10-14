@@ -5,15 +5,21 @@
 // button copies, and the GitHub Release with its notes. Bump "version" in package.json in a
 // reviewed commit first. --feed writes the update feed that flared.page serves; installations
 // that opt in read it.
+// A pre-release X.Y.Z-rc.N, with package.json at X.Y.Z, publishes only its tag and a GitHub
+// pre-release: no release branch, no feed, and no --summary. The upgrade workflow merges it
+// only when an operator asks for its tag, so it can be tested on a copy first.
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { breakingTrailer } from '../deploy/upgrade';
 
 const repository = 'FlaredLink/Flared';
 const versionPattern = /^\d+\.\d+\.\d+$/;
+const preReleasePattern = /^(\d+\.\d+\.\d+)-rc\.\d+$/;
 
 interface Options {
 	version: string;
+	// X.Y.Z of a pre-release; null for a release.
+	preRelease: string | null;
 	notes: string;
 	summary: string;
 	breaking: boolean;
@@ -33,7 +39,9 @@ function git(args: string[]): string {
 
 function parse(argv: string[]): Options {
 	const [version, ...rest] = argv;
-	if (!version || !versionPattern.test(version)) fail('give the version, such as 0.2.0');
+	const preRelease = preReleasePattern.exec(version ?? '')?.[1] ?? null;
+	if (!version || (!versionPattern.test(version) && !preRelease))
+		fail('give the version, such as 0.2.0, or a pre-release, such as 0.2.0-rc.1');
 	const value = (name: string): string | null => {
 		const at = rest.indexOf(name);
 		if (at === -1) return null;
@@ -44,11 +52,14 @@ function parse(argv: string[]): Options {
 	const notes = value('--notes');
 	const summary = value('--summary');
 	if (!notes) fail('give --notes with the release notes file');
-	if (!summary || summary.length > 280) fail('give --summary of at most 280 characters');
+	if (!preRelease && (!summary || summary.length > 280))
+		fail('give --summary of at most 280 characters');
+	if (preRelease && rest.includes('--feed')) fail('a pre-release has no feed');
 	return {
 		version,
+		preRelease,
 		notes,
-		summary,
+		summary: summary ?? '',
 		breaking: rest.includes('--breaking'),
 		feed: value('--feed'),
 		remote: value('--remote') ?? 'origin',
@@ -82,7 +93,7 @@ const declared =
 	typeof manifest === 'object' && manifest !== null && 'version' in manifest
 		? manifest.version
 		: null;
-if (declared !== options.version)
+if (declared !== (options.preRelease ?? options.version))
 	fail(`package.json says ${String(declared)}; commit the version bump first`);
 if (git(['rev-parse', '--abbrev-ref', 'HEAD']) !== 'main') fail('run it on main');
 if (git(['status', '--porcelain'])) fail('the working tree has changes');
@@ -92,7 +103,8 @@ if (git(['rev-parse', 'HEAD']) !== git(['rev-parse', 'FETCH_HEAD']))
 if (git(['tag', '--list', tag])) fail(`${tag} exists`);
 
 const previous = previousRelease();
-if (previous && !newer(options.version, previous)) fail(`${tag} is not newer than v${previous}`);
+if (previous && !newer(options.preRelease ?? options.version, previous))
+	fail(`${tag} is not newer than v${previous}`);
 // With no earlier release, copies made from main before it may still need every migration.
 const migrations = previous
 	? git(['diff', '--name-only', `v${previous}`, 'HEAD', '--', 'packages/data/migrations']) !== ''
@@ -123,7 +135,12 @@ const steps: [string, string[]][] = [
 	],
 	['git', ['push', options.remote, tag]],
 	// Fast-forward only: the release branch never moves back or sideways.
-	['git', ['push', options.remote, 'HEAD:refs/heads/release']],
+	...(options.preRelease
+		? []
+		: ([['git', ['push', options.remote, 'HEAD:refs/heads/release']]] satisfies [
+				string,
+				string[]
+			][])),
 	[
 		'gh',
 		[
@@ -137,7 +154,7 @@ const steps: [string, string[]][] = [
 			'--notes-file',
 			options.notes,
 			'--verify-tag',
-			'--latest'
+			options.preRelease ? '--prerelease' : '--latest'
 		]
 	]
 ];
@@ -147,6 +164,8 @@ for (const [command, args] of steps) {
 	if (!options.dryRun) execFileSync(command, args, { stdio: 'inherit' });
 }
 
-const body = `${JSON.stringify(feed, null, '\t')}\n`;
-if (options.feed && !options.dryRun) writeFileSync(options.feed, body);
-console.log(options.feed ? `feed (${options.feed}):\n${body}` : `feed:\n${body}`);
+if (!options.preRelease) {
+	const body = `${JSON.stringify(feed, null, '\t')}\n`;
+	if (options.feed && !options.dryRun) writeFileSync(options.feed, body);
+	console.log(options.feed ? `feed (${options.feed}):\n${body}` : `feed:\n${body}`);
+}
