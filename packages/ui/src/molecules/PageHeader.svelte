@@ -73,20 +73,25 @@
 	}
 	h1 {
 		display: flex;
-		align-items: flex-start;
-		gap: 0.6rem;
+		align-items: center;
+		gap: 0.75rem;
 		color: var(--color-strong);
 		font-size: clamp(2rem, 3.2vw, 2.75rem);
 		font-weight: 800;
 		letter-spacing: -0.045em;
 		line-height: 1.05;
 	}
+	/* A count badge on the title's middle line, so it cannot read as a footnote. */
 	.count {
-		margin-top: 0.2em;
+		padding: 0.15rem 0.6rem;
+		border-radius: 999px;
+		background: var(--color-selected);
 		color: var(--color-lead);
-		font-size: 0.45em;
-		font-weight: 500;
+		font-size: 0.9375rem;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
 		letter-spacing: 0;
+		line-height: 1.4;
 	}
 	.lead {
 		color: var(--color-lead);

@@ -67,6 +67,7 @@
 	<LinkList
 		links={data.links.links}
 		analyticsHref={(link) => linkRoute(link.id)}
+		editHref={(link) => `${linkRoute(link.id)}#edit`}
 		nextHref={data.links.nextCursor ? `?cursor=${encodeURIComponent(data.links.nextCursor)}` : null}
 		highlightId={createdId}
 		iconHref={(hostname) => `/api/v1/icons/${hostname}`}

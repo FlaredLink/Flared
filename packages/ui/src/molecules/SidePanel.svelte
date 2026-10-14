@@ -90,14 +90,15 @@
 			animation: none;
 		}
 	}
-	/* Wide windows keep the page beside the sidebar. */
-	@media (min-width: 75rem) {
+	/* Wide windows keep the page beside the sidebar. Below 90rem the page would keep too
+	   little width for a link list beside the app navigation, so the panel covers it. */
+	@media (min-width: 90rem) {
 		:global(body:has(.side-panel)) {
 			padding-right: var(--side-panel-width);
 		}
 	}
 	/* Narrow windows show the sidebar over the page. */
-	@media (max-width: 74.99rem) {
+	@media (max-width: 89.99rem) {
 		.side-panel {
 			box-shadow: var(--shadow-float);
 		}

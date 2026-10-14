@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import EmptyState from '../empty/EmptyState.svelte';
 	import Glyph from '../icons/Glyph.svelte';
 	import SiteIcon from '../icons/SiteIcon.svelte';
@@ -14,6 +15,8 @@
 		links: ListedLink[];
 		// Address of a link's analytics page. Without it, the list shows no analytics link.
 		analyticsHref?: (link: Link) => string;
+		// Address of a link's edit form. Without it, the row menu shows no Edit item.
+		editHref?: (link: Link) => string;
 		// URL of the next page, or null on the last page.
 		nextHref?: string | null;
 		highlightId?: string | null;
@@ -33,6 +36,7 @@
 	let {
 		links,
 		analyticsHref,
+		editHref,
 		nextHref = null,
 		highlightId = null,
 		iconHref,
@@ -42,6 +46,22 @@
 		searchInput = $bindable()
 	}: Props = $props();
 	const filtered = $derived(Boolean(filters && (filters.search || filters.domainId)));
+
+	// The search runs as the person types. The field keeps its own text, so a response for an
+	// earlier query cannot overwrite keys typed since; it follows the URL only while unfocused.
+	let query = $state(untrack(() => filters?.search ?? ''));
+	let searchTimer: ReturnType<typeof setTimeout> | undefined;
+	$effect(() => {
+		const search = filters?.search ?? '';
+		if (document.activeElement !== searchInput) query = search;
+	});
+
+	function searchSoon(form: HTMLFormElement | null) {
+		clearTimeout(searchTimer);
+		searchTimer = setTimeout(() => {
+			if (query.trim() !== (filters?.search ?? '')) form?.requestSubmit();
+		}, 300);
+	}
 	let status = $state('');
 	let copiedId = $state<string | null>(null);
 	let copiedTimer: ReturnType<typeof setTimeout> | undefined;
@@ -79,6 +99,9 @@
 			...(onselect
 				? [{ label: 'Show details', icon: 'info' as const, onselect: () => onselect(link) }]
 				: []),
+			...(editHref && !link.blocked
+				? [{ label: 'Edit link', icon: 'pencil' as const, href: editHref(link) }]
+				: []),
 			...(analyticsHref
 				? [{ label: 'View analytics', icon: 'chart' as const, href: analyticsHref(link) }]
 				: []),
@@ -99,14 +122,26 @@
 <section class="link-list" aria-labelledby="link-list-heading">
 	<h2 id="link-list-heading" class="visually-hidden">Your links</h2>
 	{#if filters}
-		<form class="filters" method="get" role="search" aria-label="Filter links">
+		<!-- SvelteKit runs this GET form in place: focus and scroll stay, and history gets no
+		     entry per typed query. -->
+		<form
+			class="filters"
+			method="get"
+			role="search"
+			aria-label="Filter links"
+			data-sveltekit-keepfocus
+			data-sveltekit-noscroll
+			data-sveltekit-replacestate
+			onsubmit={() => clearTimeout(searchTimer)}
+		>
 			<label class="search">
 				<span class="visually-hidden">Search links</span>
 				<Glyph name="search" size={20} />
 				<input
 					type="search"
 					name="q"
-					value={filters.search}
+					bind:value={query}
+					oninput={(event) => searchSoon(event.currentTarget.form)}
 					placeholder="Search links…"
 					maxlength="100"
 					autocomplete="off"
@@ -142,7 +177,7 @@
 		{/if}
 	{:else}
 		<div class="columns" aria-hidden="true">
-			<span>Link</span><span class="clicks-head">Clicks · 30d</span>
+			<span>Link</span><span class="clicks-head">Clicks · 30 days</span>
 		</div>
 		<ul class="rows">
 			{#each links as link (link.id)}
@@ -180,12 +215,33 @@
 								>{:else if !link.enabled}<Badge>Disabled</Badge>{/if}
 						</span>
 						<span class="sub">
-							<a class="short" href={link.shortUrl} target="_blank" rel="noopener noreferrer"
-								>{link.hostname}/<strong>{link.slug}</strong></a
+							<!-- Copy sits beside the address it copies. -->
+							<a
+								class="short"
+								href={link.shortUrl}
+								target="_blank"
+								rel="noopener noreferrer"
+								title="Open {display(link.shortUrl)} in a new tab"
+								><span class="short-text">{link.hostname}/<strong>{link.slug}</strong></span><Glyph
+									name="arrowUpRight"
+									size={14}
+								/></a
 							>
-							<span class="dot" aria-hidden="true">·</span>
+							<span class="copy">
+								{#if copiedId === link.id}
+									<span class="copied"><Glyph name="check" size={16} />Copied</span>
+								{:else}
+									<IconButton
+										icon="copy"
+										size="sm"
+										label={`Copy ${display(link.shortUrl)}`}
+										onclick={() => void copy(link)}
+									/>
+								{/if}
+							</span>
 							<span class="destination" title={link.destination}
-								>{site ?? display(link.destination)}</span
+								><span class="arrow" aria-hidden="true">→</span>{site ??
+									display(link.destination)}</span
 							>
 						</span>
 					</div>
@@ -194,37 +250,31 @@
 							class="clicks"
 							href={analyticsHref(link)}
 							aria-label={`${clicksText(link)} in the last 30 days for ${display(link.shortUrl)}. Open analytics.`}
-							>{clicksNumber(link)}</a
+							><Glyph name="chart" size={16} /><span
+								>{clicksNumber(link)}<span class="unit">
+									{link.clicksLast30Days === 1 ? 'click' : 'clicks'} · 30d</span
+								></span
+							></a
 						>
 					{:else}
-						<span class="clicks" title="Clicks in the last 30 days">{clicksNumber(link)}</span>
+						<span class="clicks" title="Clicks in the last 30 days"
+							><span
+								>{clicksNumber(link)}<span class="unit">
+									{link.clicksLast30Days === 1 ? 'click' : 'clicks'} · 30d</span
+								></span
+							></span
+						>
 					{/if}
-					<span class="copy">
-						{#if copiedId === link.id}
-							<span class="copied"><Glyph name="check" size={18} />Copied</span>
-						{:else}
-							<IconButton
-								icon="copy"
-								size="sm"
-								label={`Copy ${display(link.shortUrl)}`}
-								onclick={() => void copy(link)}
-							/>
-						{/if}
-					</span>
 					<Menu id="link-menu-{link.id}" label="More actions for {name}" items={actions(link)} />
 				</li>
 			{/each}
 		</ul>
-		<div class="foot">
-			<span
-				>{#if nextHref}Showing {numbers.format(links.length)} links{:else}{numbers.format(
-						links.length
-					)}
-					{links.length === 1 ? 'link' : 'links'}{/if}</span
-			>
-			{#if nextHref}<a class="more" href={nextHref}>Next page<Glyph name="arrow" size={16} /></a
-				>{/if}
-		</div>
+		{#if nextHref}
+			<div class="foot">
+				<span>Showing {numbers.format(links.length)} links</span>
+				<a class="more" href={nextHref}>Next page<Glyph name="arrow" size={16} /></a>
+			</div>
+		{/if}
 	{/if}
 </section>
 
@@ -234,27 +284,27 @@
 		gap: 0.75rem;
 		container-type: inline-size;
 	}
+	/* A compact toolbar, so finding a link reads apart from creating one. */
 	.filters {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.75rem;
-		margin-bottom: 0.75rem;
+		gap: 0.5rem;
 	}
 	.search,
 	.domain {
 		position: relative;
 		display: flex;
 		align-items: center;
-		min-height: 3rem;
+		min-height: 2.5rem;
 		border: 1px solid var(--color-rule);
 		border-radius: var(--radius-control, 0.5rem);
 		background: var(--color-input);
 		color: var(--color-lead);
 	}
 	.search {
-		flex: 1 1 18rem;
-		gap: 0.75rem;
-		padding: 0 1rem;
+		flex: 0 1 24rem;
+		gap: 0.6rem;
+		padding: 0 0.75rem;
 	}
 	.search:focus-within,
 	.domain:focus-within {
@@ -284,7 +334,7 @@
 	.domain select {
 		width: 100%;
 		align-self: stretch;
-		padding: 0 2.5rem 0 1rem;
+		padding: 0 2.5rem 0 0.85rem;
 		border: 0;
 		background: transparent;
 		color: inherit;
@@ -305,7 +355,7 @@
 	.columns,
 	li {
 		display: grid;
-		grid-template-columns: 2.5rem minmax(0, 1fr) 7.5rem 6.5rem 2.25rem;
+		grid-template-columns: 2.5rem minmax(0, 1fr) 9rem 2.25rem;
 		align-items: center;
 		gap: 0 1rem;
 	}
@@ -321,7 +371,7 @@
 		grid-column: 1 / 3;
 	}
 	.clicks-head {
-		text-align: center;
+		text-align: right;
 		white-space: nowrap;
 	}
 	.rows {
@@ -362,7 +412,7 @@
 	}
 	.main {
 		display: grid;
-		gap: 0.2rem;
+		gap: 0.1rem;
 		min-width: 0;
 	}
 	.title-row {
@@ -392,50 +442,90 @@
 	}
 	.sub {
 		display: flex;
-		align-items: baseline;
-		gap: 0.5rem;
+		align-items: center;
+		gap: 0.25rem;
 		min-width: 0;
 		color: var(--color-lead);
 		font-size: 0.9375rem;
 	}
+	/* The short link gives way only after the destination has shrunk to nothing. */
 	.short {
-		flex: none;
+		display: inline-flex;
+		flex: 0 1 auto;
+		align-items: center;
+		gap: 0.2rem;
+		min-width: 0;
 		color: var(--color-lead);
+	}
+	.short-text {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.short :global(svg) {
+		flex: none;
+		opacity: 0.7;
 	}
 	.short strong {
 		color: var(--color-strong);
 		font-weight: 600;
 	}
-	.short:hover {
-		text-decoration: underline;
-		text-underline-offset: 3px;
-	}
-	.destination {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.clicks {
-		color: var(--color-strong);
-		font-size: 1rem;
-		font-variant-numeric: tabular-nums;
-		text-align: center;
-	}
-	a.clicks:hover {
+	.short:hover .short-text {
 		text-decoration: underline;
 		text-underline-offset: 3px;
 	}
 	.copy {
-		display: flex;
-		justify-content: center;
+		display: inline-flex;
+		flex: none;
+		align-items: center;
+		min-height: 2.25rem;
 	}
 	.copied {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.35rem;
+		gap: 0.3rem;
+		padding-inline: 0.4rem;
 		color: var(--color-accent-ink);
-		font-size: 0.9375rem;
+		font-size: 0.875rem;
 		font-weight: 500;
+	}
+	.destination {
+		flex: 1 1 0;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.arrow {
+		margin-right: 0.4rem;
+	}
+	/* A chip, so the count reads as the way into analytics. */
+	.clicks {
+		display: inline-flex;
+		align-items: center;
+		justify-self: end;
+		gap: 0.4rem;
+		min-height: 2.25rem;
+		padding: 0 0.7rem;
+		border-radius: var(--radius-control, 0.5rem);
+		color: var(--color-strong);
+		font-size: 1rem;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+	a.clicks {
+		border: 1px solid var(--color-rule);
+		background: var(--color-paper);
+	}
+	a.clicks :global(svg) {
+		color: var(--color-lead);
+	}
+	a.clicks:hover {
+		border-color: var(--color-strong);
+	}
+	.unit {
+		display: none;
+		color: var(--color-lead);
 	}
 	.foot {
 		display: flex;
@@ -468,18 +558,32 @@
 		clip-path: inset(50%);
 		white-space: nowrap;
 	}
-	/* Narrow lists keep the link and its clicks; copy and the menu stay in reach. */
+	/* Narrow lists drop the column labels, so each count carries its own unit. */
 	@container (max-width: 34rem) {
 		.columns {
 			display: none;
 		}
+		.search {
+			flex-basis: 100%;
+		}
 		li {
-			grid-template-columns: 2.25rem minmax(0, 1fr) auto 2.25rem;
-			gap: 0 0.75rem;
+			grid-template-columns: 2.25rem minmax(0, 1fr) 2.25rem;
+			gap: 0.4rem 0.75rem;
 			padding-inline: 0.85rem 0.5rem;
 		}
-		.copy {
-			display: none;
+		.clicks {
+			grid-column: 2;
+			grid-row: 2;
+			justify-self: start;
+			min-height: 2.25rem;
+			font-size: 0.9375rem;
+		}
+		.unit {
+			display: inline;
+		}
+		li > :global(.trigger) {
+			grid-column: 3;
+			grid-row: 1 / 3;
 		}
 	}
 </style>
