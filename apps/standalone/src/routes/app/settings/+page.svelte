@@ -533,62 +533,65 @@
 		{/if}
 		<details class="workflow">
 			<summary>Upgrade with a GitHub workflow</summary>
-			<p>
-				The workflow checks for a new release each day. It opens a pull request that merges the
-				release into your repository, or an issue when you must act. Deploy on Cloudflare leaves
-				workflows out of your copy, so set it up once:
-			</p>
-			<div class="field">
-				<label for="repository">Your repository on GitHub</label>
-				<input
-					id="repository"
-					bind:value={repository}
-					placeholder="owner/flared"
-					autocomplete="off"
-					autocapitalize="none"
-					spellcheck="false"
-				/>
-				<small>The owner and name of your copy, such as <code>owner/flared</code>.</small>
-			</div>
-			<ol>
-				<li>
-					{#if links}
-						<a href={links.file} target="_blank" rel="noopener">Add the workflow file on GitHub</a>.
-						GitHub opens <code>{workflowPath}</code> with its content filled in; select
-						<strong>Commit changes</strong>.
-					{:else}
-						Add the workflow file to your repository as <code>{workflowPath}</code>.
-					{/if}
-				</li>
-				<li>
-					{#if links}
-						Open the <a href={links.actions} target="_blank" rel="noopener">Actions settings</a>.
-					{:else}
-						In the repository settings, open <strong>Actions → General</strong>.
-					{/if}
-					Under <strong>Workflow permissions</strong>, select
-					<strong>Allow GitHub Actions to create and approve pull requests</strong>, then
-					<strong>Save</strong>.
-				</li>
-				<li>
-					Optional: add the repository variable <code>FLARED_AUTO_UPGRADE</code> with the value
-					<code>true</code>{#if links}
-						on the <a href={links.variable} target="_blank" rel="noopener">new variable page</a
-						>{/if}. The workflow then merges each upgrade that merges cleanly and is not marked
-					breaking, and Workers Builds deploys it.
-				</li>
-			</ol>
-			<details class="file">
-				<summary>Show the workflow file</summary>
-				<div class="commands">
-					<pre><code>{upgradeWorkflow}</code></pre>
-					<CopyButton text={upgradeWorkflow} label="Copy the workflow" kind="button" size="sm" />
+			<!-- A details element does not lay out its content as a grid, so this wrapper spaces it. -->
+			<div class="workflow-body">
+				<p>
+					The workflow checks for a new release each day. It opens a pull request that merges the
+					release into your repository, or an issue when you must act. Deploy on Cloudflare leaves
+					workflows out of your copy, so set it up once:
+				</p>
+				<div class="field">
+					<label for="repository">Your repository on GitHub</label>
+					<input
+						id="repository"
+						bind:value={repository}
+						placeholder="owner/flared"
+						autocomplete="off"
+						autocapitalize="none"
+						spellcheck="false"
+					/>
+					<small>The owner and name of your copy, such as <code>owner/flared</code>.</small>
 				</div>
-			</details>
-			<p>
-				Merge its pull requests with <strong>Create a merge commit</strong>. A squash or rebase
-				merge drops the Flared history that the next upgrade needs.
-			</p>
+				<ol>
+					<li>
+						{#if links}
+							<a href={links.file} target="_blank" rel="noopener">Add the workflow file on GitHub</a
+							>. GitHub opens <code>{workflowPath}</code> with its content filled in; select
+							<strong>Commit changes</strong>.
+						{:else}
+							Add the workflow file to your repository as <code>{workflowPath}</code>.
+						{/if}
+					</li>
+					<li>
+						{#if links}
+							Open the <a href={links.actions} target="_blank" rel="noopener">Actions settings</a>.
+						{:else}
+							In the repository settings, open <strong>Actions → General</strong>.
+						{/if}
+						Under <strong>Workflow permissions</strong>, select
+						<strong>Allow GitHub Actions to create and approve pull requests</strong>, then
+						<strong>Save</strong>.
+					</li>
+					<li>
+						Optional: add the repository variable <code>FLARED_AUTO_UPGRADE</code> with the value
+						<code>true</code>{#if links}
+							on the <a href={links.variable} target="_blank" rel="noopener">new variable page</a
+							>{/if}. The workflow then merges each upgrade that merges cleanly and is not marked
+						breaking, and Workers Builds deploys it.
+					</li>
+				</ol>
+				<details class="file">
+					<summary>Show the workflow file</summary>
+					<div class="commands">
+						<pre><code>{upgradeWorkflow}</code></pre>
+						<CopyButton text={upgradeWorkflow} label="Copy the workflow" kind="button" size="sm" />
+					</div>
+				</details>
+				<p>
+					Merge its pull requests with <strong>Create a merge commit</strong>. A squash or rebase
+					merge drops the Flared history that the next upgrade needs.
+				</p>
+			</div>
 		</details>
 	</section>
 {/if}
@@ -634,12 +637,16 @@
 		margin-top: 0.5rem;
 		font-size: 1rem;
 	}
-	.workflow {
+	.workflow-body {
 		display: grid;
 		gap: 0.75rem;
+		margin-top: 0.75rem;
 	}
 	.workflow .file summary {
 		font-weight: 500;
+	}
+	.workflow .file .commands {
+		margin-top: 0.5rem;
 	}
 	.workflow summary {
 		color: var(--color-strong);
