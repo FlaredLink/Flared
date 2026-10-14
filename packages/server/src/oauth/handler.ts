@@ -111,6 +111,8 @@ export function aiCatalogDocument(
 					'shorten this URL',
 					'how many clicks did my link get this week',
 					'change where my short link points',
+					'add UTM parameters to my link',
+					'send iPhone and Android visitors to my app',
 					'turn off a short link'
 				]
 			}
