@@ -1,6 +1,9 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { prefersReducedMotion } from 'svelte/motion';
+	import { cubicIn } from 'svelte/easing';
+	import { fly } from 'svelte/transition';
 	import IconButton from '../atoms/IconButton.svelte';
 
 	interface Props {
@@ -21,7 +24,14 @@
 
 <svelte:window onkeydown={keydown} />
 
-<aside class="side-panel" aria-labelledby={id} bind:this={panel}>
+<!-- Closing slides the panel out in about 70 percent of --dur-base. Svelte transitions do not
+     read CSS variables or the CSS reduced-motion rule, so both are handled here. -->
+<aside
+	class="side-panel"
+	aria-labelledby={id}
+	bind:this={panel}
+	out:fly={{ x: 24, duration: prefersReducedMotion.current ? 0 : 154, easing: cubicIn }}
+>
 	<div class="head">
 		<p class="label" {id}>{label}</p>
 		{#if onclose}<IconButton
@@ -48,7 +58,7 @@
 		width: min(var(--side-panel-width), 100%);
 		border-left: 1px solid var(--color-rule);
 		background: var(--color-paper);
-		animation: slide-in 220ms var(--ease-out, ease-out);
+		animation: slide-in var(--dur-base) var(--ease-out);
 	}
 	.head {
 		display: flex;
@@ -83,11 +93,6 @@
 		from {
 			transform: translateX(1.5rem);
 			opacity: 0;
-		}
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.side-panel {
-			animation: none;
 		}
 	}
 	/* Wide windows keep the page beside the sidebar. Below 90rem the page would keep too

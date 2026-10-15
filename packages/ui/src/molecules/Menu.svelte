@@ -221,37 +221,40 @@
 		background: var(--color-paper);
 		color: var(--color-ink);
 		box-shadow: var(--shadow-float);
+		/* Closing: the menu fades back toward its trigger, faster than it opens. overlay and display
+		   keep it in the top layer until the fade ends. */
+		opacity: 0;
+		transform: translateY(var(--menu-shift, -0.25rem)) scale(0.98);
+		transform-origin: top;
+		transition-property: opacity, transform, overlay, display;
+		transition-duration: calc(var(--dur-fast) * 0.7);
+		transition-timing-function: var(--ease-in);
+		transition-behavior: allow-discrete;
 	}
 	.menu:popover-open {
 		display: grid;
 		gap: 2px;
-		animation: menu-in var(--dur-fast, 140ms) var(--ease-out, ease-out);
-		transform-origin: top;
+		opacity: 1;
+		transform: none;
+		transition-duration: var(--dur-fast);
+		transition-timing-function: var(--ease-out);
+	}
+	@starting-style {
+		.menu:popover-open {
+			opacity: 0;
+			transform: translateY(var(--menu-shift, -0.25rem)) scale(0.98);
+		}
 	}
 	.menu:global([data-side='above']) {
 		--menu-shift: 0.25rem;
 		transform-origin: bottom;
 	}
-	@keyframes menu-in {
-		from {
-			opacity: 0;
-			transform: translateY(var(--menu-shift, -0.25rem)) scale(0.98);
-		}
-	}
 	.turns > :global(svg:last-child) {
 		flex: none;
-		transition: transform var(--dur-fast, 140ms) var(--ease-out, ease-out);
+		transition: transform var(--dur-fast) var(--ease-out);
 	}
 	.turns[aria-expanded='true'] > :global(svg:last-child) {
 		transform: rotate(180deg);
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.menu:popover-open {
-			animation: none;
-		}
-		.turns > :global(svg:last-child) {
-			transition: none;
-		}
 	}
 	[role='menuitem'],
 	[role='menuitemradio'] {

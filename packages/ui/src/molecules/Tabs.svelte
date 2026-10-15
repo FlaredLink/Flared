@@ -88,6 +88,14 @@
 				mask-image: none;
 			}
 		}
+		/* The fade follows the scroll position and moves nothing, so it stays when motion is
+		   reduced; the shared reduced-motion rule would remove it. */
+		@media (prefers-reduced-motion: reduce) {
+			.tabs {
+				animation: more-tabs linear both !important;
+				animation-timeline: scroll(self inline) !important;
+			}
+		}
 	}
 	.sm {
 		gap: 1.25rem;

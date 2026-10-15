@@ -91,3 +91,22 @@ svg {
 	max-width: 100%;
 	flex-shrink: 0;
 }
+/* Reduced motion: every movement becomes an instant change. Svelte transitions run on the Web
+ * Animations API, which this rule does not reach; they read prefersReducedMotion instead. */
+@media (prefers-reduced-motion: reduce) {
+	html {
+		scroll-behavior: auto;
+	}
+	*,
+	*::before,
+	*::after,
+	::backdrop {
+		animation: none !important;
+		transition: none !important;
+	}
+	::view-transition-group(*),
+	::view-transition-old(*),
+	::view-transition-new(*) {
+		animation: none !important;
+	}
+}

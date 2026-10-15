@@ -47,9 +47,41 @@
 		background: var(--color-paper);
 		color: var(--color-ink);
 		box-shadow: var(--shadow-float);
+		/* Closing: the dialog fades and sinks a little, faster than it opens. overlay and display
+		   keep it in the top layer until the fade ends. */
+		opacity: 0;
+		transform: translateY(0.5rem) scale(0.98);
+		transition-property: opacity, transform, overlay, display;
+		transition-duration: calc(var(--dur-base) * 0.7);
+		transition-timing-function: var(--ease-in);
+		transition-behavior: allow-discrete;
+	}
+	dialog[open] {
+		opacity: 1;
+		transform: none;
+		transition-duration: var(--dur-base);
+		transition-timing-function: var(--ease-out);
+	}
+	@starting-style {
+		dialog[open] {
+			opacity: 0;
+			transform: translateY(0.5rem) scale(0.98);
+		}
 	}
 	dialog::backdrop {
+		background: oklch(15% 0.01 265 / 0);
+		transition-property: background, overlay, display;
+		transition-duration: calc(var(--dur-base) * 0.7);
+		transition-behavior: allow-discrete;
+	}
+	dialog[open]::backdrop {
 		background: oklch(15% 0.01 265 / 0.35);
+		transition-duration: var(--dur-base);
+	}
+	@starting-style {
+		dialog[open]::backdrop {
+			background: oklch(15% 0.01 265 / 0);
+		}
 	}
 	.head {
 		display: flex;
