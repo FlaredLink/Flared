@@ -3,30 +3,47 @@
  * the page follows the system setting, and data-mode on <html> holds a viewer's own choice. */
 :root {
 	color-scheme: light dark;
-	--color-paper: light-dark(#ffffff, oklch(15% 0 0));
-	--color-ink: light-dark(oklch(25% 0 0), oklch(91% 0 0));
-	--color-strong: light-dark(oklch(19% 0 0), oklch(97% 0 0));
-	--color-muted: light-dark(oklch(45% 0 0), oklch(71% 0 0));
-	--color-surface: light-dark(#ffffff, oklch(18.5% 0 0));
+	/* Dark values that a dark panel inside a light page also needs. Chrome resolves light-dark()
+	 * where a custom property is declared, so such a panel maps its roles to these values. */
+	--dark-paper: oklch(15% 0 0);
+	--dark-ink: oklch(91% 0 0);
+	--dark-strong: oklch(97% 0 0);
+	--dark-muted: oklch(71% 0 0);
+	--dark-surface: oklch(18.5% 0 0);
+	--dark-disabled: oklch(27% 0 0);
+	--dark-lead: oklch(74% 0.008 265);
+	--dark-button-primary: oklch(96% 0 0);
+	--dark-button-primary-hover: oklch(86% 0 0);
+	--dark-on-primary: oklch(16% 0 0);
+	--dark-accent-ink: oklch(74% 0.16 45);
+	--dark-accent-soft: oklch(26% 0.05 35);
+	--dark-live: oklch(74% 0.17 150);
+	/* The dark value of the Kumo success text colour (emerald-200). */
+	--dark-positive: oklch(90.5% 0.093 164.15);
+	--color-paper: light-dark(#ffffff, var(--dark-paper));
+	--color-ink: light-dark(oklch(25% 0 0), var(--dark-ink));
+	--color-strong: light-dark(oklch(19% 0 0), var(--dark-strong));
+	--color-muted: light-dark(oklch(45% 0 0), var(--dark-muted));
+	--color-surface: light-dark(#ffffff, var(--dark-surface));
 	--color-rule: light-dark(oklch(90% 0 0), oklch(29% 0 0));
-	--color-input: light-dark(#ffffff, oklch(18.5% 0 0));
-	--color-disabled: light-dark(oklch(94% 0 0), oklch(27% 0 0));
+	--color-input: light-dark(#ffffff, var(--dark-surface));
+	--color-disabled: light-dark(oklch(94% 0 0), var(--dark-disabled));
 	/* The frame behind the main area: the sidebar and the auth pages. */
 	--color-canvas: light-dark(oklch(98.3% 0.003 265), oklch(14.5% 0 0));
-	--color-lead: light-dark(oklch(48% 0.012 265), oklch(74% 0.008 265));
+	--color-lead: light-dark(oklch(48% 0.012 265), var(--dark-lead));
 	--color-hover: light-dark(oklch(25% 0.01 265 / 0.05), oklch(100% 0 0 / 0.06));
 	--color-selected: light-dark(oklch(95% 0.004 265), oklch(23% 0.004 265));
 	/* Coral marks what is active or chosen; primary actions are ink, inverted in dark mode. */
 	--color-accent: oklch(66% 0.2 33);
 	--color-brand: var(--color-accent);
-	--color-button-primary: light-dark(oklch(19% 0.006 265), oklch(96% 0 0));
-	--color-button-primary-hover: light-dark(oklch(30% 0.006 265), oklch(86% 0 0));
-	--color-on-primary: light-dark(#ffffff, oklch(16% 0 0));
-	--color-accent-ink: light-dark(oklch(55% 0.2 35), oklch(74% 0.16 45));
+	--color-button-primary: light-dark(oklch(19% 0.006 265), var(--dark-button-primary));
+	--color-button-primary-hover: light-dark(oklch(30% 0.006 265), var(--dark-button-primary-hover));
+	--color-on-primary: light-dark(#ffffff, var(--dark-on-primary));
+	--color-accent-ink: light-dark(oklch(55% 0.2 35), var(--dark-accent-ink));
 	--color-accent-edge: light-dark(oklch(84% 0.09 35), oklch(45% 0.12 35));
 	/* Text actions such as "View analytics". */
 	--color-link: light-dark(oklch(52% 0.19 262), oklch(75% 0.12 258));
-	--color-live: light-dark(oklch(62% 0.17 150), oklch(74% 0.17 150));
+	--color-live: light-dark(oklch(62% 0.17 150), var(--dark-live));
 	--color-focus: var(--color-kumo-brand);
 	--color-positive: var(--text-color-kumo-success);
 	--color-positive-soft: light-dark(oklch(97% 0.03 160), oklch(26% 0.045 165));
@@ -51,8 +68,18 @@
 	--color-shadow: light-dark(oklch(22% 0 0 / 0.09), oklch(0% 0 0 / 0.5));
 	--color-shadow-soft: light-dark(oklch(22% 0 0 / 0.035), oklch(0% 0 0 / 0.3));
 	--color-clear: transparent;
-	--color-accent-soft: light-dark(oklch(96.5% 0.025 35), oklch(26% 0.05 35));
+	--color-accent-soft: light-dark(oklch(96.5% 0.025 35), var(--dark-accent-soft));
 	--color-chart-fill: light-dark(oklch(80% 0.13 35 / 0.32), oklch(62% 0.15 35 / 0.26));
+	/* Data marks: data-1 is clicks, data-2 is the previous period. Each mark is at least 3:1 on
+	 * its background; the soft tints sit behind row labels and keep text above 13:1. */
+	--color-data-1: light-dark(oklch(58% 0.17 255), oklch(72% 0.13 255));
+	--color-data-1-soft: light-dark(oklch(95% 0.03 250), oklch(28% 0.05 255));
+	--color-data-2: light-dark(oklch(60% 0.02 265), oklch(64% 0.015 265));
+	--color-data-2-soft: light-dark(oklch(95% 0.005 265), oklch(26% 0.005 265));
+	--color-chart-grid: light-dark(oklch(91% 0 0), oklch(30% 0 0));
+	--color-chart-cursor: light-dark(oklch(78% 0 0), oklch(50% 0 0));
+	--color-tooltip: oklch(25% 0 0);
+	--color-on-tooltip: oklch(97% 0 0);
 	--color-code-success: oklch(77% 0.17 130);
 	--color-terminal-red: oklch(68% 0.2 25);
 	--color-terminal-yellow: oklch(85% 0.17 90);
@@ -71,6 +98,20 @@
 	--space-section: clamp(3.5rem, 6vw, 5.5rem);
 	--text-display: clamp(2.5rem, 3.8vw, 3.55rem);
 	--text-heading: clamp(1.75rem, 3vw, 2.3rem);
+	--text-xs: 0.75rem;
+	--text-sm: 0.8125rem;
+	--text-md: 0.875rem;
+	/* App body text; marketing body text is --text-lg. */
+	--text-base: 0.9375rem;
+	--text-lg: 1rem;
+	--text-xl: 1.125rem;
+	--text-2xl: 1.25rem;
+	--text-3xl: 1.5rem;
+	--weight-regular: 400;
+	--weight-medium: 500;
+	--weight-strong: 600;
+	--weight-heavy: 800;
+	--weight-display: 850;
 	--radius-sm: 0.375rem;
 	--radius-control: 0.5rem;
 	--radius-md: 0.625rem;
@@ -80,9 +121,24 @@
 	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 	--ease-in: cubic-bezier(0.7, 0, 0.84, 0);
 	--ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+	/* Press feedback; hover, menus, and tooltips; dialogs, panels, and rows; chart values.
+	 * An exit runs at about 70 percent of its enter duration. */
+	--dur-instant: 80ms;
 	--dur-fast: 140ms;
+	--dur-base: 220ms;
+	--dur-slow: 320ms;
 	--shadow-card: 0 8px 28px var(--color-shadow-soft);
 	--shadow-float: 0 12px 35px var(--color-shadow), 0 1px 4px var(--color-shadow-soft);
+	/* A card edge drawn as a 1px ring. Dark mode keeps the ring and drops the soft shadow. */
+	--color-ring: light-dark(oklch(22% 0 0 / 0.06), oklch(100% 0 0 / 0.08));
+	--color-shadow-drop: light-dark(oklch(22% 0 0 / 0.05), transparent);
+	--shadow-ring: 0 0 0 1px var(--color-ring);
+	--shadow-raised:
+		var(--shadow-ring), 0 1px 2px -1px var(--color-shadow-drop), 0 2px 4px var(--color-shadow-drop);
+	--z-sidebar: 20;
+	--z-header: 30;
+	--z-panel: 40;
+	--z-skip-link: 100;
 	--side-panel-width: 26rem;
 }
 :root[data-mode='light'] {
