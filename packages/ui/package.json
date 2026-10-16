@@ -108,6 +108,8 @@
 		}
 	},
 	"dependencies": {
+		"@dicebear/core": "9.4.3",
+		"@dicebear/notionists": "9.4.3",
 		"@flared/client": "workspace:*",
 		"@flared/contracts": "workspace:*",
 		"@simplewebauthn/browser": "13.3.0"
