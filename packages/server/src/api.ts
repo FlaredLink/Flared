@@ -35,6 +35,7 @@ import {
 } from '@flared/contracts/tokens';
 import { openApiDocument } from '@flared/contracts/openapi';
 import { parseAddDomain } from '@flared/contracts/domains';
+import { exportLinkPageSize } from '@flared/contracts/export';
 import {
 	parseWorkspaceName,
 	parseSelectWorkspace,
@@ -319,6 +320,14 @@ function pageSize(value: string | undefined): number {
 	const size = Number(value);
 	if (!Number.isInteger(size) || size < 1 || size > 100)
 		throw new ApiError('INVALID_INPUT', 'Use a limit from 1 to 100.');
+	return size;
+}
+
+function exportPageSize(value: string | undefined): number {
+	if (value === undefined) return exportLinkPageSize;
+	const size = Number(value);
+	if (!Number.isInteger(size) || size < 1 || size > exportLinkPageSize)
+		throw new ApiError('INVALID_INPUT', `Use a limit from 1 to ${exportLinkPageSize}.`);
 	return size;
 }
 
@@ -715,7 +724,8 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		const page = await exportLinks(
 			routing,
 			context.var.tenantId,
-			context.req.query('cursor') ?? null
+			context.req.query('cursor') ?? null,
+			exportPageSize(context.req.query('limit'))
 		);
 		return respond({ status: 200, body: JSON.stringify(page) });
 	});

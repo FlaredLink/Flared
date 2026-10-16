@@ -108,7 +108,7 @@ export interface FlaredClient {
 	addDomain(hostname: string): Promise<{ domain: Domain; created: boolean }>;
 	checkDomain(id: string): Promise<Domain>;
 	removeDomain(id: string): Promise<void>;
-	exportLinks(cursor?: string): Promise<ExportLinkPage>;
+	exportLinks(cursor?: string, limit?: number): Promise<ExportLinkPage>;
 	exportDailyTotals(cursor?: string): Promise<ExportTotalsPage>;
 	exportDailyDimensions(cursor?: string): Promise<ExportDimensionsPage>;
 }
@@ -307,8 +307,11 @@ export function createClient(options: ClientOptions): FlaredClient {
 		async removeDomain(domainId) {
 			await request('DELETE', `/domains/${id(domainId)}`, { retry: false });
 		},
-		exportLinks(cursor) {
-			return page(`/export/links${after(cursor)}`, isExportLinkPage);
+		exportLinks(cursor, limit) {
+			const params = new URLSearchParams();
+			if (cursor) params.set('cursor', cursor);
+			if (limit !== undefined) params.set('limit', String(limit));
+			return page(`/export/links${params.size ? `?${params}` : ''}`, isExportLinkPage);
 		},
 		exportDailyTotals(cursor) {
 			return page(`/export/daily-totals${after(cursor)}`, isExportTotalsPage);

@@ -164,6 +164,26 @@ describe('workspace export', () => {
 		expect(body.links.every((link) => link.id.startsWith('t-one-'))).toBe(true);
 	});
 
+	it('takes a link page size from 1 to 1000', async () => {
+		for (const limit of ['0', '1001', 'abc', '1.5']) {
+			const response = await get(`/export/links?limit=${limit}`, 'one');
+			expect(response.status, limit).toBe(422);
+			expect(await response.json()).toMatchObject({
+				error: { code: 'INVALID_INPUT', message: 'Use a limit from 1 to 1000.' }
+			});
+		}
+		const first = (await (await get('/export/links?limit=2', 'one')).json()) as {
+			links: { id: string }[];
+			nextCursor: string | null;
+		};
+		expect(first.links.map((link) => link.id)).toEqual(['t-one-link-4', 't-one-link-3']);
+		expect(first.nextCursor).toEqual(expect.any(String));
+		const next = (await (
+			await get(`/export/links?limit=2&cursor=${first.nextCursor}`, 'one')
+		).json()) as { links: { id: string }[] };
+		expect(next.links.map((link) => link.id)).toEqual(['t-one-link-2', 't-one-link-1']);
+	});
+
 	it('pages retained daily rows in key order and leaves out older days', async () => {
 		const totals: string[] = [];
 		let cursor: string | null = null;

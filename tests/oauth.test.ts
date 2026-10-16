@@ -5,6 +5,7 @@ import { applyD1Migrations } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { makeSignature } from 'better-auth/crypto';
 import { createTenant, setActiveWorkspace } from '../packages/data/src/tenancy';
+import { setLinkBlock } from '../packages/data/src/links';
 import { deleteGrant, deleteExpiredOAuthRecords } from '../packages/data/src/oauth';
 import { projectPolicy } from '../packages/server/src/tenancy';
 import { reinstateTenant, suspendTenant } from '../packages/server/src/operator';
@@ -15,6 +16,7 @@ import type { ProductEvent } from '../packages/server/src/events';
 import {
 	createMcpEndpoint,
 	mcpCallsPerMinute,
+	mcpExportResultBytes,
 	mcpImportItemsPerCall,
 	mcpServerCard
 } from '../packages/server/src/mcp';
@@ -316,6 +318,18 @@ async function call(token: string, name: string, args: Record<string, unknown> =
 		error?: unknown;
 	};
 	return { status: response.status, body, headers: response.headers };
+}
+
+interface ExportedPage {
+	links: { id: string; status: string; item: Record<string, unknown> }[];
+	nextCursor: string | null;
+}
+
+async function exportPage(token: string, args: Record<string, unknown> = {}) {
+	const response = await call(token, 'export_links', args);
+	expect(response.status).toBe(200);
+	const text = response.body.result?.content[0].text ?? '';
+	return { page: response.body.result?.structuredContent as unknown as ExportedPage, text };
 }
 
 beforeAll(async () => {
@@ -908,6 +922,7 @@ describe('MCP endpoint', () => {
 			'get_link_analytics',
 			'get_usage',
 			'list_domains',
+			'export_links',
 			'create_link',
 			'import_links',
 			'update_link',
@@ -1308,6 +1323,200 @@ describe('MCP endpoint', () => {
 		expect(replayed.result).toEqual(created.result);
 		// Measured with 3 items: 12 (dry run), 37 (created), 42 (replayed).
 		for (const run of [preview, created, replayed]) expect(run.queries).toBeLessThan(50);
+	});
+
+	it('exports every link with an item that import_links takes, page by page', async () => {
+		await addTenant('user-12', 'tenant-12');
+		await addTenant('user-13', 'tenant-13');
+		const { tokens } = await connect('user-12');
+		const token = tokens.access_token;
+		const inputs = [
+			{ destination: 'https://example.com/export/1', slug: 'mcp-export-one', title: 'One' },
+			{ destination: 'https://example.com/export/2', slug: 'mcp-export-two', title: 'Two' },
+			{
+				destination: 'https://example.com/export/3',
+				slug: 'mcp-export-three',
+				iosDestination: 'myapp://three',
+				androidDestination: 'https://example.com/android/3'
+			}
+		];
+		const ids: string[] = [];
+		for (const [index, input] of inputs.entries()) {
+			const created = await call(token, 'create_link', input);
+			const link = created.body.result?.structuredContent?.link as { id: string };
+			// Distinct creation times make the newest-first order certain.
+			await routing()
+				.prepare('UPDATE links SET created_at = ? WHERE id = ?')
+				.bind(1000 + index, link.id)
+				.run();
+			ids.push(link.id);
+		}
+		await setLinkBlock(routing(), ids[0], { reason: 'spam', now: Date.now() });
+		await call(token, 'disable_link', { link: ids[1] });
+
+		const { page } = await exportPage(token);
+		expect(page.nextCursor).toBeNull();
+		expect(page.links.map((link) => link.id)).toEqual([ids[2], ids[1], ids[0]]);
+		expect(page.links.map((link) => link.status)).toEqual(['active', 'disabled', 'blocked']);
+		expect(page.links.map((link) => link.item)).toEqual([
+			{ ...inputs[2], domain: 'short.example' },
+			{ ...inputs[1], domain: 'short.example' },
+			{ ...inputs[0], domain: 'short.example' }
+		]);
+		expect(JSON.stringify(page.links)).not.toContain('null');
+		expect(page.links[0]).not.toHaveProperty('domainId');
+
+		const first = (await exportPage(token, { limit: 2 })).page;
+		expect(first.links).toHaveLength(2);
+		expect(first.nextCursor).toEqual(expect.any(String));
+		const second = (await exportPage(token, { limit: 2, cursor: first.nextCursor })).page;
+		expect(second.nextCursor).toBeNull();
+		expect([...first.links, ...second.links].map((link) => link.id)).toEqual([
+			ids[2],
+			ids[1],
+			ids[0]
+		]);
+
+		// Slugs stay reserved on short.example, so the copy goes to another workspace's domain.
+		await routing().batch([
+			routing().prepare(
+				"INSERT INTO domain_namespaces (id, hostname, created_at) VALUES ('dom-export', 'go.export.com', 0)"
+			),
+			routing().prepare(
+				"INSERT INTO domains (id, tenant_id, state, is_default, created_at, updated_at, claimed_at, activated_at) VALUES ('dom-export', 'tenant-13', 'active', 0, 1, 1, 1, 1)"
+			)
+		]);
+		const other = await connect('user-13', 'links:read links:write domains:read offline_access');
+		const items = page.links.map(({ item }) => ({ ...item, domain: 'go.export.com' }));
+		const imported = await call(other.tokens.access_token, 'import_links', {
+			dryRun: false,
+			items
+		});
+		expect(imported.body.result?.structuredContent).toMatchObject({
+			summary: { created: 3, failed: 0 }
+		});
+		const copies = (await exportPage(other.tokens.access_token)).page.links;
+		const bySlug = (a: Record<string, unknown>, b: Record<string, unknown>) =>
+			String(a.slug).localeCompare(String(b.slug));
+		expect(copies.map(({ item }) => item).sort(bySlug)).toEqual([...items].sort(bySlug));
+		// Status is not copied: imported links start on.
+		expect(copies.map((link) => link.status)).toEqual(['active', 'active', 'active']);
+	});
+
+	it('needs links:read to export links and leaves analytics out', async () => {
+		const analyticsOnly = await connect('user-12', 'analytics:read offline_access');
+		const refused = await call(analyticsOnly.tokens.access_token, 'export_links');
+		expect(refused.status).toBe(403);
+		expect(refused.headers.get('www-authenticate')).toBe(
+			'Bearer error="insufficient_scope", scope="links:read analytics:read", resource_metadata="https://api.example/.well-known/oauth-protected-resource/mcp"'
+		);
+		const reader = await connect('user-12', 'links:read offline_access');
+		const { page, text } = await exportPage(reader.tokens.access_token);
+		expect(page.links).toHaveLength(3);
+		expect(text).not.toContain('clicksLast30Days');
+	});
+
+	it('halves an export page until it is within the byte cap and still reaches every link', async () => {
+		// Inserts count links whose three destinations each have the given length.
+		const addLarge = async (
+			tenantId: string,
+			count: number,
+			length: number,
+			title: string | null
+		) => {
+			const long = (prefix: string) => prefix + 'x'.repeat(length - prefix.length);
+			await routing().batch(
+				Array.from({ length: count }, (_, index) => {
+					const slug = `${tenantId}-${index}-`.padEnd(64, 'x');
+					return [
+						routing()
+							.prepare("INSERT INTO slug_reservations (domain_id, slug) VALUES ('dom-short', ?)")
+							.bind(slug),
+						routing()
+							.prepare(
+								"INSERT INTO links (id, tenant_id, domain_id, slug, destination, ios_destination, android_destination, title, status, created_at, updated_at) VALUES (?, ?, 'dom-short', ?, ?, ?, ?, ?, 'active', ?, ?)"
+							)
+							.bind(
+								`${tenantId}-link-${index}`,
+								tenantId,
+								slug,
+								long(`https://example.com/${index}/`),
+								long(`myapp://${index}/`),
+								long(`https://example.com/android/${index}/`),
+								title,
+								index,
+								index
+							)
+					];
+				}).flat()
+			);
+		};
+		// Follows nextCursor to the end and checks that every page is within the cap.
+		const walk = async (token: string, limit: number | undefined, count: number) => {
+			const seen: string[] = [];
+			let cursor: string | null = null;
+			let calls = 0;
+			do {
+				const args: Record<string, unknown> = {
+					...(limit ? { limit } : {}),
+					...(cursor ? { cursor } : {})
+				};
+				const { page, text } = await exportPage(token, args);
+				expect(new TextEncoder().encode(text).byteLength).toBeLessThanOrEqual(mcpExportResultBytes);
+				if (calls === 0) {
+					expect(page.links.length).toBeLessThan(count);
+					expect(page.nextCursor).toEqual(expect.any(String));
+				}
+				seen.push(...page.links.map((link) => link.id));
+				cursor = page.nextCursor;
+				calls += 1;
+			} while (cursor && calls < count);
+			return seen;
+		};
+		const newestFirst = (tenantId: string, count: number) =>
+			Array.from({ length: count }, (_, index) => `${tenantId}-link-${count - 1 - index}`);
+
+		await addTenant('user-14', 'tenant-14');
+		await addLarge('tenant-14', 30, 4000, null);
+		const { tokens } = await connect('user-14');
+		expect(await walk(tokens.access_token, undefined, 30)).toEqual(newestFirst('tenant-14', 30));
+
+		// The largest page: 100 links with every field at its longest.
+		await addTenant('user-15', 'tenant-15');
+		await addLarge('tenant-15', 100, 4096, 't'.repeat(200));
+		const largest = await connect('user-15');
+		expect(await walk(largest.tokens.access_token, 100, 100)).toEqual(
+			newestFirst('tenant-15', 100)
+		);
+	});
+
+	it('exports a page within 10 D1 statements', async () => {
+		const counter = { queries: 0 };
+		const countedIdentity = counting(identity(), counter);
+		const countedRouting = counting(routing(), counter);
+		const counted = createMcpEndpoint({
+			identity: countedIdentity,
+			resource,
+			issuer: origin,
+			allowedOrigins: [origin],
+			api: (principal) =>
+				createApi({
+					identity: countedIdentity,
+					routing: countedRouting,
+					analytics: { 'analytics-1': env.OAUTH_ANALYTICS },
+					appOrigin: origin,
+					authenticate: async () => principal
+				}),
+			events
+		});
+		const { tokens } = await connect('user-12', 'links:read offline_access');
+		const response = await counted(
+			rpc(tokens.access_token, 'tools/call', { name: 'export_links', arguments: {} })
+		);
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as { result: { structuredContent: ExportedPage } };
+		expect(body.result.structuredContent.links).toHaveLength(3);
+		expect(counter.queries).toBeLessThan(10);
 	});
 
 	it('returns a PNG QR code of the short URL', async () => {

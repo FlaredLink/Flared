@@ -33,6 +33,11 @@ export const mcpCallsPerMinute = 60;
 // Items in one import_links call. The endpoint does not see a deployment's API options, so it
 // uses the API default; an API with a lower value answers TOO_MANY_ITEMS.
 export const mcpImportItemsPerCall = defaultImportItemsPerRequest;
+// An export_links result stays within this many bytes of JSON, so a page of long destinations
+// still fits an assistant's context.
+export const mcpExportResultBytes = 48 * 1024;
+const exportPageSize = 50;
+const maxExportPageSize = 100;
 const maxBodyBytes = 65_536;
 
 type OAuthPrincipal = Extract<ApiPrincipal, { kind: 'oauth' }>;
@@ -92,6 +97,7 @@ const toolScopes: Record<string, TokenScope> = {
 	get_link_analytics: 'analytics:read',
 	get_usage: 'usage:read',
 	list_domains: 'domains:read',
+	export_links: 'links:read',
 	create_link: 'links:write',
 	import_links: 'links:write',
 	update_link: 'links:write',
@@ -175,6 +181,43 @@ function importSummary({ dryRun, results }: ImportOutput): string {
 	return dryRun
 		? `Dry run: ${done} of ${results.length} items are ready and ${failed} would fail. Nothing was created.`
 		: `Created ${done} of ${results.length} links; ${failed} failed.`;
+}
+
+// An exported link: item holds only fields of create_link, so it goes to import_links as is.
+const exportedLinkOutput = z.looseObject({
+	id: z.string(),
+	shortUrl: z.string(),
+	status: z.enum(['active', 'disabled', 'blocked']),
+	createdAt: z.string(),
+	updatedAt: z.string(),
+	item: z.looseObject({
+		destination: z.string(),
+		slug: z.string(),
+		domain: z.string(),
+		title: z.string().optional(),
+		iosDestination: z.string().optional(),
+		androidDestination: z.string().optional()
+	})
+});
+type ExportedLinkOutput = z.infer<typeof exportedLinkOutput>;
+
+function exportedLink(link: Link): ExportedLinkOutput {
+	const { title, iosDestination, androidDestination } = link;
+	return {
+		id: link.id,
+		shortUrl: link.shortUrl,
+		status: link.blocked !== null ? 'blocked' : link.enabled ? 'active' : 'disabled',
+		createdAt: link.createdAt,
+		updatedAt: link.updatedAt,
+		item: {
+			destination: link.destination,
+			slug: link.slug,
+			domain: link.hostname,
+			...(title !== null ? { title } : {}),
+			...(iosDestination ? { iosDestination } : {}),
+			...(androidDestination ? { androidDestination } : {})
+		}
+	};
 }
 
 const domainOutput = z.looseObject({
@@ -557,6 +600,44 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 			attempt(async () => {
 				const page = await client.listDomains();
 				return { domains: page.domains.map(domainResult), used: page.used, limit: page.limit };
+			})
+	);
+
+	server.registerTool(
+		'export_links',
+		{
+			title: 'Export links',
+			description:
+				"Exports every link in the workspace, on and off, newest first, 50 per page by default and up to 100. Each result has the link's status and an item with the fields of import_links: send items to import_links three at a time to move links. Imported links start on; status is not copied. No analytics. Pass nextCursor for the next page.",
+			inputSchema: z.object({
+				limit: z.number().int().min(1).max(maxExportPageSize).optional(),
+				cursor: z.string().max(500).optional().describe('nextCursor from the previous page.')
+			}),
+			outputSchema: z.looseObject({
+				links: z.array(exportedLinkOutput),
+				nextCursor: z.string().nullable()
+			}),
+			annotations: {
+				title: 'Export links',
+				readOnlyHint: true,
+				destructiveHint: false,
+				openWorldHint: false
+			}
+		},
+		({ limit = exportPageSize, cursor }) =>
+			attempt(async () => {
+				const read = async (size: number) => {
+					const page = await client.exportLinks(cursor, size);
+					const value = { links: page.links.map(exportedLink), nextCursor: page.nextCursor };
+					return { value, bytes: new TextEncoder().encode(JSON.stringify(value)).byteLength };
+				};
+				// A page over the byte cap is asked for again with half as many links. One link at
+				// its longest is about 13 KB, so the loop always ends within the cap. The API makes
+				// every cursor, so a cut page still continues where it ends.
+				let page = await read(limit);
+				while (page.bytes > mcpExportResultBytes && page.value.links.length > 1)
+					page = await read(Math.floor(page.value.links.length / 2));
+				return page.value;
 			})
 	);
 

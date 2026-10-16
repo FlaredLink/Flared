@@ -18,7 +18,7 @@ import { tokenScopes, type TokenScope } from './tokens';
 // Duplicated from the client's QR module, which this package cannot import.
 const qrSizes = { minimum: 128, maximum: 2048, default: 512 };
 
-export const openApiVersion = '1.4.0';
+export const openApiVersion = '1.5.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const dateTime = { type: 'string', format: 'date-time' };
@@ -611,11 +611,26 @@ export function openApiDocument(serverUrl: string) {
 					'links:read',
 					{
 						'200': {
-							description: `Up to ${exportLinkPageSize} links, active and disabled, newest first. Follow nextCursor until it is null.`,
+							description:
+								'Up to limit links, active and disabled, newest first. Follow nextCursor until it is null.',
 							content: json(ref('ExportLinkPage'))
 						}
 					},
-					{ parameters: [cursor] }
+					{
+						parameters: [
+							cursor,
+							{
+								name: 'limit',
+								in: 'query',
+								schema: {
+									type: 'integer',
+									minimum: 1,
+									maximum: exportLinkPageSize,
+									default: exportLinkPageSize
+								}
+							}
+						]
+					}
 				)
 			},
 			'/export/daily-totals': {

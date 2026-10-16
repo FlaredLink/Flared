@@ -369,6 +369,23 @@ describe('API client', () => {
 		failNext = 0;
 	});
 
+	// The earlier tests leave three links.
+	it('asks for a link export page size only when given one', async () => {
+		const asked: string[] = [];
+		const recording: typeof fetch = async (input, init) => {
+			const request = new Request(input, init);
+			asked.push(new URL(request.url).search);
+			return inProcess(request);
+		};
+		const reader = client(readOnly, { fetch: recording });
+		const first = await reader.exportLinks(undefined, 2);
+		expect(first.links).toHaveLength(2);
+		expect(first.nextCursor).toEqual(expect.any(String));
+		const cursor = first.nextCursor ?? '';
+		await reader.exportLinks(cursor);
+		expect(asked).toEqual(['?limit=2', `?cursor=${encodeURIComponent(cursor)}`]);
+	});
+
 	it('reports network failures and rejects unsafe API URLs', async () => {
 		let calls = 0;
 		const offline: typeof fetch = async () => {
