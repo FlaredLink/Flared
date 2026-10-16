@@ -2,7 +2,10 @@
 <script lang="ts">
 	import type { Action } from 'svelte/action';
 	import { enhance } from '$app/forms';
+	import { invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
+	import Button from '@flared/ui/atoms/Button.svelte';
+	import ImportDialog from '@flared/ui/links/ImportDialog.svelte';
 	import LinkCreateForm from '@flared/ui/links/LinkCreateForm.svelte';
 	import LinkList from '@flared/ui/links/LinkList.svelte';
 	import { linkErrorMessage } from '@flared/ui/links/messages';
@@ -11,6 +14,7 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	let pending = $state(false);
+	let importing = $state(false);
 
 	const createError = $derived(
 		form && 'error' in form && form.error
@@ -42,11 +46,16 @@
 
 <div class="page-head head-row">
 	<h1>Links</h1>
-	{#if data.usage}
-		<p class="usage">
-			{numbers.format(data.usage.clicks)} of {numbers.format(data.usage.clickLimit)} clicks this month
-		</p>
-	{/if}
+	<div class="head-actions">
+		{#if data.usage}
+			<p class="usage">
+				{numbers.format(data.usage.clicks)} of {numbers.format(data.usage.clickLimit)} clicks this month
+			</p>
+		{/if}
+		{#if data.links.status === 'ready'}
+			<Button size="sm" icon="download" onclick={() => (importing = true)}>Import</Button>
+		{/if}
+	</div>
 </div>
 {#if data.links.status !== 'ready'}
 	<section class="notice" role="alert">
@@ -72,6 +81,14 @@
 		highlightId={createdId}
 		iconHref={(hostname) => `/api/v1/icons/${hostname}`}
 	/>
+	<ImportDialog
+		bind:open={importing}
+		apiBase="/api/v1"
+		batchSize={3}
+		domains={data.domains}
+		shortHost={defaultHost}
+		onimported={() => void invalidateAll()}
+	/>
 {/if}
 
 <style>
@@ -80,6 +97,13 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 1rem;
+	}
+	.head-actions {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 0.75rem;
 	}
 	.usage {
 		font-size: 0.85rem;

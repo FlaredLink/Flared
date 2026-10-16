@@ -13,7 +13,7 @@ type LinksState =
 async function loadActiveDomains(
 	platform: App.Platform | undefined,
 	headers: Headers
-): Promise<Pick<Domain, 'id' | 'hostname' | 'isDefault'>[]> {
+): Promise<Pick<Domain, 'id' | 'hostname' | 'state' | 'isDefault'>[]> {
 	const service = platform?.env.API_SERVICE;
 	if (!service) return [];
 	try {
@@ -21,7 +21,7 @@ async function loadActiveDomains(
 		return result.ok
 			? result.page.domains
 					.filter((domain) => domain.state === 'active')
-					.map(({ id, hostname, isDefault }) => ({ id, hostname, isDefault }))
+					.map(({ id, hostname, state, isDefault }) => ({ id, hostname, state, isDefault }))
 			: [];
 	} catch {
 		console.error(JSON.stringify({ event: 'domains_unavailable' }));
