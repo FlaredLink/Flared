@@ -84,9 +84,9 @@
 	--color-terminal-red: oklch(68% 0.2 25);
 	--color-terminal-yellow: oklch(85% 0.17 90);
 	--color-terminal-green: oklch(72% 0.2 145);
-	--font-display: 'Inter Variable', 'Inter', sans-serif;
-	--font-body: 'Inter Variable', 'Inter', sans-serif;
-	--font-wordmark: 'Space Grotesk Variable', 'Inter Variable', sans-serif;
+	--font-display: 'Figtree Variable', 'Figtree', system-ui, sans-serif;
+	--font-body: 'Figtree Variable', 'Figtree', system-ui, sans-serif;
+	--font-wordmark: 'Figtree Variable', 'Figtree', system-ui, sans-serif;
 	--font-mono: 'Geist Mono Variable', ui-monospace, monospace;
 	--font-annotation: 'Bradley Hand', 'Segoe Print', cursive;
 	--space-xs: 0.25rem;
@@ -111,7 +111,7 @@
 	--weight-medium: 500;
 	--weight-strong: 600;
 	--weight-heavy: 800;
-	--weight-display: 850;
+	--weight-display: 700;
 	--radius-sm: 0.375rem;
 	--radius-control: 0.5rem;
 	--radius-md: 0.625rem;

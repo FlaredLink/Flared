@@ -28,7 +28,7 @@ const styles = `
 *{box-sizing:border-box;margin:0}
 body{min-height:100vh;display:grid;place-items:center;padding:24px 16px;background:var(--paper);color:var(--ink);font:16px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
 main{width:100%;max-width:26rem;display:grid;gap:14px}
-svg{width:40px;height:40px;margin-bottom:10px;color:var(--accent)}
+svg{width:42px;height:42px;margin-bottom:10px;color:var(--strong)}
 h1{color:var(--strong);font-size:1.6rem;line-height:1.2;letter-spacing:-0.01em}
 p{color:var(--muted)}
 footer{margin-top:18px;padding-top:14px;border-top:1px solid var(--rule);font-size:.875rem;color:var(--muted)}
@@ -36,7 +36,7 @@ a{color:var(--accent);font-weight:600;text-underline-offset:3px}
 a:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}`;
 
 const mark =
-	'<svg viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="square" stroke-linejoin="round"><path d="M28 19H20L8 31V45H22L34 33V27"/><path d="M36 45H44L56 33V19H42L30 31V37"/></g></svg>';
+	'<svg viewBox="0 0 21 21" shape-rendering="crispEdges" aria-hidden="true"><path fill="currentColor" d="M13 0h4v1h-4zM11 1h8v1h-8zM10 2h3v1h-3zM17 2h3v1h-3zM10 3h2v1h-2zM18 3h2v1h-2zM9 4h2v1h-2zM19 4h2v1h-2zM9 5h2v1h-2zM19 5h2v1h-2zM9 6h2v1h-2zM19 6h2v1h-2zM9 7h2v1h-2zM19 7h2v1h-2zM10 8h2v1h-2zM18 8h2v1h-2zM4 9h4v1h-4zM10 9h3v1h-3zM17 9h3v1h-3zM2 10h17v1h-17zM1 11h3v1h-3zM8 11h3v1h-3zM13 11h4v1h-4zM1 12h2v1h-2zM9 12h2v1h-2zM0 13h2v1h-2zM10 13h2v1h-2zM0 14h2v1h-2zM10 14h2v1h-2zM0 15h2v1h-2zM10 15h2v1h-2zM0 16h2v1h-2zM10 16h2v1h-2zM1 17h2v1h-2zM9 17h2v1h-2zM1 18h3v1h-3zM8 18h3v1h-3zM2 19h8v1h-8zM4 20h4v1h-4z"/></svg>';
 
 const escapes: Record<string, string> = {
 	'&': '&amp;',
