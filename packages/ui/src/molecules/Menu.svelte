@@ -12,8 +12,11 @@
 				disabled?: boolean;
 				// One of a set of choices: true marks the current one with a check.
 				checked?: boolean;
-				// Short text at the end of the item, such as a plan.
+				// Short text at the end of the item, such as a plan; under the label with detailBelow.
 				detail?: string;
+				// A small square before the label in place of the icon: a short text, such as a
+				// workspace initial, or true to hold the icon.
+				tile?: string | true;
 		  }
 		// A line between groups of items.
 		| { divider: true };
@@ -37,6 +40,12 @@
 		caret?: GlyphName;
 		// Content above the items, such as the signed-in email.
 		heading?: Snippet;
+		// Item details go under the label in place of the end of the item.
+		detailBelow?: boolean;
+		// A CSS width for the menu, such as "15.5rem"; without it the menu fits its items.
+		width?: string;
+		// 'top' opens the menu above its trigger when it fits there, such as at a sidebar foot.
+		placement?: 'auto' | 'top';
 		class?: string;
 	}
 	let {
@@ -49,20 +58,26 @@
 		lead,
 		caret = 'caret',
 		heading,
+		detailBelow = false,
+		width,
+		placement = 'auto',
 		class: className = ''
 	}: Props = $props();
 	let trigger = $state<HTMLButtonElement>();
 	let menu = $state<HTMLDivElement>();
 	let open = $state(false);
 
-	// The menu is a popover in the top layer, placed under its trigger when it opens.
+	// The menu is a popover in the top layer, placed under its trigger when it opens, or above
+	// it when there is no room under it or the placement is 'top'.
 	function place() {
 		if (!trigger || !menu) return;
 		const box = trigger.getBoundingClientRect();
-		const width = menu.offsetWidth;
-		const left = align === 'end' ? box.right - width : box.left;
-		const below = box.bottom + 6 + menu.offsetHeight <= window.innerHeight;
-		menu.style.left = `${Math.max(8, Math.min(left, window.innerWidth - width - 8))}px`;
+		const menuWidth = menu.offsetWidth;
+		const left = align === 'end' ? box.right - menuWidth : box.left;
+		const fitsBelow = box.bottom + 6 + menu.offsetHeight <= window.innerHeight;
+		const fitsAbove = box.top - 6 - menu.offsetHeight >= 0;
+		const below = placement === 'top' ? !fitsAbove && fitsBelow : fitsBelow;
+		menu.style.left = `${Math.max(8, Math.min(left, window.innerWidth - menuWidth - 8))}px`;
 		menu.style.top = below
 			? `${box.bottom + 6}px`
 			: `${Math.max(8, box.top - 6 - menu.offsetHeight)}px`;
@@ -110,7 +125,7 @@
 	aria-haspopup="menu"
 	aria-expanded={open}
 	aria-label={text ? undefined : label}
-	title={text ? undefined : label}
+	title={text || lead ? undefined : label}
 	>{#if lead}{@render lead()}{:else}<Glyph name={icon} size={20} />{/if}{#if text}<span class="text"
 			>{text}</span
 		><Glyph name={caret} size={16} />{/if}</button
@@ -120,6 +135,7 @@
 	{id}
 	popover="auto"
 	class="menu"
+	style:width
 	role="menu"
 	aria-label={label}
 	tabindex="-1"
@@ -150,10 +166,19 @@
 				class:danger={item.danger}
 				aria-disabled={item.disabled || undefined}
 				onclick={() => !item.disabled && choose(item)}
-				>{#if item.icon}<Glyph name={item.icon} size={18} />{/if}<span class="label"
-					>{item.label}</span
-				>{#if item.detail}<span class="detail">{item.detail}</span
-					>{/if}{#if item.checked !== undefined}<span class="check"
+				>{#if item.tile !== undefined}<span class="tile" aria-hidden="true"
+						>{#if item.tile === true}{#if item.icon}<Glyph
+									name={item.icon}
+									size={14}
+								/>{/if}{:else}{item.tile}{/if}</span
+					>{:else if item.icon}<Glyph
+						name={item.icon}
+						size={18}
+					/>{/if}{#if detailBelow && item.detail}<span class="lines"
+						><span class="label">{item.label}</span><span class="detail">{item.detail}</span></span
+					>{:else}<span class="label">{item.label}</span>{#if item.detail}<span class="detail"
+							>{item.detail}</span
+						>{/if}{/if}{#if item.checked !== undefined}<span class="check"
 						>{#if item.checked}<Glyph name="check" size={16} />{/if}</span
 					>{/if}</button
 			>
@@ -192,6 +217,10 @@
 		font: inherit;
 		font-size: 0.9375rem;
 		text-align: left;
+	}
+	/* A caller sets --menu-caret-color to mute the caret of a text trigger. */
+	.with-text > :global(svg:last-child) {
+		color: var(--menu-caret-color, currentColor);
 	}
 	.with-text .text {
 		flex: 1;
@@ -299,6 +328,29 @@
 		flex: none;
 		color: var(--color-muted);
 		font-size: 0.8125rem;
+	}
+	.lines {
+		display: grid;
+		flex: 1;
+		min-width: 0;
+		padding-block: 0.375rem;
+	}
+	.lines .detail {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.tile {
+		display: inline-grid;
+		flex: none;
+		place-items: center;
+		width: 1.5rem;
+		height: 1.5rem;
+		border-radius: var(--radius-sm, 0.375rem);
+		background: var(--color-selected);
+		color: var(--color-strong);
+		font-size: 0.6875rem;
+		font-weight: 700;
 	}
 	.check {
 		display: inline-grid;
