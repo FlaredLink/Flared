@@ -1,6 +1,18 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
 /* Flared design roles over the Kumo semantic tokens. Each colour is light-dark(light, dark):
  * the page follows the system setting, and data-mode on <html> holds a viewer's own choice. */
+/* Arial with Figtree's average width and line metrics. Text that renders before Figtree loads
+ * wraps on the same lines, so the swap does not move the page. size-adjust is the ratio of the
+ * mean advance width of the site text at weight 400 (Figtree 0.4467 em, Arial 0.4463 em); the
+ * overrides are Figtree's ascent 950, descent 250, and line gap 0 per 1000 units over it. */
+@font-face {
+	font-family: 'Figtree Fallback';
+	src: local('Arial'), local('ArialMT'), local('Helvetica');
+	size-adjust: 100.1%;
+	ascent-override: 94.91%;
+	descent-override: 24.98%;
+	line-gap-override: 0%;
+}
 :root {
 	color-scheme: light dark;
 	/* Dark values that a dark panel inside a light page also needs. Chrome resolves light-dark()
@@ -84,9 +96,9 @@
 	--color-terminal-red: oklch(68% 0.2 25);
 	--color-terminal-yellow: oklch(85% 0.17 90);
 	--color-terminal-green: oklch(72% 0.2 145);
-	--font-display: 'Figtree Variable', 'Figtree', system-ui, sans-serif;
-	--font-body: 'Figtree Variable', 'Figtree', system-ui, sans-serif;
-	--font-wordmark: 'Figtree Variable', 'Figtree', system-ui, sans-serif;
+	--font-display: 'Figtree Variable', 'Figtree', 'Figtree Fallback', system-ui, sans-serif;
+	--font-body: 'Figtree Variable', 'Figtree', 'Figtree Fallback', system-ui, sans-serif;
+	--font-wordmark: 'Figtree Variable', 'Figtree', 'Figtree Fallback', system-ui, sans-serif;
 	--font-mono: 'Geist Mono Variable', ui-monospace, monospace;
 	--font-annotation: 'Bradley Hand', 'Segoe Print', cursive;
 	--space-xs: 0.25rem;
