@@ -3,6 +3,10 @@
 
 export const errorStatus = {
 	INVALID_INPUT: 422,
+	// A bulk import request is not an object with dryRun and a non-empty items list.
+	INVALID_IMPORT: 400,
+	// A bulk import request has more items than one request takes; split it.
+	TOO_MANY_ITEMS: 400,
 	IDEMPOTENCY_KEY_REQUIRED: 422,
 	IDEMPOTENCY_KEY_REUSED: 409,
 	SLUG_TAKEN: 409,

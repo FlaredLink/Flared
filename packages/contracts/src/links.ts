@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { isErrorCode, type ErrorCode } from './errors';
 import { isReservedSlug } from './reserved';
 
 export const slugPattern = /^[a-z0-9](?:[a-z0-9-]{1,62}[a-z0-9])$/;
@@ -298,6 +299,67 @@ export function parseUpdateLink(value: unknown): UpdateLinkInput {
 	return update;
 }
 
+// A bulk import. Each item has the fields of a create request and is checked on its own, so an
+// invalid item fails alone; only a malformed request as a whole is refused.
+export interface ImportLinksRequest {
+	dryRun: boolean;
+	items: unknown[];
+}
+
+// ready: a dry run found nothing that stops the item. created: a real run created the link, or a
+// replay returned it. failed: error says why; nothing was created for the item.
+export type ImportItemStatus = 'ready' | 'created' | 'failed';
+
+export interface ImportItemError {
+	code: ErrorCode;
+	message: string;
+	field?: string;
+}
+
+export interface ImportItemResult {
+	index: number;
+	status: ImportItemStatus;
+	link?: Link;
+	error?: ImportItemError;
+}
+
+// summary has ready and failed for a dry run, created and failed for a real run.
+export interface ImportLinksResult {
+	dryRun: boolean;
+	results: ImportItemResult[];
+	summary: { ready: number; failed: number } | { created: number; failed: number };
+}
+
+export class ImportRequestError extends Error {
+	constructor(
+		readonly code: Extract<ErrorCode, 'INVALID_IMPORT' | 'TOO_MANY_ITEMS'>,
+		readonly field: string,
+		message: string
+	) {
+		super(message);
+	}
+}
+
+// The request shape only; parseCreateLink checks each item.
+export function parseImportRequest(value: unknown, maxItems: number): ImportLinksRequest {
+	if (!isRecord(value))
+		throw new ImportRequestError('INVALID_IMPORT', 'body', 'Send a JSON object.');
+	for (const key of Object.keys(value))
+		if (key !== 'dryRun' && key !== 'items')
+			throw new ImportRequestError('INVALID_IMPORT', key, `Unknown field "${key}".`);
+	if (typeof value.dryRun !== 'boolean')
+		throw new ImportRequestError('INVALID_IMPORT', 'dryRun', 'Set dryRun to true or false.');
+	if (!Array.isArray(value.items) || value.items.length === 0)
+		throw new ImportRequestError('INVALID_IMPORT', 'items', 'Send items as a list of links.');
+	if (value.items.length > maxItems)
+		throw new ImportRequestError(
+			'TOO_MANY_ITEMS',
+			'items',
+			`Send at most ${maxItems} items in one request.`
+		);
+	return { dryRun: value.dryRun, items: value.items };
+}
+
 // Printable ASCII only, so the key is safe to store and compare.
 export function parseIdempotencyKey(value: string | null): string | null {
 	if (value === null) return null;
@@ -348,4 +410,32 @@ export function isLinkPage(value: unknown): value is LinkPage {
 		value.links.every(isListedLink) &&
 		(value.nextCursor === null || typeof value.nextCursor === 'string')
 	);
+}
+
+function isImportItemResult(value: unknown, index: number, dryRun: boolean): boolean {
+	if (!isRecord(value) || value.index !== index) return false;
+	const error = value.error;
+	if (value.status === 'failed')
+		return (
+			value.link === undefined &&
+			isRecord(error) &&
+			isErrorCode(error.code) &&
+			typeof error.message === 'string' &&
+			(error.field === undefined || typeof error.field === 'string')
+		);
+	if (dryRun) return value.status === 'ready' && error === undefined && value.link === undefined;
+	return value.status === 'created' && error === undefined && isLink(value.link);
+}
+
+export function isImportLinksResult(value: unknown): value is ImportLinksResult {
+	if (!isRecord(value) || typeof value.dryRun !== 'boolean' || !Array.isArray(value.results))
+		return false;
+	const { dryRun } = value;
+	const results: unknown[] = value.results;
+	if (!results.every((item, index) => isImportItemResult(item, index, dryRun))) return false;
+	const summary = value.summary;
+	if (!isRecord(summary)) return false;
+	const done = dryRun ? summary.ready : summary.created;
+	const failed = results.filter((item) => isRecord(item) && item.status === 'failed').length;
+	return done === results.length - failed && summary.failed === failed;
 }

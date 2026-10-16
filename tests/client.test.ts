@@ -258,6 +258,23 @@ describe('API client', () => {
 		expect((await client().getUsage()).clickLimit).toBe(5000);
 	});
 
+	it('imports links in bulk, with a dry run first and a safe retry', async () => {
+		const items = [
+			{ destination: 'https://example.com/bulk-1', slug: 'bulk-one' },
+			{ destination: 'https://example.com/bulk-2', slug: 'launch' }
+		];
+		const preview = await client().importLinks({ dryRun: true, items });
+		expect(preview.results.map((result) => result.status)).toEqual(['ready', 'failed']);
+		expect(preview.summary).toEqual({ ready: 1, failed: 1 });
+		const run = await client().importLinks({ dryRun: false, items, idempotencyKey: 'bulk-1' });
+		expect(run.results[0].link?.shortUrl).toBe('https://short.example/bulk-one');
+		expect(run.results[1].error).toMatchObject({ code: 'SLUG_TAKEN', field: 'slug' });
+		const again = await client().importLinks({ dryRun: false, items, idempotencyKey: 'bulk-1' });
+		expect(again).toEqual(run);
+		const refused = await failureOf(client(readOnly).importLinks({ dryRun: true, items }));
+		expect(refused.code).toBe('INSUFFICIENT_SCOPE');
+	});
+
 	it('writes the export pages into one JSON document', async () => {
 		const { links } = await client().listLinks({ limit: 100 });
 		const linkId = links[0]?.id;

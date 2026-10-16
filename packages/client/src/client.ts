@@ -17,7 +17,14 @@ import {
 	type ExportLinkPage,
 	type ExportTotalsPage
 } from '@flared/contracts/export';
-import { isLink, isLinkPage, type Link, type LinkPage } from '@flared/contracts/links';
+import {
+	isImportLinksResult,
+	isLink,
+	isLinkPage,
+	type ImportLinksResult,
+	type Link,
+	type LinkPage
+} from '@flared/contracts/links';
 import { isApiIdentity, type ApiIdentity } from '@flared/contracts/tokens';
 
 export const defaultApiUrl = 'https://api.flared.page/v1';
@@ -71,6 +78,14 @@ export interface UpdateLinkRequest {
 	enabled?: boolean;
 }
 
+export interface ImportLinksRequest {
+	dryRun: boolean;
+	items: Omit<CreateLinkRequest, 'idempotencyKey'>[];
+	// Reuse the same key with the same items to retry an import safely; a new one is generated
+	// when it is absent.
+	idempotencyKey?: string;
+}
+
 export interface ListLinksRequest {
 	limit?: number;
 	cursor?: string;
@@ -82,6 +97,7 @@ export interface ListLinksRequest {
 export interface FlaredClient {
 	me(): Promise<ApiIdentity>;
 	createLink(request: CreateLinkRequest): Promise<{ link: Link; replayed: boolean }>;
+	importLinks(request: ImportLinksRequest): Promise<ImportLinksResult>;
 	listLinks(request?: ListLinksRequest): Promise<LinkPage>;
 	getLink(id: string): Promise<Link>;
 	updateLink(id: string, change: UpdateLinkRequest): Promise<Link>;
@@ -229,6 +245,15 @@ export function createClient(options: ClientOptions): FlaredClient {
 			const link = record(response.body)?.link;
 			if (!isLink(link)) throw invalid(response.status);
 			return { link, replayed: response.headers.get('idempotent-replayed') === 'true' };
+		},
+		async importLinks({ idempotencyKey, ...input }) {
+			const { status, body } = await request('POST', '/links/import', {
+				body: input,
+				headers: { 'idempotency-key': idempotencyKey ?? crypto.randomUUID() },
+				retry: true
+			});
+			if (!isImportLinksResult(body)) throw invalid(status);
+			return body;
 		},
 		async listLinks(query = {}) {
 			const params = new URLSearchParams();

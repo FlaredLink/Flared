@@ -533,6 +533,7 @@ describe('roles', () => {
 	// first test, so each new route states who may use it.
 	const routes: [method: string, path: string, role: 'member' | 'owner'][] = [
 		['POST', '/links', 'member'],
+		['POST', '/links/import', 'member'],
 		['GET', '/links', 'member'],
 		['GET', '/links/:id', 'member'],
 		['PATCH', '/links/:id', 'member'],

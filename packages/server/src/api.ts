@@ -16,9 +16,12 @@ import {
 } from './analytics';
 import type { AnalyticsShards } from './shards';
 import {
+	ImportRequestError,
 	LinkInputError,
+	maxDestinationLength,
 	parseCreateLink,
 	parseIdempotencyKey,
+	parseImportRequest,
 	parseUpdateLink
 } from '@flared/contracts/links';
 import {
@@ -85,7 +88,11 @@ import { defaultQrSize, maxQrSize, minQrSize, qrPng, qrSvg } from '@flared/clien
 import { knownAssistant, type ConnectedApp, type ConnectedAppPage } from '@flared/contracts/oauth';
 import { accountDeletionRunning } from '@flared/data/deletions';
 import { deleteGrant, listGrants } from '@flared/data/oauth';
-import { countCreationAttempt } from '@flared/data/links';
+import {
+	countCreationAttempt,
+	releaseCreationWindow,
+	reserveCreationWindow
+} from '@flared/data/links';
 import { iconHostname } from '@flared/contracts/icons';
 import { iconHeaders, resolveIcon, type Fetcher, type IconStore } from './icons';
 import {
@@ -108,6 +115,7 @@ import {
 	type LinkInviteSettings
 } from './members';
 import { resolveTenant } from './tenancy';
+import { parseImportItems, previewImport, runImport } from './imports';
 import { linkChannel, recordProductEvent, type ProductEvents } from './events';
 import {
 	addDomain,
@@ -169,6 +177,15 @@ export interface ApiDependencies {
 	domains?: DomainSettings;
 	now?: () => number;
 	creationsPerMinute?: number;
+	// Items in one POST /v1/links/import. The default keeps a full request within the 50 D1
+	// queries a Workers Free invocation may run, counting each batch statement as one query:
+	// about 7 statements per request (authentication, workspace, import window, limit notice)
+	// plus up to 11 per item (domain lookup, the 8-statement create batch, and the key check and
+	// stored-result read of a replay). 7 + 3 × 11 = 40. On Workers Paid (1,000) a deployment can
+	// raise it.
+	importItemsPerRequest?: number;
+	// Links imported per workspace in each UTC hour, apart from creationsPerMinute.
+	importsPerHour?: number;
 	// A single-workspace installation's tenant. Any other tenant is refused, in addition to the
 	// database's one-tenant guard.
 	fixedTenantId?: string;
@@ -235,6 +252,12 @@ export async function authenticateBearer(
 }
 
 const maxBodyBytes = 8192;
+// The default of ApiDependencies.importItemsPerRequest. The MCP import_links tool caps its items
+// at it, because the MCP endpoint does not see a deployment's API options.
+export const defaultImportItemsPerRequest = 3;
+// Three destinations at their longest, the other fields, and JSON punctuation.
+const importItemBytes = 3 * maxDestinationLength + 1024;
+const hourMs = 3_600_000;
 // The workspace list and the switch work whatever state the active workspace is in, so a
 // person can always move to another workspace.
 // An invite is accepted from any workspace, or from none.
@@ -277,14 +300,13 @@ function failure(
 	);
 }
 
-async function readJson(request: Request): Promise<unknown> {
+async function readJson(request: Request, limit = maxBodyBytes): Promise<unknown> {
 	if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json'))
 		throw new ApiError('UNSUPPORTED_MEDIA_TYPE', 'Send the body as application/json.');
 	const declared = Number(request.headers.get('content-length') ?? '0');
-	if (declared > maxBodyBytes) throw new ApiError('PAYLOAD_TOO_LARGE', 'The body is too large.');
+	if (declared > limit) throw new ApiError('PAYLOAD_TOO_LARGE', 'The body is too large.');
 	const bytes = await request.arrayBuffer();
-	if (bytes.byteLength > maxBodyBytes)
-		throw new ApiError('PAYLOAD_TOO_LARGE', 'The body is too large.');
+	if (bytes.byteLength > limit) throw new ApiError('PAYLOAD_TOO_LARGE', 'The body is too large.');
 	try {
 		return JSON.parse(new TextDecoder().decode(bytes));
 	} catch {
@@ -319,6 +341,8 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	const { identity, routing, appOrigin } = dependencies;
 	const now = dependencies.now ?? Date.now;
 	const creationsPerMinute = dependencies.creationsPerMinute ?? 60;
+	const importItemsPerRequest = dependencies.importItemsPerRequest ?? defaultImportItemsPerRequest;
+	const importsPerHour = dependencies.importsPerHour ?? 2000;
 	const domainSettings: DomainSettings = dependencies.domains ?? { reservedHostnames: [] };
 	const app = new Hono<{ Variables: Variables }>().basePath('/v1');
 
@@ -476,6 +500,68 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		if (result.status === 403 && !result.replayed) await recordLimit(context, 'links');
 		return respond(result);
 	});
+
+	app.post('/links/import', requireScope('links:write'), async (context) => {
+		const { requestId, tenantId, principal } = context.var;
+		const key = parseIdempotencyKey(context.req.header('idempotency-key') ?? null);
+		if (!key)
+			throw new ApiError(
+				'IDEMPOTENCY_KEY_REQUIRED',
+				'Send an Idempotency-Key header of 1 to 255 printable characters.'
+			);
+		const body = await readJson(context.req.raw, importItemsPerRequest * importItemBytes + 1024);
+		let request;
+		try {
+			request = parseImportRequest(body, importItemsPerRequest);
+		} catch (error) {
+			if (error instanceof ImportRequestError)
+				return failure(error.code, error.message, requestId, {}, error.field);
+			throw error;
+		}
+		const items = parseImportItems(request.items);
+		if (request.dryRun) {
+			const preview = await previewImport(routing, tenantId, items);
+			return respond({ status: 200, body: JSON.stringify(preview) });
+		}
+		const time = now();
+		const valid = items.filter((item) => item.ok).length;
+		const windowKey = `${tenantId}:imports`;
+		// The whole request must fit the hour's window before anything is created. The part that
+		// creates nothing, such as failed or replayed items, is given back afterwards.
+		const allowance =
+			valid > 0
+				? await reserveCreationWindow(routing, windowKey, time, hourMs, valid, importsPerHour)
+				: null;
+		if (allowance && !allowance.allowed)
+			throw new ApiError(
+				'RATE_LIMITED',
+				'Too many links imported this hour. Try again later.',
+				allowance.retryAfterSeconds
+			);
+		const outcome = await runImport(routing, { tenantId, key, items, requestId, now: time });
+		if (allowance && valid > outcome.created)
+			await releaseCreationWindow(
+				routing,
+				windowKey,
+				allowance.windowStart,
+				valid - outcome.created
+			);
+		if (outcome.created > 0) {
+			await noteLimitUsage(identity, routing, tenantId, time);
+			const channel = linkChannel(principal, context.req.header('user-agent') ?? null);
+			for (let count = 0; count < outcome.created; count += 1)
+				await recordProductEvent(dependencies.events, {
+					type: 'link_created',
+					userId: principal.userId,
+					tenantId,
+					channel
+				});
+		}
+		if (outcome.limitReached) await recordLimit(context, 'links');
+		return respond({ status: 200, body: JSON.stringify(outcome.result) });
+	});
+	// Before GET and PATCH /links/:id, so that other methods here answer 405 and not 404.
+	app.all('/links/import', (context) => methodNotAllowed(context, 'POST'));
 
 	app.get('/links', requireScope('links:read'), async (context) => {
 		const { tenantId } = context.var;

@@ -100,6 +100,16 @@ export async function hashCreateInput(input: CreateLinkInput): Promise<string> {
 	return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+export const slugTakenMessage = 'This slug is already taken on this domain.';
+export const limitReachedMessage = 'Your workspace has reached its active link limit.';
+
+// A create without a domain uses the installation default; an explicit one must be usable.
+export function domainUnavailable(domainId: string | null): ApiError {
+	return domainId === null
+		? new ApiError('DEFAULT_DOMAIN_UNAVAILABLE', 'The default short-link domain is not available.')
+		: new ApiError('DOMAIN_UNAVAILABLE', 'This domain is not active for your workspace.');
+}
+
 export interface CreateLinkRequest {
 	tenantId: string;
 	key: string;
@@ -117,24 +127,9 @@ export async function createLink(
 	const { tenantId, key, input, requestId, now } = request;
 	const requestHash = await hashCreateInput(input);
 	const domain = await findUsableDomain(routing, tenantId, input.domainId);
-	if (!domain)
-		throw input.domainId === null
-			? new ApiError(
-					'DEFAULT_DOMAIN_UNAVAILABLE',
-					'The default short-link domain is not available.'
-				)
-			: new ApiError('DOMAIN_UNAVAILABLE', 'This domain is not active for your workspace.');
-	const slugTaken = errorBody(
-		'SLUG_TAKEN',
-		'This slug is already taken on this domain.',
-		requestId,
-		'slug'
-	);
-	const limitReached = errorBody(
-		'PLAN_LIMIT_REACHED',
-		'Your workspace has reached its active link limit.',
-		requestId
-	);
+	if (!domain) throw domainUnavailable(input.domainId);
+	const slugTaken = errorBody('SLUG_TAKEN', slugTakenMessage, requestId, 'slug');
+	const limitReached = errorBody('PLAN_LIMIT_REACHED', limitReachedMessage, requestId);
 	const attempts = input.slug === null ? generatedSlugAttempts : 1;
 	for (let attempt = 0; attempt < attempts; attempt += 1) {
 		const slug = input.slug ?? (request.newSlug ?? generateSlug)();
@@ -292,7 +287,7 @@ export async function changeLink(
 				'LINK_BLOCKED',
 				'Flared blocked this link for abuse. You can only turn it off.'
 			);
-		throw new ApiError('PLAN_LIMIT_REACHED', 'Your workspace has reached its active link limit.');
+		throw new ApiError('PLAN_LIMIT_REACHED', limitReachedMessage);
 	}
 	return getLink(routing, tenantId, linkId);
 }

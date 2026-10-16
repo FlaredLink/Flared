@@ -12,10 +12,16 @@ import { createApi, type ApiPrincipal } from '../packages/server/src/api';
 import type { DomainProvider } from '../packages/server/src/domains';
 import { qrPng } from '../packages/client/src/qr';
 import type { ProductEvent } from '../packages/server/src/events';
-import { createMcpEndpoint, mcpCallsPerMinute, mcpServerCard } from '../packages/server/src/mcp';
+import {
+	createMcpEndpoint,
+	mcpCallsPerMinute,
+	mcpImportItemsPerCall,
+	mcpServerCard
+} from '../packages/server/src/mcp';
 import { createMetadataFetch, type OAuthServerConfig } from '../packages/server/src/oauth/provider';
 import { createOAuthRoutes, registrationsPerSourceHour } from '../packages/server/src/oauth/routes';
 import { knownAssistant, resumeAuthorizationPath } from '../packages/contracts/src/oauth';
+import { counting } from './support/d1-count';
 
 const origin = 'https://app.example';
 const resource = 'https://api.example/mcp';
@@ -903,6 +909,7 @@ describe('MCP endpoint', () => {
 			'get_usage',
 			'list_domains',
 			'create_link',
+			'import_links',
 			'update_link',
 			'disable_link',
 			'enable_link'
@@ -1143,6 +1150,164 @@ describe('MCP endpoint', () => {
 				error: { code, field: 'domain' }
 			});
 		}
+	});
+
+	it('previews an import, then creates its links once, with links:write', async () => {
+		await addTenant('user-11', 'tenant-11');
+		const { tokens } = await connect('user-11');
+		const token = tokens.access_token;
+		const items = [
+			{ destination: 'https://example.com/i1', slug: 'mcp-import-one', utm: { source: 'chat' } },
+			{ destination: 'https://example.com/i2', iosDestination: 'myapp://two' },
+			{ destination: 'ftp://example.com/bad' }
+		];
+		const listed = async () =>
+			(await call(token, 'list_links')).body.result?.structuredContent?.links as unknown[];
+
+		productEvents.length = 0;
+		const preview = await call(token, 'import_links', { dryRun: true, items });
+		expect(preview.status).toBe(200);
+		expect(preview.body.result?.structuredContent).toEqual({
+			dryRun: true,
+			results: [
+				{ index: 0, status: 'ready' },
+				{ index: 1, status: 'ready' },
+				{
+					index: 2,
+					status: 'failed',
+					error: expect.objectContaining({ code: 'INVALID_INPUT', field: 'destination' })
+				}
+			],
+			summary: { ready: 2, failed: 1 }
+		});
+		expect(preview.body.result?.content[0].text).toBe(
+			'Dry run: 2 of 3 items are ready and 1 would fail. Nothing was created.'
+		);
+		expect(productEvents).toEqual([
+			expect.objectContaining({ type: 'mcp_tool_called', userId: 'user-11', tool: 'import_links' })
+		]);
+		expect(await listed()).toEqual([]);
+
+		const run = await call(token, 'import_links', { dryRun: false, items });
+		const result = run.body.result?.structuredContent as {
+			results: { status: string; link?: Record<string, unknown> }[];
+			summary: unknown;
+		};
+		expect(result.summary).toEqual({ created: 2, failed: 1 });
+		expect(result.results.map((item) => item.status)).toEqual(['created', 'created', 'failed']);
+		expect(result.results[0].link).toMatchObject({
+			slug: 'mcp-import-one',
+			destination: 'https://example.com/i1?utm_source=chat'
+		});
+		expect(result.results[0].link).not.toHaveProperty('domainId');
+		expect(result.results[1].link).toMatchObject({ iosDestination: 'myapp://two' });
+		expect(run.body.result?.content[0].text).toBe('Created 2 of 3 links; 1 failed.');
+		expect(await listed()).toHaveLength(2);
+
+		// A retried call replays each item and creates nothing twice.
+		const again = await call(token, 'import_links', { dryRun: false, items });
+		expect(again.body.result?.structuredContent).toEqual(result);
+		expect(await listed()).toHaveLength(2);
+
+		const tooMany = await call(token, 'import_links', {
+			dryRun: false,
+			items: [1, 2, 3, 4].map((n) => ({ destination: `https://example.com/many/${n}` }))
+		});
+		expect(tooMany.body.result?.isError).toBe(true);
+		expect(await listed()).toHaveLength(2);
+
+		const readOnly = await connect('user-11', 'links:read offline_access');
+		const refused = await call(readOnly.tokens.access_token, 'import_links', {
+			dryRun: true,
+			items: [{ destination: 'https://example.com/read-only' }]
+		});
+		expect(refused.status).toBe(403);
+		expect(refused.headers.get('www-authenticate')).toBe(
+			'Bearer error="insufficient_scope", scope="links:read links:write", resource_metadata="https://api.example/.well-known/oauth-protected-resource/mcp"'
+		);
+	});
+
+	it('imports links on an active workspace domain by hostname', async () => {
+		const { tokens } = await connect(
+			'user-8',
+			'links:read links:write domains:read offline_access'
+		);
+		const token = tokens.access_token;
+		const created = await call(token, 'import_links', {
+			dryRun: false,
+			items: [
+				{ destination: 'https://example.com/import-brand', domain: 'GO.Brand.com.' },
+				{ destination: 'https://example.com/import-default' }
+			]
+		});
+		expect(created.body.result?.structuredContent).toMatchObject({
+			results: [
+				{ status: 'created', link: { hostname: 'go.brand.com' } },
+				{ status: 'created', link: { hostname: 'short.example' } }
+			]
+		});
+		const refused = await call(token, 'import_links', {
+			dryRun: true,
+			items: [
+				{ destination: 'https://example.com/import-ok' },
+				{ destination: 'https://example.com/import-pending', domain: 'links.shop.com' }
+			]
+		});
+		expect(refused.body.result?.isError).toBe(true);
+		expect(JSON.parse(refused.body.result?.content[0].text ?? '{}')).toMatchObject({
+			error: { code: 'DOMAIN_UNAVAILABLE', field: 'items.1.domain' }
+		});
+	});
+
+	it('keeps an import of the most items on a workspace domain within 50 D1 statements', async () => {
+		const counter = { queries: 0 };
+		const countedIdentity = counting(identity(), counter);
+		const countedRouting = counting(routing(), counter);
+		const counted = createMcpEndpoint({
+			identity: countedIdentity,
+			resource,
+			issuer: origin,
+			allowedOrigins: [origin],
+			api: (principal) =>
+				createApi({
+					identity: countedIdentity,
+					routing: countedRouting,
+					analytics: { 'analytics-1': env.OAUTH_ANALYTICS },
+					appOrigin: origin,
+					domains: { provider: domainProvider, reservedHostnames: ['short.example'] },
+					authenticate: async () => principal
+				}),
+			events
+		});
+		const { tokens } = await connect(
+			'user-8',
+			'links:read links:write domains:read offline_access'
+		);
+		const items = Array.from({ length: mcpImportItemsPerCall }, (_, index) => ({
+			destination: `https://example.com/budget/${index}`,
+			slug: `mcp-budget-${index}`,
+			domain: 'go.brand.com'
+		}));
+		const measure = async (dryRun: boolean) => {
+			counter.queries = 0;
+			const response = await counted(
+				rpc(tokens.access_token, 'tools/call', {
+					name: 'import_links',
+					arguments: { dryRun, items }
+				})
+			);
+			expect(response.status).toBe(200);
+			const body = (await response.json()) as { result: { structuredContent: unknown } };
+			return { queries: counter.queries, result: body.result.structuredContent };
+		};
+		const preview = await measure(true);
+		const created = await measure(false);
+		const replayed = await measure(false);
+		expect(preview.result).toMatchObject({ summary: { ready: items.length, failed: 0 } });
+		expect(created.result).toMatchObject({ summary: { created: items.length, failed: 0 } });
+		expect(replayed.result).toEqual(created.result);
+		// Measured with 3 items: 12 (dry run), 37 (created), 42 (replayed).
+		for (const run of [preview, created, replayed]) expect(run.queries).toBeLessThan(50);
 	});
 
 	it('returns a PNG QR code of the short URL', async () => {

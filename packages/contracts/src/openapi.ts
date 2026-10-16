@@ -18,7 +18,7 @@ import { tokenScopes, type TokenScope } from './tokens';
 // Duplicated from the client's QR module, which this package cannot import.
 const qrSizes = { minimum: 128, maximum: 2048, default: 512 };
 
-export const openApiVersion = '1.3.0';
+export const openApiVersion = '1.4.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const dateTime = { type: 'string', format: 'date-time' };
@@ -121,6 +121,48 @@ const schemas = {
 		),
 		minProperties: 1
 	},
+	ImportLinksInput: object({
+		dryRun: {
+			type: 'boolean',
+			description: 'true checks each item and writes nothing; false creates the links.'
+		},
+		items: {
+			type: 'array',
+			items: ref('CreateLinkInput'),
+			minItems: 1,
+			description:
+				'Links to create, in order. Each installation sets the most items in one request (3 by default); more fail with TOO_MANY_ITEMS. An invalid item fails alone.'
+		}
+	}),
+	ImportItemResult: object(
+		{
+			index: { ...count, description: 'The item’s position in items.' },
+			status: {
+				type: 'string',
+				enum: ['ready', 'created', 'failed'],
+				description:
+					'ready: a dry run found nothing that stops the item. created: the link exists. failed: see error; nothing was created.'
+			},
+			link: ref('Link'),
+			error: object(
+				{
+					code: { type: 'string', enum: Object.keys(errorStatus) },
+					message: { type: 'string' },
+					field: { type: 'string', description: 'The input that failed validation.' }
+				},
+				['code', 'message']
+			)
+		},
+		['index', 'status']
+	),
+	ImportLinksResult: object({
+		dryRun: { type: 'boolean' },
+		results: { type: 'array', items: ref('ImportItemResult') },
+		summary: {
+			oneOf: [object({ ready: count, failed: count }), object({ created: count, failed: count })],
+			description: 'ready and failed for a dry run; created and failed otherwise.'
+		}
+	}),
 	DailyClicks: object({ day, clicks: count }),
 	DimensionClicks: object({ value: { type: 'string' }, clicks: count }),
 	LinkAnalytics: object({
@@ -397,6 +439,32 @@ export function openApiDocument(serverUrl: string) {
 							}
 						],
 						requestBody: { required: true, content: json(ref('CreateLinkInput')) }
+					}
+				)
+			},
+			'/links/import': {
+				post: operation(
+					'Import links in bulk',
+					'links:write',
+					{
+						'200': {
+							description:
+								'One result for each item, in order. A repeated request with the same key and items returns the same results and creates nothing twice. A real run must fit the workspace’s hourly import allowance as a whole, or it answers 429 with Retry-After and creates nothing; a dry run uses none of it.',
+							content: json(ref('ImportLinksResult'))
+						}
+					},
+					{
+						parameters: [
+							{
+								name: 'Idempotency-Key',
+								in: 'header',
+								required: true,
+								description:
+									'Kept for 24 hours. Reuse it with the same items to retry safely; each item is stored as `<key>:<index>`.',
+								schema: { type: 'string', minLength: 1, maxLength: maxIdempotencyKeyLength }
+							}
+						],
+						requestBody: { required: true, content: json(ref('ImportLinksInput')) }
 					}
 				)
 			},

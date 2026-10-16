@@ -19,16 +19,20 @@ import {
 	LinkInputError,
 	maxUtmLength,
 	withUtm,
+	type ImportLinksResult,
 	type Link
 } from '@flared/contracts/links';
 import { tokenScopes, type TokenScope } from '@flared/contracts/tokens';
 import { countMcpCall, findAccessToken } from '@flared/data/oauth';
-import type { ApiPrincipal } from './api';
+import { defaultImportItemsPerRequest, type ApiPrincipal } from './api';
 import { accessTokenPrefix, hashOAuthToken } from './oauth/provider';
 import { resolveTenant } from './tenancy';
 import { recordProductEvent, type ProductEvents } from './events';
 
 export const mcpCallsPerMinute = 60;
+// Items in one import_links call. The endpoint does not see a deployment's API options, so it
+// uses the API default; an API with a lower value answers TOO_MANY_ITEMS.
+export const mcpImportItemsPerCall = defaultImportItemsPerRequest;
 const maxBodyBytes = 65_536;
 
 type OAuthPrincipal = Extract<ApiPrincipal, { kind: 'oauth' }>;
@@ -89,6 +93,7 @@ const toolScopes: Record<string, TokenScope> = {
 	get_usage: 'usage:read',
 	list_domains: 'domains:read',
 	create_link: 'links:write',
+	import_links: 'links:write',
 	update_link: 'links:write',
 	disable_link: 'links:write',
 	enable_link: 'links:write'
@@ -130,6 +135,47 @@ const linkOutput = z.looseObject({
 });
 type LinkOutput = z.infer<typeof linkOutput>;
 const clicks = z.looseObject({ value: z.string(), clicks: z.number() });
+
+const importOutput = z.looseObject({
+	dryRun: z.boolean(),
+	results: z.array(
+		z.looseObject({
+			index: z.number(),
+			status: z.enum(['ready', 'created', 'failed']),
+			link: linkOutput.optional(),
+			error: z
+				.looseObject({ code: z.string(), message: z.string(), field: z.string().optional() })
+				.optional()
+		})
+	),
+	summary: z.looseObject({
+		ready: z.number().optional(),
+		created: z.number().optional(),
+		failed: z.number()
+	})
+});
+type ImportOutput = z.infer<typeof importOutput>;
+
+function importResult(result: ImportLinksResult): ImportOutput {
+	return {
+		dryRun: result.dryRun,
+		results: result.results.map(({ index, status, link, error }) => ({
+			index,
+			status,
+			...(link ? { link: linkResult(link) } : {}),
+			...(error ? { error: { ...error } } : {})
+		})),
+		summary: result.summary
+	};
+}
+
+function importSummary({ dryRun, results }: ImportOutput): string {
+	const failed = results.filter((item) => item.status === 'failed').length;
+	const done = results.length - failed;
+	return dryRun
+		? `Dry run: ${done} of ${results.length} items are ready and ${failed} would fail. Nothing was created.`
+		: `Created ${done} of ${results.length} links; ${failed} failed.`;
+}
 
 const domainOutput = z.looseObject({
 	hostname: z.string(),
@@ -173,10 +219,11 @@ function linkResult(link: Link): LinkOutput {
 	};
 }
 
-type ImageContent = { type: 'image'; data: string; mimeType: string };
+type ExtraContent =
+	{ type: 'image'; data: string; mimeType: string } | { type: 'text'; text: string };
 
-// extra comes before the JSON text, such as an image the result describes.
-function success<T extends Record<string, unknown>>(value: T, extra: ImageContent[] = []) {
+// extra comes before the JSON text, such as an image or a summary of the result.
+function success<T extends Record<string, unknown>>(value: T, extra: ExtraContent[] = []) {
 	return {
 		content: [...extra, { type: 'text' as const, text: JSON.stringify(value) }],
 		structuredContent: value
@@ -209,7 +256,7 @@ function failure(error: unknown) {
 
 async function attempt<T extends Record<string, unknown>>(
 	operation: () => Promise<T>,
-	extra: (value: T) => Promise<ImageContent[]> = async () => []
+	extra: (value: T) => Promise<ExtraContent[]> = async () => []
 ) {
 	try {
 		const value = await operation();
@@ -247,6 +294,51 @@ function base64(bytes: Uint8Array): string {
 
 const slug = z.string().regex(/^[a-z0-9-]{3,64}$/);
 
+const createLinkInput = z.object({
+	destination: z.string().min(1).max(4096).describe('The full URL, starting with https://.'),
+	slug: slug.optional().describe('The path after the domain. Generated when absent.'),
+	title: z.string().max(200).optional(),
+	domain: z
+		.string()
+		.min(1)
+		.max(253)
+		.optional()
+		.describe('An active hostname from list_domains. The default domain when absent.'),
+	iosDestination: deviceDestination('iPhone').optional(),
+	androidDestination: deviceDestination('Android').optional(),
+	utm: utmInput.optional()
+});
+type CreateLinkFields = z.infer<typeof createLinkInput>;
+
+// A create request's fields: utm goes into the destination, and domain becomes domainId.
+function createFields({ domain: _domain, utm, ...given }: CreateLinkFields) {
+	return utm ? { ...given, destination: withUtm(given.destination, utm) } : given;
+}
+
+// A hostname from list_domains; platform hostnames such as flared.link count too.
+function activeDomain(domains: Domain[], hostname: string, field: string): Domain {
+	const match = domains.find((domain) => domain.hostname === hostname);
+	if (!match)
+		throw new FlaredApiError(
+			'NOT_FOUND',
+			`No domain ${hostname} in this workspace.`,
+			404,
+			null,
+			null,
+			field
+		);
+	if (match.state !== 'active')
+		throw new FlaredApiError(
+			'DOMAIN_UNAVAILABLE',
+			`${hostname} is ${match.state}. Links can use it once it is active.`,
+			422,
+			null,
+			null,
+			field
+		);
+	return match;
+}
+
 function createTools(client: FlaredClient, grantKey: string, now: () => number): McpServer {
 	const server = new McpServer({ name: 'flared', title: 'Flared', version: '1.0.0' });
 
@@ -266,29 +358,8 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 		}
 	}
 
-	// A hostname from list_domains; platform hostnames such as flared.link count too.
 	async function findActiveDomain(hostname: string): Promise<Domain> {
-		const { domains } = await client.listDomains();
-		const match = domains.find((domain) => domain.hostname === hostname);
-		if (!match)
-			throw new FlaredApiError(
-				'NOT_FOUND',
-				`No domain ${hostname} in this workspace.`,
-				404,
-				null,
-				null,
-				'domain'
-			);
-		if (match.state !== 'active')
-			throw new FlaredApiError(
-				'DOMAIN_UNAVAILABLE',
-				`${hostname} is ${match.state}. Links can use it once it is active.`,
-				422,
-				null,
-				null,
-				'domain'
-			);
-		return match;
+		return activeDomain((await client.listDomains()).domains, hostname, 'domain');
 	}
 
 	server.registerTool(
@@ -495,20 +566,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 			title: 'Create a link',
 			description:
 				'Creates a public short link to a destination URL. Optional utm values are added to the destination; optional iPhone and Android destinations, such as app links, receive visitors on those devices. The same request repeated within five minutes returns the first link.',
-			inputSchema: z.object({
-				destination: z.string().min(1).max(4096).describe('The full URL, starting with https://.'),
-				slug: slug.optional().describe('The path after the domain. Generated when absent.'),
-				title: z.string().max(200).optional(),
-				domain: z
-					.string()
-					.min(1)
-					.max(253)
-					.optional()
-					.describe('An active hostname from list_domains. The default domain when absent.'),
-				iosDestination: deviceDestination('iPhone').optional(),
-				androidDestination: deviceDestination('Android').optional(),
-				utm: utmInput.optional()
-			}),
+			inputSchema: createLinkInput,
 			outputSchema: z.looseObject({ link: linkOutput, replayed: z.boolean() }),
 			annotations: {
 				title: 'Create a link',
@@ -521,8 +579,8 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 		},
 		(input) =>
 			attempt(async () => {
-				const { domain, utm, ...given } = input;
-				const fields = utm ? { ...given, destination: withUtm(given.destination, utm) } : given;
+				const { domain } = input;
+				const fields = createFields(input);
 				const hostname = domain === undefined ? undefined : hostnameOf(domain);
 				const domainId = hostname === undefined ? undefined : (await findActiveDomain(hostname)).id;
 				const window = Math.floor(now() / 300_000);
@@ -536,6 +594,58 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 				});
 				return { link: linkResult(created.link), replayed: created.replayed };
 			})
+	);
+
+	server.registerTool(
+		'import_links',
+		{
+			title: 'Import links',
+			description: `Creates up to ${mcpImportItemsPerCall} short links in one call; each item takes the fields of create_link. First call it with dryRun true and show the person the result: a dry run checks every item and creates nothing. Then call it again with dryRun false and the same items. Each item is created or fails on its own. The same call repeated within five minutes returns the first results and creates nothing twice. For more links, send several calls of up to ${mcpImportItemsPerCall} items.`,
+			inputSchema: z.object({
+				dryRun: z
+					.boolean()
+					.describe(
+						'true checks the items and creates nothing; use it first. false creates the links.'
+					),
+				items: z.array(createLinkInput).min(1).max(mcpImportItemsPerCall)
+			}),
+			outputSchema: importOutput,
+			annotations: {
+				title: 'Import links',
+				readOnlyHint: false,
+				destructiveHint: true,
+				idempotentHint: true,
+				openWorldHint: true
+			}
+		},
+		({ dryRun, items }) =>
+			attempt(
+				async () => {
+					const hostnames = items.map((item) =>
+						item.domain === undefined ? undefined : hostnameOf(item.domain)
+					);
+					const domains = hostnames.some((hostname) => hostname !== undefined)
+						? (await client.listDomains()).domains
+						: [];
+					const requested = items.map((item, index) => {
+						const hostname = hostnames[index];
+						const fields = createFields(item);
+						return hostname === undefined
+							? fields
+							: {
+									...fields,
+									domainId: activeDomain(domains, hostname, `items.${index}.domain`).id
+								};
+					});
+					const window = Math.floor(now() / 300_000);
+					// The API gives item n the key `${key}:${n}`, so a retry replays each item.
+					const key = `mcp-import-${await sha256(JSON.stringify([grantKey, window, requested]))}`;
+					return importResult(
+						await client.importLinks({ dryRun, items: requested, idempotencyKey: key })
+					);
+				},
+				async (value) => [{ type: 'text', text: importSummary(value) }]
+			)
 	);
 
 	server.registerTool(

@@ -31,6 +31,8 @@ export function exitCodeFor(code: ClientErrorCode): number {
 		case 'NOT_FOUND':
 			return exitCodes.notFound;
 		case 'INVALID_INPUT':
+		case 'INVALID_IMPORT':
+		case 'TOO_MANY_ITEMS':
 		case 'SLUG_TAKEN':
 		case 'IDEMPOTENCY_KEY_REUSED':
 		case 'IDEMPOTENCY_KEY_REQUIRED':

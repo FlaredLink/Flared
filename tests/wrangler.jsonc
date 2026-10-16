@@ -337,6 +337,21 @@
 			"binding": "MEMBERS_ANALYTICS",
 			"database_name": "members-analytics",
 			"database_id": "00000000-0000-0000-0000-000000000075"
+		},
+		{
+			"binding": "IMPORT_IDENTITY",
+			"database_name": "import-identity",
+			"database_id": "00000000-0000-0000-0000-000000000091"
+		},
+		{
+			"binding": "IMPORT_ROUTING",
+			"database_name": "import-routing",
+			"database_id": "00000000-0000-0000-0000-000000000092"
+		},
+		{
+			"binding": "IMPORT_ANALYTICS",
+			"database_name": "import-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000093"
 		}
 	]
 }

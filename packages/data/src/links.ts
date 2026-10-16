@@ -145,6 +145,67 @@ export async function countCreationAttempt(
 	};
 }
 
+// Adds count to a fixed window only while the total stays within the limit. One statement, so
+// concurrent requests cannot pass the limit together; a refused request adds nothing.
+export async function reserveCreationWindow(
+	db: D1Database,
+	key: string,
+	now: number,
+	windowMs: number,
+	count: number,
+	limit: number
+): Promise<{ allowed: boolean; windowStart: number; retryAfterSeconds: number }> {
+	const windowStart = now - (now % windowMs);
+	const row = await db
+		.prepare(
+			`INSERT INTO creation_windows (tenant_id, window_start, count) SELECT ?1, ?2, ?3 WHERE ?3 <= ?4
+			ON CONFLICT(tenant_id, window_start) DO UPDATE SET count = count + excluded.count
+			WHERE count + excluded.count <= ?4 RETURNING count`
+		)
+		.bind(key, windowStart, count, limit)
+		.first<{ count: unknown }>();
+	return {
+		allowed: typeof row?.count === 'number',
+		windowStart,
+		retryAfterSeconds: Math.max(1, Math.ceil((windowStart + windowMs - now) / 1000))
+	};
+}
+
+// Gives back the part of a reservation that created nothing.
+export async function releaseCreationWindow(
+	db: D1Database,
+	key: string,
+	windowStart: number,
+	count: number
+): Promise<void> {
+	await db
+		.prepare(
+			'UPDATE creation_windows SET count = MAX(count - ?3, 0) WHERE tenant_id = ?1 AND window_start = ?2'
+		)
+		.bind(key, windowStart, count)
+		.run();
+}
+
+// For each (domain, slug), whether a create would find it taken: by a permanent reservation, or
+// by the operator's list on a platform domain. The same conditions as createLinkRecord.
+export async function readTakenSlugs(
+	db: D1Database,
+	addresses: { domainId: string; slug: string }[]
+): Promise<boolean[]> {
+	if (addresses.length === 0) return [];
+	const results = await db.batch<{ taken: number }>(
+		addresses.map(({ domainId, slug }) =>
+			db
+				.prepare(
+					`SELECT EXISTS (SELECT 1 FROM slug_reservations WHERE domain_id = ?1 AND slug = ?2)
+					OR (EXISTS (SELECT 1 FROM reserved_slugs WHERE slug = ?2) AND EXISTS (SELECT 1 FROM domains WHERE id = ?1 AND tenant_id IS NULL)) AS taken`
+				)
+				.bind(domainId, slug)
+		)
+	);
+	return results.map((result) => result.results[0]?.taken === 1);
+}
+
 export async function readStoredResult(
 	db: D1Database,
 	tenantId: string,

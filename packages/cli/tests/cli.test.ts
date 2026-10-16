@@ -357,6 +357,8 @@ describe('flared CLI', () => {
 	it('maps every API error code to its documented exit code', async () => {
 		const expected: Record<ErrorCode, number> = {
 			INVALID_INPUT: 6,
+			INVALID_IMPORT: 6,
+			TOO_MANY_ITEMS: 6,
 			IDEMPOTENCY_KEY_REQUIRED: 6,
 			IDEMPOTENCY_KEY_REUSED: 6,
 			SLUG_TAKEN: 6,
