@@ -66,7 +66,7 @@
 	{#if limits && limitsView}
 		<p>
 			{owner
-				? 'Lower limits never stop existing links, domains, or members; they block new ones. Higher limits use more of your Cloudflare plan; see docs/self-hosting/limits.md.'
+				? 'Lower limits never stop existing links, domains, members, or webhook endpoints; they block new ones. A webhook endpoint limit of 0 turns webhooks off. Higher limits use more of your Cloudflare plan; see docs/self-hosting/limits.md.'
 				: 'Only the workspace owner can change the limits.'}
 		</p>
 		<form

@@ -37,6 +37,7 @@
 		[settingsRoutes.limits]: workspaceLead,
 		[settingsRoutes.updates]: 'Applies to this installation.',
 		[settingsRoutes.tokens]: `Your tokens for ${workspaceName}. Other members cannot see them.`,
+		[settingsRoutes.webhooks]: workspaceLead,
 		[settingsRoutes.apps]: `Your connected apps in ${workspaceName}. Other members cannot see them.`
 	});
 	const groups: SettingsGroup[] = $derived([
@@ -61,6 +62,7 @@
 					? [{ href: settingsRoutes.updates, label: 'Updates', icon: 'download' as const }]
 					: []),
 				{ href: settingsRoutes.tokens, label: 'API tokens', icon: 'key' },
+				{ href: settingsRoutes.webhooks, label: 'Webhooks', icon: 'lightning' },
 				{ href: settingsRoutes.apps, label: 'Connected apps', icon: 'plugs' }
 			]
 		}
@@ -177,8 +179,8 @@
 			<section class="section reauth" aria-labelledby="reauth-heading">
 				<h2 id="reauth-heading" tabindex="-1" bind:this={reauthHeading}>Confirm it’s you</h2>
 				<p>
-					Changing credentials and limits needs a sign-in from the last 10 minutes. Enter your
-					password{canUsePasskey ? ' or use a passkey' : ''}.
+					Changing credentials, limits, and webhook secrets needs a sign-in from the last 10
+					minutes. Enter your password{canUsePasskey ? ' or use a passkey' : ''}.
 				</p>
 				<form
 					class="field"

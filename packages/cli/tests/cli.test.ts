@@ -367,6 +367,7 @@ describe('flared CLI', () => {
 			PLAN_LIMIT_REACHED: 7,
 			DOMAIN_TAKEN: 6,
 			DOMAIN_LIMIT_REACHED: 7,
+			WEBHOOK_LIMIT_REACHED: 7,
 			ACCOUNT_DELETING: 4,
 			WORKSPACE_SUSPENDED: 4,
 			// Only the dashboard receives these; a token never does.

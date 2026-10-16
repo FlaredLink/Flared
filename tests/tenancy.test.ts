@@ -3,7 +3,12 @@ import { env } from 'cloudflare:workers';
 import { applyD1Migrations } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { applyRoutingPolicy } from '../packages/data/src/routing-policy';
-import { createTenant, readInstallationMode, type NewTenant } from '../packages/data/src/tenancy';
+import {
+	createTenant,
+	readInstallationMode,
+	updateTenantPolicy,
+	type NewTenant
+} from '../packages/data/src/tenancy';
 import {
 	projectAnalyticsPolicy,
 	projectPolicy,
@@ -225,6 +230,7 @@ describe('policy projection', () => {
 			analyticsShardId: 'analytics-1',
 			activeLinkLimit: 100,
 			domainLimit: 1,
+			webhookEndpointLimit: 0,
 			suspendedAt: null,
 			now: 22
 		});
@@ -245,5 +251,57 @@ describe('policy projection', () => {
 		expect((await resolveTenant(db, user('owner-a'))).status).toBe('active');
 		expect(await retryProjections(db, stores(), 32, 100)).toEqual({ projected: 0, failed: 0 });
 		await expect(retryProjections(db, stores(), 33, 101)).rejects.toThrow();
+	});
+
+	it('projects the webhook endpoint limit and heals a routing row projected without it', async () => {
+		const db = env.MULTI_IDENTITY;
+		const limitIn = async (store: D1Database) =>
+			(
+				await store
+					.prepare(
+						"SELECT webhook_endpoint_limit AS n FROM tenant_policy WHERE tenant_id = 'tenant-hooks'"
+					)
+					.first<{ n: number | null }>()
+			)?.n;
+		await addUser(db, 'owner-hooks');
+		await expect(
+			createTenant(db, {
+				...tenant('tenant-hooks', 'owner-hooks'),
+				limits: { ...limits, webhookEndpointLimit: -1 }
+			})
+		).rejects.toThrow('Invalid policy limits');
+		await createTenant(db, tenant('tenant-hooks', 'owner-hooks'));
+		expect(await limitIn(db)).toBe(0);
+		expect(
+			await updateTenantPolicy(db, 'tenant-hooks', { ...limits, webhookEndpointLimit: 5 }, 40)
+		).toBe(2);
+		expect(await updateTenantPolicy(db, 'tenant-hooks', limits, 41)).toBe(3);
+		expect(await limitIn(db)).toBe(5);
+		await expect(
+			updateTenantPolicy(db, 'tenant-hooks', { ...limits, webhookEndpointLimit: -1 }, 42)
+		).rejects.toThrow('Invalid policy limits');
+		await projectPolicy(db, stores(), 'tenant-hooks', 42);
+		expect(await limitIn(env.ROUTING)).toBe(5);
+
+		// A row that an older version projected at this revision has no limit yet.
+		await env.ROUTING.prepare(
+			"UPDATE tenant_policy SET webhook_endpoint_limit = NULL WHERE tenant_id = 'tenant-hooks'"
+		).run();
+		expect(await retryProjections(db, stores(), 43, 100)).toEqual({ projected: 1, failed: 0 });
+		expect(await limitIn(env.ROUTING)).toBe(5);
+		expect(await routingRow('tenant-hooks')).toMatchObject({ revision: 3 });
+		// The same revision never replaces a stored limit.
+		await applyRoutingPolicy(env.ROUTING, {
+			tenantId: 'tenant-hooks',
+			revision: 3,
+			analyticsShardId: 'analytics-1',
+			activeLinkLimit: 100,
+			domainLimit: 1,
+			webhookEndpointLimit: 9,
+			suspendedAt: null,
+			now: 44
+		});
+		expect(await limitIn(env.ROUTING)).toBe(5);
+		expect(await retryProjections(db, stores(), 45, 100)).toEqual({ projected: 0, failed: 0 });
 	});
 });

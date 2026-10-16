@@ -96,7 +96,14 @@ const sessionOnly = [
 	'POST /workspace/transfer',
 	'DELETE /workspace/transfer',
 	'POST /workspace/transfer/accept',
-	'POST /members/{userId}/password-reset'
+	'POST /members/{userId}/password-reset',
+	'GET /webhooks',
+	'POST /webhooks',
+	'PATCH /webhooks/{id}',
+	'DELETE /webhooks/{id}',
+	'POST /webhooks/{id}/secret',
+	'POST /webhooks/{id}/test',
+	'GET /webhooks/{id}/deliveries'
 ];
 const document = openApiDocument(baseUrl);
 type Operation = { responses: Record<string, { content?: Record<string, { schema: unknown }> }> };

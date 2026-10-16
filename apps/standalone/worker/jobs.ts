@@ -18,6 +18,7 @@ import {
 } from '@flared/server/notices';
 import { measureShards } from '@flared/server/operations';
 import { retryProjections } from '@flared/server/tenancy';
+import { cleanupWebhooks, runWebhookJob } from '@flared/server/webhooks';
 import { checkWaitingDomains, createWorkerDomainProvider } from '@flared/server/worker-domains';
 import type { DeploymentConfig } from './config';
 import { checkForUpdates, defaultFeed, type FeedOptions } from './updates';
@@ -30,7 +31,8 @@ const frequentJobs = [
 	'account_deletions',
 	'click_notices',
 	'shard_samples',
-	'domain_checks'
+	'domain_checks',
+	'webhook_deliveries'
 ] as const;
 const dailyJobs = [
 	'auth_cleanup',
@@ -39,7 +41,8 @@ const dailyJobs = [
 	'limit_notices',
 	'deletion_cleanup',
 	'operations_purge',
-	'update_check'
+	'update_check',
+	'webhook_cleanup'
 ] as const;
 type JobName = (typeof frequentJobs)[number] | (typeof dailyJobs)[number];
 
@@ -55,6 +58,11 @@ const healthyWithinMs = 30 * 60 * 1000;
 // The app host is null only before setup, when no workspace can be deleted.
 export type JobConfig = DeploymentConfig & { host: string | null };
 
+// The installation's own hostname, as the API reserves it.
+function reservedHostnames(config: JobConfig): string[] {
+	return config.host ? [config.host] : [];
+}
+
 export function deletionDependencies(config: JobConfig): DeletionDependencies {
 	// No email in this edition, and no records of its own beyond the core tables.
 	return {
@@ -63,7 +71,7 @@ export function deletionDependencies(config: JobConfig): DeletionDependencies {
 		shards: config.shards,
 		domains: {
 			provider: createWorkerDomainProvider({ routing: config.routing }),
-			reservedHostnames: config.host ? [config.host] : []
+			reservedHostnames: reservedHostnames(config)
 		}
 	};
 }
@@ -101,6 +109,23 @@ async function checkDomains(config: JobConfig, now: number): Promise<void> {
 		now: () => now
 	});
 	if (result.failed > 0) throw new Error('Domain checks failed');
+}
+
+// Click milestones, events that a request left, and retries. 25 deliveries, 5 at once, keep
+// the frequent run inside the Free plan's 50 subrequests and 50 D1 queries together with the
+// other frequent jobs. A receiver's failure is recorded with its delivery; it does not fail
+// the job.
+async function deliverWebhooks(config: JobConfig, now: number): Promise<void> {
+	await runWebhookJob(
+		{ routing: config.routing, analytics: config.shards },
+		{
+			secret: config.secret,
+			reservedHostnames: reservedHostnames(config),
+			now: () => now,
+			maxDeliveries: 25,
+			concurrency: 5
+		}
+	);
 }
 
 async function cleanupAuth(config: JobConfig, now: number): Promise<void> {
@@ -149,7 +174,8 @@ export async function runScheduled(
 					['account_deletions', () => runAccountDeletions(config)],
 					['click_notices', () => recordClickNotices(config, now)],
 					['shard_samples', () => sampleShards(config, scheduledTime)],
-					['domain_checks', () => checkDomains(config, now)]
+					['domain_checks', () => checkDomains(config, now)],
+					['webhook_deliveries', () => deliverWebhooks(config, now)]
 				])
 			: await run([
 					['auth_cleanup', () => cleanupAuth(config, now)],
@@ -159,7 +185,8 @@ export async function runScheduled(
 					['deletion_cleanup', async () => void (await cleanupDeletions(config.identity, now))],
 					['operations_purge', () => purgeOperationRecords(config, now)],
 					// Off unless the owner turned it on; a failed fetch is recorded, not thrown.
-					['update_check', async () => void (await checkForUpdates(config.identity, feed, now))]
+					['update_check', async () => void (await checkForUpdates(config.identity, feed, now))],
+					['webhook_cleanup', async () => void (await cleanupWebhooks(config.routing, now))]
 				]);
 	for (const result of results) if (result.status === 'rejected') throw result.reason;
 }

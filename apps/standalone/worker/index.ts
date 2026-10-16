@@ -58,7 +58,8 @@ const initialLimits = {
 	monthlyClickLimit: 50_000,
 	retentionDays: 30,
 	domainLimit: 5,
-	memberLimit: 10
+	memberLimit: 10,
+	webhookEndpointLimit: 10
 };
 
 const deadLetterQueue = 'flared-clicks-dlq';
@@ -160,7 +161,8 @@ class Installation {
 		return this.status.state === 'active' ? (this.status.fixedTenantId ?? '') : '';
 	}
 
-	api(authenticate: (request: Request) => Promise<ApiAuthentication>) {
+	// The context runs a change's webhook deliveries after the response, in the same invocation.
+	api(authenticate: (request: Request) => Promise<ApiAuthentication>, ctx: ExecutionContext) {
 		const { config } = this;
 		return createApi({
 			identity: config.identity,
@@ -181,12 +183,23 @@ class Installation {
 				inviteUrl: (token) => `${config.origin}/app/invite#${token}`,
 				resetUrl: (token) => `${config.origin}/app/reset#${token}`
 			},
-			icons: { store: workersCacheIconStore() }
+			icons: { store: workersCacheIconStore() },
+			// Endpoint secrets come from the installation's auth secret: AUTH_SECRET, or the one
+			// stored at the first request. A new value changes every endpoint secret.
+			webhooks: {
+				secret: config.secret,
+				background: (task) => ctx.waitUntil(task)
+			}
 		});
 	}
 
 	// session: the app's same-origin API, cookies only. bearer: tokens only, never cookies.
-	apiRequest(request: Request, mode: 'session' | 'bearer', path: string): Promise<Response> {
+	apiRequest(
+		request: Request,
+		mode: 'session' | 'bearer',
+		path: string,
+		ctx: ExecutionContext
+	): Promise<Response> {
 		const url = new URL(request.url);
 		url.pathname = path;
 		const names =
@@ -199,7 +212,9 @@ class Installation {
 			auth: this.auth,
 			origin: this.config.origin
 		});
-		return Promise.resolve(this.api(authenticate).fetch(rebuilt(request, names, url.toString())));
+		return Promise.resolve(
+			this.api(authenticate, ctx).fetch(rebuilt(request, names, url.toString()))
+		);
 	}
 
 	redirects() {
@@ -296,8 +311,8 @@ async function appHost(
 			authForwarding
 		);
 	if (path.startsWith('/api/v1/'))
-		return site.apiRequest(request, 'session', path.slice('/api'.length));
-	if (path.startsWith('/v1/')) return site.apiRequest(request, 'bearer', path);
+		return site.apiRequest(request, 'session', path.slice('/api'.length), ctx);
+	if (path.startsWith('/v1/')) return site.apiRequest(request, 'bearer', path, ctx);
 	if (path.startsWith('/api/account/'))
 		return deleteAccount(rebuilt(request, ['cookie', 'origin', 'content-type', 'content-length']), {
 			identity: config.identity,
@@ -343,7 +358,7 @@ async function appHost(
 			]),
 			site.oauthSite(),
 			config.identity,
-			(principal) => site.api(async () => principal)
+			(principal) => site.api(async () => principal, ctx)
 		);
 	if (
 		path === '/.well-known/oauth-protected-resource' ||
@@ -373,7 +388,7 @@ function page(
 	const api: AuthService = {
 		fetch: (incoming) => {
 			const url = new URL(incoming.url);
-			return site.apiRequest(incoming, 'session', url.pathname);
+			return site.apiRequest(incoming, 'session', url.pathname, ctx);
 		}
 	};
 	const oauth: AuthService = {

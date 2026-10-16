@@ -8,6 +8,7 @@ export interface Limits {
 	retentionDays: number;
 	domainLimit: number;
 	memberLimit: number;
+	webhookEndpointLimit: number;
 }
 
 export interface LimitsView {
@@ -23,7 +24,8 @@ export const limitFields: { key: keyof Limits; label: string; unit: string }[] =
 	{ key: 'monthlyClickLimit', label: 'Recorded clicks a month', unit: 'clicks' },
 	{ key: 'retentionDays', label: 'Days of click history', unit: 'days' },
 	{ key: 'domainLimit', label: 'Own domains', unit: 'domains' },
-	{ key: 'memberLimit', label: 'People, open invites included', unit: 'people' }
+	{ key: 'memberLimit', label: 'People, open invites included', unit: 'people' },
+	{ key: 'webhookEndpointLimit', label: 'Webhook endpoints', unit: 'endpoints' }
 ];
 
 function count(value: unknown): value is number {
@@ -45,13 +47,21 @@ export function toLimitsView(value: unknown): LimitsView | null {
 	const body = fields(value);
 	const limits = fields(body.limits);
 	const bounds = fields(body.bounds);
-	const { activeLinkLimit, monthlyClickLimit, retentionDays, domainLimit, memberLimit } = limits;
+	const {
+		activeLinkLimit,
+		monthlyClickLimit,
+		retentionDays,
+		domainLimit,
+		memberLimit,
+		webhookEndpointLimit
+	} = limits;
 	const ranges = {
 		activeLinkLimit: range(bounds.activeLinkLimit),
 		monthlyClickLimit: range(bounds.monthlyClickLimit),
 		retentionDays: range(bounds.retentionDays),
 		domainLimit: range(bounds.domainLimit),
-		memberLimit: range(bounds.memberLimit)
+		memberLimit: range(bounds.memberLimit),
+		webhookEndpointLimit: range(bounds.webhookEndpointLimit)
 	};
 	if (
 		typeof body.pending !== 'boolean' ||
@@ -60,15 +70,24 @@ export function toLimitsView(value: unknown): LimitsView | null {
 		!count(retentionDays) ||
 		!count(domainLimit) ||
 		!count(memberLimit) ||
+		!count(webhookEndpointLimit) ||
 		!ranges.activeLinkLimit ||
 		!ranges.monthlyClickLimit ||
 		!ranges.retentionDays ||
 		!ranges.domainLimit ||
-		!ranges.memberLimit
+		!ranges.memberLimit ||
+		!ranges.webhookEndpointLimit
 	)
 		return null;
 	return {
-		limits: { activeLinkLimit, monthlyClickLimit, retentionDays, domainLimit, memberLimit },
+		limits: {
+			activeLinkLimit,
+			monthlyClickLimit,
+			retentionDays,
+			domainLimit,
+			memberLimit,
+			webhookEndpointLimit
+		},
 		pending: body.pending,
 		analyticsBytes: count(body.analyticsBytes) ? body.analyticsBytes : null,
 		bounds: {
@@ -76,7 +95,8 @@ export function toLimitsView(value: unknown): LimitsView | null {
 			monthlyClickLimit: ranges.monthlyClickLimit,
 			retentionDays: ranges.retentionDays,
 			domainLimit: ranges.domainLimit,
-			memberLimit: ranges.memberLimit
+			memberLimit: ranges.memberLimit,
+			webhookEndpointLimit: ranges.webhookEndpointLimit
 		}
 	};
 }

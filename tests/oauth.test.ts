@@ -6,6 +6,8 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { makeSignature } from 'better-auth/crypto';
 import { createTenant, setActiveWorkspace } from '../packages/data/src/tenancy';
 import { setLinkBlock } from '../packages/data/src/links';
+import { createWebhookEndpoint } from '../packages/data/src/webhooks';
+import { keyId } from '../packages/server/src/webhooks/signing';
 import { deleteGrant, deleteExpiredOAuthRecords } from '../packages/data/src/oauth';
 import { projectPolicy } from '../packages/server/src/tenancy';
 import { reinstateTenant, suspendTenant } from '../packages/server/src/operator';
@@ -1278,6 +1280,23 @@ describe('MCP endpoint', () => {
 		const counter = { queries: 0 };
 		const countedIdentity = counting(identity(), counter);
 		const countedRouting = counting(routing(), counter);
+		// One endpoint, so each created link stages an event and the delivery runs in the same
+		// invocation.
+		const webhookSecret = 'test-only-webhook-secret';
+		await routing()
+			.prepare("UPDATE tenant_policy SET webhook_endpoint_limit = 5 WHERE tenant_id = 'tenant-8'")
+			.run();
+		await createWebhookEndpoint(routing(), {
+			id: 'whk-budget',
+			tenantId: 'tenant-8',
+			url: 'https://hooks.example.com/in',
+			events: ['link.created'],
+			milestoneInterval: null,
+			keyId: await keyId(webhookSecret),
+			now: 0
+		});
+		const background: Promise<unknown>[] = [];
+		const sent: string[] = [];
 		const counted = createMcpEndpoint({
 			identity: countedIdentity,
 			resource,
@@ -1290,7 +1309,15 @@ describe('MCP endpoint', () => {
 					analytics: { 'analytics-1': env.OAUTH_ANALYTICS },
 					appOrigin: origin,
 					domains: { provider: domainProvider, reservedHostnames: ['short.example'] },
-					authenticate: async () => principal
+					authenticate: async () => principal,
+					webhooks: {
+						secret: webhookSecret,
+						fetch: async (input) => {
+							sent.push(String(input));
+							return new Response(null, { status: 204 });
+						},
+						background: (task) => background.push(task)
+					}
 				}),
 			events
 		});
@@ -1313,6 +1340,8 @@ describe('MCP endpoint', () => {
 			);
 			expect(response.status).toBe(200);
 			const body = (await response.json()) as { result: { structuredContent: unknown } };
+			// The delivery runs after the response, in the same invocation.
+			await Promise.all(background.splice(0));
 			return { queries: counter.queries, result: body.result.structuredContent };
 		};
 		const preview = await measure(true);
@@ -1321,7 +1350,11 @@ describe('MCP endpoint', () => {
 		expect(preview.result).toMatchObject({ summary: { ready: items.length, failed: 0 } });
 		expect(created.result).toMatchObject({ summary: { created: items.length, failed: 0 } });
 		expect(replayed.result).toEqual(created.result);
-		// Measured with 3 items: 12 (dry run), 37 (created), 42 (replayed).
+		// Three deliveries went out after the create; the replay staged nothing.
+		expect(sent).toEqual(Array(3).fill('https://hooks.example.com/in'));
+		// Measured with 3 items: 12 (dry run), 47 (created: 40 and the 7 of the delivery), 45
+		// (replayed).
+		expect([preview.queries, created.queries, replayed.queries]).toEqual([12, 47, 45]);
 		for (const run of [preview, created, replayed]) expect(run.queries).toBeLessThan(50);
 	});
 

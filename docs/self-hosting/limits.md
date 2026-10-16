@@ -9,8 +9,9 @@ The owner changes the workspace limits in **Settings → Limits and usage**. A c
 | Days of click history | 30 | 1 to 3,650 |
 | Own domains | 5 | 0 to 50 |
 | People, open invites included | 10 | 1 to 100 |
+| Webhook endpoints | 10 | 0 to 50 |
 
-Members can read the limits; only the owner changes them. An installation set up before members existed starts with 2 people. A lower limit never stops existing links, domains, or members; it blocks new ones. A click past the monthly limit still redirects, but it is not recorded.
+Members can read the limits; only the owner changes them. An installation set up before members existed starts with 2 people. A lower limit never stops existing links, domains, members, or webhook endpoints; it blocks new ones. A webhook endpoint limit of 0 turns webhooks off; see [webhooks.md](webhooks.md). A click past the monthly limit still redirects, but it is not recorded.
 
 The first values fit the daily allowances of Workers Free: 50,000 recorded clicks a month is about 1,700 a day. Higher limits use more D1 rows, D1 storage, and Queue operations; on Workers Free they can reach a daily limit, and on Workers Paid Cloudflare bills past the included amounts. Settings shows the size of the analytics database. One D1 database holds up to 500 MB on Workers Free and 10 GB on Workers Paid. See [Workers Free or Workers Paid](deploy.md#workers-free-or-workers-paid).
 
@@ -29,5 +30,6 @@ Measured on 2026-10-08 on a new Workers Free account, with one workspace and one
 
 - A recorded click writes about 8 D1 rows, all in the analytics database: 180 rows for 22 clicks.
 - Cloudflare counts 3 Queue operations for each click: write, read, and delete.
+- Since these measurements, a recorded click also counts toward the link's click milestones, and the click Queue hands the Worker at most 3 clicks at once, so that one run stays within 50 D1 queries.
 
 On Workers Free, the Queue allows about 3,300 recorded clicks a day, and D1 writes allow about 12,000. Past the Queue allowance, links still redirect, but the extra clicks are not recorded until 00:00 UTC.

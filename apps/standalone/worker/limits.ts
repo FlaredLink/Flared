@@ -16,8 +16,13 @@ export const limitBounds: Record<keyof PolicyLimits, { min: number; max: number 
 	monthlyClickLimit: { min: 1, max: 100_000_000 },
 	retentionDays: { min: 1, max: 3650 },
 	domainLimit: { min: 0, max: 50 },
-	memberLimit: { min: 1, max: 100 }
+	memberLimit: { min: 1, max: 100 },
+	webhookEndpointLimit: { min: 0, max: 50 }
 };
+
+// A page loaded before the webhook endpoint limit existed sends the other limits only; the
+// update then keeps the stored value.
+const optionalLimits: readonly string[] = ['webhookEndpointLimit'];
 
 function failure(code: string, status: number, message: string): Response {
 	return Response.json(
@@ -29,12 +34,12 @@ function failure(code: string, status: number, message: string): Response {
 function parseLimits(value: unknown): PolicyLimits | null {
 	if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
 	const keys = Object.keys(limitBounds);
-	const entries = Object.entries(value);
-	if (entries.length !== keys.length || entries.some(([key]) => !keys.includes(key))) return null;
-	const record = Object.fromEntries(entries);
+	const record = Object.fromEntries(Object.entries(value));
+	if (Object.keys(record).some((key) => !keys.includes(key))) return null;
 	const limits: Record<string, number> = {};
 	for (const [key, bounds] of Object.entries(limitBounds)) {
 		const number = record[key];
+		if (number === undefined && optionalLimits.includes(key)) continue;
 		if (
 			typeof number !== 'number' ||
 			!Number.isSafeInteger(number) ||
@@ -49,7 +54,10 @@ function parseLimits(value: unknown): PolicyLimits | null {
 		monthlyClickLimit: limits.monthlyClickLimit,
 		retentionDays: limits.retentionDays,
 		domainLimit: limits.domainLimit,
-		memberLimit: limits.memberLimit
+		memberLimit: limits.memberLimit,
+		...('webhookEndpointLimit' in limits
+			? { webhookEndpointLimit: limits.webhookEndpointLimit }
+			: {})
 	};
 }
 
@@ -69,7 +77,8 @@ async function view(config: StandaloneConfig, tenantId: string): Promise<Respons
 				monthlyClickLimit: policy.monthlyClickLimit,
 				retentionDays: policy.retentionDays,
 				domainLimit: policy.domainLimit,
-				memberLimit: policy.memberLimit
+				memberLimit: policy.memberLimit,
+				webhookEndpointLimit: policy.webhookEndpointLimit
 			},
 			pending:
 				policy.routingRevision < policy.revision || policy.analyticsRevision < policy.revision,

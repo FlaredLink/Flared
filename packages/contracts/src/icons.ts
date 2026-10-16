@@ -17,9 +17,9 @@ const blockedTopLevels = new Set([
 ]);
 const labelPattern = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
-// The cache key for a site: lowercase ASCII, no trailing dot, no leading "www.". Null for
-// anything that is not a public DNS name: an IP address, one label, or a reserved suffix.
-export function iconHostname(value: string): string | null {
+// A public DNS name in lowercase ASCII with no trailing dot. Null for anything else: an IP
+// address, one label, or a reserved suffix.
+export function publicHostname(value: string): string | null {
 	const trimmed = value.trim().toLowerCase().replace(/\.$/, '');
 	if (!trimmed || trimmed.length > 253 || /[\s/:?#@[\]*\\%]/.test(trimmed)) return null;
 	let hostname: string;
@@ -28,13 +28,18 @@ export function iconHostname(value: string): string | null {
 	} catch {
 		return null;
 	}
-	hostname = hostname.replace(/^www\./, '');
 	const labels = hostname.split('.');
 	if (labels.length < 2 || hostname.length > 253) return null;
 	if (!labels.every((label) => labelPattern.test(label))) return null;
 	const top = labels[labels.length - 1];
 	if (/^\d+$/.test(top) || blockedTopLevels.has(top)) return null;
 	return hostname;
+}
+
+// The cache key for a site: a public hostname without a leading "www.".
+export function iconHostname(value: string): string | null {
+	const hostname = publicHostname(value)?.replace(/^www\./, '');
+	return hostname && hostname.includes('.') ? hostname : null;
 }
 
 // The icon host of an http(s) URL, or null.

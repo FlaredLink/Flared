@@ -95,6 +95,31 @@ import {
 	reserveCreationWindow
 } from '@flared/data/links';
 import { iconHostname } from '@flared/contracts/icons';
+import {
+	newWebhookEventId,
+	parseCreateWebhook,
+	parseUpdateWebhook,
+	subscribableWebhookEvents,
+	type CreatedWebhookEndpoint,
+	type WebhookDelivery,
+	type WebhookDeliveryPage,
+	type WebhookEndpoint,
+	type WebhookEndpointPage
+} from '@flared/contracts/webhooks';
+import {
+	createWebhookEndpoint,
+	deleteWebhookEndpoint,
+	insertTestEvent,
+	listEndpointDeliveries,
+	listWebhookEndpoints,
+	readWebhookEndpoint,
+	rotateWebhookSecret,
+	updateWebhookEndpoint,
+	type WebhookDeliveryRow,
+	type WebhookEndpointRow
+} from '@flared/data/webhooks';
+import { deliverWebhookEvent, deliverWebhooks } from './webhooks/deliver';
+import { endpointSecret, keyId } from './webhooks/signing';
 import { iconHeaders, resolveIcon, type Fetcher, type IconStore } from './icons';
 import {
 	TokenLimitError,
@@ -181,9 +206,10 @@ export interface ApiDependencies {
 	// Items in one POST /v1/links/import. The default keeps a full request within the 50 D1
 	// queries a Workers Free invocation may run, counting each batch statement as one query:
 	// about 7 statements per request (authentication, workspace, import window, limit notice)
-	// plus up to 11 per item (domain lookup, the 8-statement create batch, and the key check and
-	// stored-result read of a replay). 7 + 3 × 11 = 40. On Workers Paid (1,000) a deployment can
-	// raise it.
+	// plus up to 12 per item (domain lookup, the 9-statement create batch, and the key check and
+	// stored-result read of a replay), and the 7 of a webhook delivery in the background, which
+	// counts against the same invocation. Measured with 3 items over MCP: 40 created plus 7 for
+	// the delivery, 45 replayed (no delivery). On Workers Paid (1,000) a deployment can raise it.
 	importItemsPerRequest?: number;
 	// Links imported per workspace in each UTC hour, apart from creationsPerMinute.
 	importsPerHour?: number;
@@ -208,6 +234,23 @@ export interface ApiDependencies {
 	transferOwnership?: (input: TransferInput) => Promise<OwnershipTransfer>;
 	// The edition's product analytics. Without it, no event is recorded.
 	events?: ProductEvents;
+	// Webhooks. Without them, the webhook routes answer 404 and changes only stage events.
+	webhooks?: WebhookSettings;
+}
+
+export interface WebhookSettings {
+	// The deployment secret that endpoint secrets are derived from. A new value changes every
+	// endpoint secret; each endpoint then needs a rotation.
+	secret: string;
+	fetch?: typeof fetch;
+	// Runs work after the response, such as ExecutionContext.waitUntil. Without it, a change's
+	// event waits for the scheduled job.
+	background?: (task: Promise<unknown>) => void;
+	// Deliveries sent after one change. Each adds a fetch to the request's invocation; the
+	// default keeps an import within the D1 budget above.
+	requestDeliveries?: number;
+	// Test events per workspace and hour.
+	testsPerHour?: number;
 }
 
 // The limit that each plan-limit error stands for, for the limit_reached event.
@@ -269,6 +312,8 @@ const workspacePaths = new Set([
 	'/v1/invites/accept'
 ]);
 const dayMs = 86_400_000;
+// The previous secret keeps signing for this long after a rotation.
+const secretGraceMs = dayMs;
 
 type Variables = {
 	requestId: string;
@@ -353,6 +398,13 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	const importItemsPerRequest = dependencies.importItemsPerRequest ?? defaultImportItemsPerRequest;
 	const importsPerHour = dependencies.importsPerHour ?? 2000;
 	const domainSettings: DomainSettings = dependencies.domains ?? { reservedHostnames: [] };
+	// A webhook may not call the installation itself.
+	const webhookReserved = [
+		...domainSettings.reservedHostnames,
+		new URL(appOrigin).hostname,
+		...(dependencies.publicApiUrl ? [new URL(dependencies.publicApiUrl).hostname] : [])
+	];
+	let currentKeyId: Promise<string> | null = null;
 	const app = new Hono<{ Variables: Variables }>().basePath('/v1');
 
 	// A limit refusal is a product event; the refusal itself does not depend on it.
@@ -369,6 +421,39 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 				tenantId,
 				limit
 			});
+	}
+
+	function webhookSettings(): WebhookSettings {
+		if (!dependencies.webhooks) throw new ApiError('NOT_FOUND', 'Route not found.');
+		return dependencies.webhooks;
+	}
+
+	function webhookKeyId(settings: WebhookSettings): Promise<string> {
+		currentKeyId ??= keyId(settings.secret);
+		return currentKeyId;
+	}
+
+	async function endpointBody(
+		settings: WebhookSettings,
+		row: WebhookEndpointRow
+	): Promise<WebhookEndpoint> {
+		return endpointSummary(row, row.keyId !== (await webhookKeyId(settings)));
+	}
+
+	// After a change that staged an event, its workspace's new deliveries go out after the
+	// response. A failure leaves them for the scheduled job.
+	function deliverLater(tenantId: string, requestId: string): void {
+		const settings = dependencies.webhooks;
+		if (!settings?.background) return;
+		settings.background(
+			deliverWebhooks(routing, tenantId, {
+				secret: settings.secret,
+				reservedHostnames: webhookReserved,
+				fetch: settings.fetch,
+				now,
+				limit: settings.requestDeliveries
+			}).catch(() => console.error(JSON.stringify({ event: 'webhook_dispatch_failed', requestId })))
+		);
 	}
 
 	app.onError(async (error, context) => {
@@ -507,6 +592,8 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			});
 		}
 		if (result.status === 403 && !result.replayed) await recordLimit(context, 'links');
+		if (result.status === 201 && !result.replayed && result.eventStaged)
+			deliverLater(tenantId, requestId);
 		return respond(result);
 	});
 
@@ -567,6 +654,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 				});
 		}
 		if (outcome.limitReached) await recordLimit(context, 'links');
+		if (outcome.staged > 0) deliverLater(tenantId, requestId);
 		return respond({ status: 200, body: JSON.stringify(outcome.result) });
 	});
 	// Before GET and PATCH /links/:id, so that other methods here answer 405 and not 404.
@@ -594,14 +682,16 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	});
 
 	app.patch('/links/:id', requireScope('links:write'), async (context) => {
+		const { tenantId, requestId } = context.var;
 		const change = parseUpdateLink(await readJson(context.req.raw));
-		const link = await changeLink(
+		const { link, eventStaged } = await changeLink(
 			routing,
-			context.var.tenantId,
+			tenantId,
 			context.req.param('id'),
 			change,
 			now()
 		);
+		if (eventStaged) deliverLater(tenantId, requestId);
 		return respond({ status: 200, body: JSON.stringify({ link }) });
 	});
 
@@ -1289,6 +1379,200 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		return respond({ status: 200, body: JSON.stringify({ workspace }) });
 	});
 
+	// Webhook endpoints of the workspace. Only the owner manages them, from the dashboard.
+	app.get('/webhooks', async (context) => {
+		sessionOnly(context, 'Manage webhooks in the Flared app.');
+		ownerOnly(context, 'Only the workspace owner can manage webhooks.');
+		const settings = webhookSettings();
+		const listed = await listWebhookEndpoints(routing, context.var.tenantId);
+		if (!listed) throw new ApiError('NOT_FOUND', 'Workspace not found.');
+		const page: WebhookEndpointPage = {
+			endpoints: await Promise.all(listed.endpoints.map((row) => endpointBody(settings, row))),
+			used: listed.used,
+			limit: listed.limit,
+			eventTypes: [...subscribableWebhookEvents]
+		};
+		return respond({ status: 200, body: JSON.stringify(page) });
+	});
+
+	// The secret is shown in this response only; it can sign requests to the receiver, so adding
+	// an endpoint needs a recent sign-in, as creating a token does.
+	app.post('/webhooks', async (context) => {
+		const principal = sessionOnly(context, 'Manage webhooks in the Flared app.');
+		ownerOnly(context, 'Only the workspace owner can manage webhooks.');
+		const settings = webhookSettings();
+		const { tenantId, requestId } = context.var;
+		const time = now();
+		if (freshUntil(principal, time) === null)
+			throw new ApiError('REAUTH_REQUIRED', 'Sign in again to add a webhook endpoint.');
+		const input = parseCreateWebhook(await readJson(context.req.raw), webhookReserved);
+		const id = `whk_${crypto.randomUUID().replaceAll('-', '')}`;
+		const result = await createWebhookEndpoint(routing, {
+			id,
+			tenantId,
+			url: input.url,
+			events: input.events,
+			milestoneInterval: input.milestoneInterval,
+			keyId: await webhookKeyId(settings),
+			now: time
+		});
+		if (result.status === 'no_workspace') throw new ApiError('NOT_FOUND', 'Workspace not found.');
+		if (result.status === 'limit')
+			throw new ApiError(
+				'WEBHOOK_LIMIT_REACHED',
+				result.limit === 0
+					? 'Webhooks are not available for this workspace.'
+					: `This workspace has room for ${result.limit} webhook endpoints. Delete an endpoint first.`
+			);
+		console.log(JSON.stringify({ event: 'webhook_endpoint_created', requestId, endpointId: id }));
+		const body: CreatedWebhookEndpoint = {
+			endpoint: await endpointBody(settings, result.endpoint),
+			secret: await endpointSecret(settings.secret, id, result.endpoint.secretVersion)
+		};
+		return respond({ status: 201, body: JSON.stringify(body) });
+	});
+
+	app.patch('/webhooks/:id', async (context) => {
+		sessionOnly(context, 'Manage webhooks in the Flared app.');
+		ownerOnly(context, 'Only the workspace owner can manage webhooks.');
+		const settings = webhookSettings();
+		const change = parseUpdateWebhook(await readJson(context.req.raw), webhookReserved);
+		const row = await updateWebhookEndpoint(
+			routing,
+			context.var.tenantId,
+			context.req.param('id'),
+			{
+				...change,
+				now: now()
+			}
+		);
+		if (!row) throw new ApiError('NOT_FOUND', 'Webhook endpoint not found.');
+		return respond({
+			status: 200,
+			body: JSON.stringify({ endpoint: await endpointBody(settings, row) })
+		});
+	});
+
+	// Removes the endpoint and its delivery history. Allowed while the workspace is suspended.
+	app.delete('/webhooks/:id', async (context) => {
+		sessionOnly(context, 'Manage webhooks in the Flared app.');
+		ownerOnly(context, 'Only the workspace owner can manage webhooks.');
+		webhookSettings();
+		const endpointId = context.req.param('id');
+		if (!(await deleteWebhookEndpoint(routing, context.var.tenantId, endpointId)))
+			throw new ApiError('NOT_FOUND', 'Webhook endpoint not found.');
+		console.log(
+			JSON.stringify({
+				event: 'webhook_endpoint_deleted',
+				requestId: context.var.requestId,
+				endpointId
+			})
+		);
+		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
+	});
+
+	// A new secret, shown once. The previous one keeps signing for 24 hours beside it, unless it
+	// came from a deployment secret that has changed since.
+	app.post('/webhooks/:id/secret', async (context) => {
+		const principal = sessionOnly(context, 'Manage webhooks in the Flared app.');
+		ownerOnly(context, 'Only the workspace owner can manage webhooks.');
+		const settings = webhookSettings();
+		const time = now();
+		if (freshUntil(principal, time) === null)
+			throw new ApiError('REAUTH_REQUIRED', 'Sign in again to rotate the secret.');
+		const endpointId = context.req.param('id');
+		const row = await rotateWebhookSecret(routing, context.var.tenantId, endpointId, {
+			keyId: await webhookKeyId(settings),
+			now: time,
+			previousUntil: time + secretGraceMs
+		});
+		if (!row) throw new ApiError('NOT_FOUND', 'Webhook endpoint not found.');
+		console.log(
+			JSON.stringify({
+				event: 'webhook_secret_rotated',
+				requestId: context.var.requestId,
+				endpointId
+			})
+		);
+		const body: CreatedWebhookEndpoint = {
+			endpoint: await endpointBody(settings, row),
+			secret: await endpointSecret(settings.secret, endpointId, row.secretVersion)
+		};
+		return respond({ status: 200, body: JSON.stringify(body) });
+	});
+
+	// Sends a webhook.test event to the endpoint now, also when it is off, and returns the
+	// delivery with its result.
+	app.post('/webhooks/:id/test', async (context) => {
+		sessionOnly(context, 'Manage webhooks in the Flared app.');
+		ownerOnly(context, 'Only the workspace owner can manage webhooks.');
+		const settings = webhookSettings();
+		const { tenantId, requestId } = context.var;
+		const endpointId = context.req.param('id');
+		const listed = await listWebhookEndpoints(routing, tenantId);
+		if (!listed?.endpoints.some((endpoint) => endpoint.id === endpointId))
+			throw new ApiError('NOT_FOUND', 'Webhook endpoint not found.');
+		if (listed.limit === 0)
+			throw new ApiError('WEBHOOK_LIMIT_REACHED', 'Webhooks are not available for this workspace.');
+		const time = now();
+		const allowance = await reserveCreationWindow(
+			routing,
+			`${tenantId}:webhook-tests`,
+			time,
+			hourMs,
+			1,
+			settings.testsPerHour ?? 10
+		);
+		if (!allowance.allowed)
+			throw new ApiError(
+				'RATE_LIMITED',
+				'Too many test events this hour. Try again later.',
+				allowance.retryAfterSeconds
+			);
+		const eventId = newWebhookEventId();
+		if (
+			!(await insertTestEvent(routing, {
+				id: eventId,
+				tenantId,
+				endpointId,
+				payload: JSON.stringify({ message: 'Test event from Flared.' }),
+				now: time
+			}))
+		)
+			throw new ApiError('NOT_FOUND', 'Webhook endpoint not found.');
+		await deliverWebhookEvent(routing, tenantId, eventId, {
+			secret: settings.secret,
+			reservedHostnames: webhookReserved,
+			fetch: settings.fetch,
+			now
+		});
+		const delivery = (await listEndpointDeliveries(routing, tenantId, endpointId)).find(
+			(item) => item.eventId === eventId
+		);
+		if (!delivery)
+			throw new ApiError('SERVICE_UNAVAILABLE', 'The test event was not sent. Try again.');
+		console.log(JSON.stringify({ event: 'webhook_test_sent', requestId, endpointId }));
+		return respond({
+			status: 200,
+			body: JSON.stringify({ delivery: deliverySummary(delivery) })
+		});
+	});
+
+	// The endpoint's 50 newest deliveries, newest first.
+	app.get('/webhooks/:id/deliveries', async (context) => {
+		sessionOnly(context, 'Manage webhooks in the Flared app.');
+		ownerOnly(context, 'Only the workspace owner can manage webhooks.');
+		webhookSettings();
+		const { tenantId } = context.var;
+		const endpointId = context.req.param('id');
+		if (!(await readWebhookEndpoint(routing, tenantId, endpointId)))
+			throw new ApiError('NOT_FOUND', 'Webhook endpoint not found.');
+		const page: WebhookDeliveryPage = {
+			deliveries: (await listEndpointDeliveries(routing, tenantId, endpointId)).map(deliverySummary)
+		};
+		return respond({ status: 200, body: JSON.stringify(page) });
+	});
+
 	function inviteSettings(): InviteSettings {
 		if (!dependencies.invites) throw new ApiError('NOT_FOUND', 'Route not found.');
 		return dependencies.invites;
@@ -1417,18 +1701,25 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	app.all('/invites/accept', (context) => methodNotAllowed(context, 'POST'));
 	app.all('/invites/:id', (context) => methodNotAllowed(context, 'DELETE'));
 	app.all('/invites/:id/resend', (context) => methodNotAllowed(context, 'POST'));
+	app.all('/webhooks', (context) => methodNotAllowed(context, 'GET, POST'));
+	app.all('/webhooks/:id', (context) => methodNotAllowed(context, 'PATCH, DELETE'));
+	app.all('/webhooks/:id/secret', (context) => methodNotAllowed(context, 'POST'));
+	app.all('/webhooks/:id/test', (context) => methodNotAllowed(context, 'POST'));
+	app.all('/webhooks/:id/deliveries', (context) => methodNotAllowed(context, 'GET'));
 	return app;
 }
 
 // A suspended workspace keeps what takes nothing new: the dashboard reads its data, a person
-// may end a token or connected app, the owner may remove a member, and a member may leave. A
+// may end a token or connected app, the owner may remove a member or a webhook endpoint, and a
+// member may leave. A
 // token or connected app may only export.
 function allowedWhileSuspended(principal: ApiPrincipal, method: string, path: string): boolean {
 	const read = method === 'GET' || method === 'HEAD';
 	if (principal.kind === 'session')
 		return (
 			read ||
-			(method === 'DELETE' && /^\/v1\/(?:tokens|connected-apps|members)\/[^/]+$/.test(path)) ||
+			(method === 'DELETE' &&
+				/^\/v1\/(?:tokens|connected-apps|members|webhooks)\/[^/]+$/.test(path)) ||
 			(method === 'POST' && path === '/v1/workspace/leave')
 		);
 	return read && (path.startsWith('/v1/export/') || path === '/v1/me');
@@ -1503,6 +1794,42 @@ function inviteSummary(
 		email,
 		createdAt: new Date(createdAt).toISOString(),
 		expiresAt: new Date(expiresAt).toISOString()
+	};
+}
+
+const isoOrNull = (time: number | null) => (time === null ? null : new Date(time).toISOString());
+
+function endpointSummary(row: WebhookEndpointRow, secretChanged: boolean): WebhookEndpoint {
+	return {
+		id: row.id,
+		url: row.url,
+		events: row.events,
+		milestoneInterval: row.milestoneInterval,
+		enabled: row.enabled,
+		pausedUntil: isoOrNull(row.pausedUntil),
+		failureCount: row.failureCount,
+		lastSuccessAt: isoOrNull(row.lastSuccessAt),
+		lastFailureAt: isoOrNull(row.lastFailureAt),
+		previousSecretUntil: isoOrNull(row.previousSecretUntil),
+		secretChanged,
+		createdAt: new Date(row.createdAt).toISOString(),
+		updatedAt: new Date(row.updatedAt).toISOString()
+	};
+}
+
+function deliverySummary(row: WebhookDeliveryRow): WebhookDelivery {
+	return {
+		id: row.id,
+		eventId: row.eventId,
+		eventType: row.eventType,
+		state: row.state,
+		attempts: row.attempts,
+		responseStatus: row.responseStatus,
+		errorCode: row.errorCode,
+		durationMs: row.durationMs,
+		createdAt: new Date(row.createdAt).toISOString(),
+		lastAttemptAt: isoOrNull(row.lastAttemptAt),
+		completedAt: isoOrNull(row.completedAt)
 	};
 }
 

@@ -22,6 +22,7 @@ import {
 } from '../packages/server/src/analytics';
 import { createApi } from '../packages/server/src/api';
 import { projectPolicy } from '../packages/server/src/tenancy';
+import { counting } from './support/d1-count';
 
 const shard = () => env.ANALYTICS;
 const identity = () => env.ANALYTICS_IDENTITY;
@@ -494,6 +495,111 @@ describe('consumer', () => {
 		const { results, states } = await consume([event()], { 'analytics-1': broken });
 		expect(results).toEqual(['retry']);
 		expect(states[0].retried).toEqual({});
+	});
+});
+
+describe('click milestones', () => {
+	const counted = (tenantId: string) =>
+		scalar(
+			"SELECT clicks FROM link_click_totals WHERE tenant_id = ? AND link_id = 'link-1'",
+			tenantId
+		);
+	const milestones = async (tenantId: string) =>
+		(
+			await shard()
+				.prepare('SELECT id FROM click_milestones WHERE tenant_id = ? ORDER BY clicks')
+				.bind(tenantId)
+				.all<{ id: string }>()
+		).results.map((row) => row.id);
+	const seed = (tenantId: string, clicks: number, linkDay = '2026-10-01') =>
+		shard()
+			.prepare(
+				"INSERT INTO daily_totals (tenant_id, link_id, day, clicks) VALUES (?, 'link-1', ?, ?)"
+			)
+			.bind(tenantId, linkDay, clicks)
+			.run();
+
+	it('records the 100th counted click once, and never a skipped or duplicate click', async () => {
+		await addPolicy('t-mile');
+		await seed('t-mile', 97);
+		const first = click('t-mile');
+		expect(await ingestClick(shard(), first, 'a', start)).toBe('admitted');
+		expect(await ingestClick(shard(), first, 'b', start)).toBe('duplicate');
+		expect(await counted('t-mile')).toBe(98);
+		expect(await ingestClick(shard(), click('t-mile'), 'a', start)).toBe('admitted');
+		expect(await milestones('t-mile')).toEqual([]);
+		const hundredth = click('t-mile');
+		expect(await ingestClick(shard(), hundredth, 'a', start)).toBe('admitted');
+		expect(await milestones('t-mile')).toEqual(['link.click_milestone:link-1:100']);
+		// A replay after the transfer took the milestone does not record it again.
+		await shard().prepare("DELETE FROM click_milestones WHERE tenant_id = 't-mile'").run();
+		expect(await ingestClick(shard(), hundredth, 'b', start)).toBe('duplicate');
+		expect(await ingestClick(shard(), click('t-mile'), 'a', start)).toBe('admitted');
+		expect(await counted('t-mile')).toBe(101);
+		expect(await milestones('t-mile')).toEqual([]);
+
+		await addPolicy('t-mile-skip', 1);
+		expect(await ingestClick(shard(), click('t-mile-skip'), 'a', start)).toBe('admitted');
+		expect(await ingestClick(shard(), click('t-mile-skip'), 'a', start)).toBe('skipped');
+		expect(await counted('t-mile-skip')).toBe(1);
+	});
+
+	it('records one milestone when the 100th and 101st clicks arrive together', async () => {
+		await addPolicy('t-mile-race');
+		await seed('t-mile-race', 98);
+		expect(await ingestClick(shard(), click('t-mile-race'), 'a', start)).toBe('admitted');
+		const results = await Promise.all([
+			ingestClick(shard(), click('t-mile-race'), 'a', start),
+			ingestClick(shard(), click('t-mile-race'), 'a', start)
+		]);
+		expect(results).toEqual(['admitted', 'admitted']);
+		expect(await counted('t-mile-race')).toBe(101);
+		expect(await milestones('t-mile-race')).toEqual(['link.click_milestone:link-1:100']);
+	});
+
+	it('seeds the counter from the retained totals and never records past milestones', async () => {
+		await addPolicy('t-mile-seed');
+		await seed('t-mile-seed', 200);
+		await seed('t-mile-seed', 50, '2026-10-02');
+		expect(await ingestClick(shard(), click('t-mile-seed'), 'a', start)).toBe('admitted');
+		expect(await counted('t-mile-seed')).toBe(251);
+		expect(await milestones('t-mile-seed')).toEqual([]);
+		for (let index = 0; index < 49; index += 1)
+			await ingestClick(shard(), click('t-mile-seed'), 'a', start);
+		expect(await counted('t-mile-seed')).toBe(300);
+		expect(await milestones('t-mile-seed')).toEqual(['link.click_milestone:link-1:300']);
+	});
+
+	it('takes 14 statements per click, so a consumer batch of 3 stays under 50', async () => {
+		await addPolicy('t-mile-budget');
+		const counter = { queries: 0 };
+		const db = counting(shard(), counter);
+		expect(await ingestClick(db, click('t-mile-budget'), 'a', start)).toBe('admitted');
+		expect(counter.queries).toBe(14);
+		counter.queries = 0;
+		const messages = [1, 2, 3].map(() =>
+			message({
+				schemaVersion: 1,
+				eventId: crypto.randomUUID(),
+				tenantId: 't-mile-budget',
+				analyticsShardId: 'analytics-1',
+				linkId: 'link-1',
+				kind: 'production',
+				occurredAt: start,
+				country: 'DE',
+				deviceCategory: 'desktop',
+				referrerHostname: 'unknown',
+				browser: 'firefox',
+				os: 'linux'
+			})
+		);
+		const results = await createClickConsumer({
+			shards: { 'analytics-1': db },
+			now: () => start
+		})({ messages: messages.map((item) => item.value) });
+		expect(results).toEqual(['admitted', 'admitted', 'admitted']);
+		// Three clicks and the ingestion minute.
+		expect(counter.queries).toBe(43);
 	});
 });
 

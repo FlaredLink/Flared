@@ -112,10 +112,12 @@ export interface ImportRun {
 }
 
 // created counts links this call created; a replayed item reports its stored result again and
-// counts as none. limitReached: an item this call tried was refused at the active link limit.
+// counts as none. staged counts the created links that staged a webhook event. limitReached: an
+// item this call tried was refused at the active link limit.
 export interface ImportRunOutcome {
 	result: ImportLinksResult;
 	created: number;
+	staged: number;
 	limitReached: boolean;
 }
 
@@ -123,6 +125,7 @@ export interface ImportRunOutcome {
 // request replays each stored result and creates nothing twice. The database enforces the limit.
 export async function runImport(routing: D1Database, run: ImportRun): Promise<ImportRunOutcome> {
 	let created = 0;
+	let staged = 0;
 	let limitReached = false;
 	const results: ImportItemResult[] = [];
 	for (const [index, item] of run.items.entries()) {
@@ -150,6 +153,7 @@ export async function runImport(routing: D1Database, run: ImportRun): Promise<Im
 		if (outcome.status === 201 && isLink(link)) {
 			results.push({ index, status: 'created', link });
 			if (!outcome.replayed) created += 1;
+			if (!outcome.replayed && outcome.eventStaged) staged += 1;
 		} else if (error && isErrorCode(error.code) && typeof error.message === 'string') {
 			const field = typeof error.field === 'string' ? { field: error.field } : {};
 			results.push(failed(index, { code: error.code, message: error.message, ...field }));
@@ -164,6 +168,7 @@ export async function runImport(routing: D1Database, run: ImportRun): Promise<Im
 			summary: { created: results.length - failures, failed: failures }
 		},
 		created,
+		staged,
 		limitReached
 	};
 }

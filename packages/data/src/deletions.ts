@@ -295,10 +295,28 @@ export async function deleteRoutingData(
 				'DELETE FROM idempotency_records WHERE rowid IN (SELECT rowid FROM idempotency_records WHERE tenant_id = ? LIMIT ?)'
 			)
 			.bind(tenantId, limit),
-		// Domain additions count under "<tenant>:domains".
+		// Domain additions count under "<tenant>:domains", webhook test sends under
+		// "<tenant>:webhook-tests".
 		db
-			.prepare('DELETE FROM creation_windows WHERE tenant_id IN (?, ?)')
-			.bind(tenantId, `${tenantId}:domains`)
+			.prepare('DELETE FROM creation_windows WHERE tenant_id IN (?, ?, ?)')
+			.bind(tenantId, `${tenantId}:domains`, `${tenantId}:webhook-tests`),
+		// Deliveries first: an event or endpoint goes only when none of its deliveries is left,
+		// so no cascade deletes more than limit rows.
+		db
+			.prepare(
+				'DELETE FROM webhook_deliveries WHERE id IN (SELECT id FROM webhook_deliveries WHERE tenant_id = ? LIMIT ?)'
+			)
+			.bind(tenantId, limit),
+		db
+			.prepare(
+				'DELETE FROM webhook_events WHERE id IN (SELECT e.id FROM webhook_events e WHERE e.tenant_id = ? AND NOT EXISTS (SELECT 1 FROM webhook_deliveries d WHERE d.event_id = e.id) LIMIT ?)'
+			)
+			.bind(tenantId, limit),
+		db
+			.prepare(
+				'DELETE FROM webhook_endpoints WHERE id IN (SELECT w.id FROM webhook_endpoints w WHERE w.tenant_id = ? AND NOT EXISTS (SELECT 1 FROM webhook_deliveries d WHERE d.endpoint_id = w.id) LIMIT ?)'
+			)
+			.bind(tenantId, limit)
 	]);
 	return results.reduce((sum, result) => sum + result.meta.changes, 0);
 }
@@ -345,6 +363,8 @@ export async function deleteAnalyticsData(
 		byRowid('daily_totals'),
 		byRowid('daily_dimensions'),
 		byRowid('monthly_usage'),
+		byRowid('link_click_totals'),
+		byRowid('click_milestones'),
 		db
 			.prepare(
 				'DELETE FROM event_receipts WHERE (tenant_id, event_id) IN (SELECT tenant_id, event_id FROM event_receipts WHERE tenant_id = ? LIMIT ?)'

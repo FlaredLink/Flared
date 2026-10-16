@@ -19,7 +19,8 @@
 		"./notices": "./src/notices.ts",
 		"./members": "./src/members.ts",
 		"./deletions": "./src/deletions.ts",
-		"./operations": "./src/operations.ts"
+		"./operations": "./src/operations.ts",
+		"./webhooks": "./src/webhooks.ts"
 	},
 	"dependencies": {
 		"@flared/contracts": "workspace:*",

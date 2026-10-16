@@ -40,7 +40,9 @@
 		"./operations": "./src/operations.ts",
 		"./jobs": "./src/jobs.ts",
 		"./icons": "./src/icons.ts",
-		"./events": "./src/events.ts"
+		"./events": "./src/events.ts",
+		"./webhooks": "./src/webhooks/deliver.ts",
+		"./webhooks/signing": "./src/webhooks/signing.ts"
 	},
 	"dependencies": {
 		"@better-auth/api-key": "1.7.7",

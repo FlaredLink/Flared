@@ -6,6 +6,7 @@ import { errorStatus } from '@flared/contracts/errors';
 import { exportLinkPageSize, type ExportLinkPage } from '@flared/contracts/export';
 import type { CreateLinkInput, Link, LinkPage, UpdateLinkInput } from '@flared/contracts/links';
 import { isReservedSlug } from '@flared/contracts/reserved';
+import { newWebhookEventId } from '@flared/contracts/webhooks';
 import {
 	createLinkRecord,
 	findUsableDomain,
@@ -25,6 +26,8 @@ export interface ApiResult {
 	status: number;
 	body: string;
 	replayed?: boolean;
+	// A webhook event was written with the change.
+	eventStaged?: boolean;
 }
 
 export class ApiError extends Error {
@@ -148,7 +151,8 @@ export async function createLink(
 			createdAt: now,
 			updatedAt: now
 		});
-		const outcome = await createLinkRecord(routing, {
+		const body = JSON.stringify({ link });
+		const { outcome, eventStaged } = await createLinkRecord(routing, {
 			tenantId,
 			key,
 			requestHash,
@@ -162,13 +166,10 @@ export async function createLink(
 			androidDestination: input.androidDestination,
 			now,
 			expiresAt: now + createKeyLifetimeMs,
-			bodies: {
-				created: JSON.stringify({ link }),
-				slugTaken,
-				limitReached
-			}
+			bodies: { created: body, slugTaken, limitReached },
+			event: { id: newWebhookEventId(), payload: body }
 		});
-		if (outcome === 'created') return { status: 201, body: JSON.stringify({ link }) };
+		if (outcome === 'created') return { status: 201, body, eventStaged };
 		if (outcome === 'slug_taken') return { status: 409, body: slugTaken };
 		if (outcome === 'limit_reached') return { status: 403, body: limitReached };
 		if (outcome === 'duplicate_key') return replay(routing, tenantId, key, requestHash, now);
@@ -270,14 +271,15 @@ export async function changeLink(
 	linkId: string,
 	change: UpdateLinkInput,
 	now: number
-): Promise<Link> {
-	const updated = await updateLink(routing, tenantId, linkId, {
+): Promise<{ link: Link; eventStaged: boolean }> {
+	const { updated, eventStaged } = await updateLink(routing, tenantId, linkId, {
 		destination: change.destination,
 		title: change.title,
 		iosDestination: change.iosDestination,
 		androidDestination: change.androidDestination,
 		active: change.enabled,
-		now
+		now,
+		eventId: newWebhookEventId()
 	});
 	if (!updated) {
 		const link = await readLink(routing, tenantId, linkId);
@@ -289,7 +291,7 @@ export async function changeLink(
 			);
 		throw new ApiError('PLAN_LIMIT_REACHED', limitReachedMessage);
 	}
-	return getLink(routing, tenantId, linkId);
+	return { link: await getLink(routing, tenantId, linkId), eventStaged };
 }
 
 export function statusOf(code: ErrorCode): number {

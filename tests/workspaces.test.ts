@@ -571,7 +571,14 @@ describe('roles', () => {
 		['POST', '/workspace/transfer', 'owner'],
 		['DELETE', '/workspace/transfer', 'member'],
 		['POST', '/workspace/transfer/accept', 'member'],
-		['POST', '/members/:userId/password-reset', 'owner']
+		['POST', '/members/:userId/password-reset', 'owner'],
+		['GET', '/webhooks', 'owner'],
+		['POST', '/webhooks', 'owner'],
+		['PATCH', '/webhooks/:id', 'owner'],
+		['DELETE', '/webhooks/:id', 'owner'],
+		['POST', '/webhooks/:id/secret', 'owner'],
+		['POST', '/webhooks/:id/test', 'owner'],
+		['GET', '/webhooks/:id/deliveries', 'owner']
 	];
 
 	beforeAll(async () => {

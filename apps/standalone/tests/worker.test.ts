@@ -16,6 +16,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ClickEvent } from '@flared/contracts/analytics';
 import { routeSettleMs, runDeletions } from '@flared/server/deletion';
 import worker, { type StandaloneEnv } from '../worker/index';
+import { counting } from '../../../tests/support/d1-count';
 import { calls } from './sveltekit-worker.stub';
 
 const origin = 'https://flared.example.workers.dev';
@@ -255,7 +256,8 @@ describe('the app host after setup', () => {
 				monthlyClickLimit: 50000,
 				retentionDays: 30,
 				domainLimit: 5,
-				memberLimit: 10
+				memberLimit: 10,
+				webhookEndpointLimit: 10
 			},
 			pending: false
 		});
@@ -276,11 +278,28 @@ describe('the app host after setup', () => {
 		expect(await code(await change({ origin }, { ...limits, retentionDays: 0 }))).toBe(
 			'VALIDATION_FAILED'
 		);
+		for (const webhookEndpointLimit of [51, -1, 2.5, '10'])
+			expect(
+				await code(await change({ origin }, { ...limits, webhookEndpointLimit })),
+				String(webhookEndpointLimit)
+			).toBe('VALIDATION_FAILED');
+		// A page loaded before the webhook endpoint limit existed sends the other five; the stored
+		// value stays.
 		const saved = await change({ origin });
-		expect(await saved.json()).toMatchObject({ limits, pending: false });
+		expect(await saved.json()).toMatchObject({
+			limits: { ...limits, webhookEndpointLimit: 10 },
+			pending: false
+		});
+		for (const webhookEndpointLimit of [0, 50]) {
+			const bounded = await change({ origin }, { ...limits, webhookEndpointLimit });
+			expect(await bounded.json()).toMatchObject({
+				limits: { ...limits, webhookEndpointLimit },
+				pending: false
+			});
+		}
 		expect(
 			await count("SELECT COUNT(*) AS n FROM owner_audit WHERE action = 'limits_changed'")
-		).toBe(1);
+		).toBe(3);
 	});
 
 	it('adds a member by invite link, who reads but cannot change the limits', async () => {
@@ -333,6 +352,68 @@ describe('the app host after setup', () => {
 			headers: browser(member, shown)
 		});
 		expect(left.status).toBe(204);
+	});
+});
+
+describe('webhooks', () => {
+	it('delivers at most 25 in a frequent run within the Free plan budget', async () => {
+		const created = await call(`${origin}/api/v1/webhooks`, {
+			method: 'POST',
+			headers: browser(owner),
+			body: JSON.stringify({ url: 'https://hooks.example.net/flared', events: ['link.created'] })
+		});
+		expect(created.status).toBe(201);
+		const { endpoint } = (await created.json()) as { endpoint: { id: string } };
+		const tenant = await env.IDENTITY.prepare(
+			'SELECT fixed_tenant_id AS id FROM installation WHERE id = 1'
+		).first<{ id: string }>();
+		const tenantId = tenant?.id ?? '';
+		const staged = Date.now();
+		await env.ROUTING.batch(
+			Array.from({ length: 30 }, (_, index) =>
+				env.ROUTING.prepare(
+					"INSERT INTO webhook_events (id, tenant_id, type, payload, created_at) VALUES (?, ?, 'link.created', ?, ?)"
+				).bind(`evt_budget_${index}`, tenantId, JSON.stringify({ index }), staged)
+			)
+		);
+		// The first run of an hour also samples the database size.
+		const hour = Math.ceil((staged + 1) / 3_600_000) * 3_600_000;
+		const counter = { queries: 0 };
+		const sentUrls: string[] = [];
+		const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+			sentUrls.push(input instanceof Request ? input.url : String(input));
+			return new Response('ok');
+		});
+		try {
+			await worker.scheduled(
+				createScheduledController({ cron: '*/10 * * * *', scheduledTime: hour }),
+				baseEnv({
+					IDENTITY: counting(env.IDENTITY, counter),
+					ROUTING: counting(env.ROUTING, counter),
+					ANALYTICS_1: counting(env.ANALYTICS_1, counter)
+				})
+			);
+		} finally {
+			spy.mockRestore();
+		}
+		expect(sentUrls).toHaveLength(25);
+		expect(new Set(sentUrls)).toEqual(new Set(['https://hooks.example.net/flared']));
+		expect(counter.queries).toBeLessThan(50);
+		const states = await env.ROUTING.prepare(
+			'SELECT state, COUNT(*) AS n FROM webhook_deliveries WHERE endpoint_id = ? GROUP BY state ORDER BY state'
+		)
+			.bind(endpoint.id)
+			.all<{ state: string; n: number }>();
+		expect(states.results).toEqual([
+			{ state: 'pending', n: 5 },
+			{ state: 'succeeded', n: 25 }
+		]);
+		// Deleting the endpoint removes its deliveries, so no later job sends them over the network.
+		const removed = await call(`${origin}/api/v1/webhooks/${endpoint.id}`, {
+			method: 'DELETE',
+			headers: browser(owner)
+		});
+		expect(removed.status).toBe(204);
 	});
 });
 
@@ -462,13 +543,20 @@ describe('jobs, the click Queue, and deletion', () => {
 		});
 		await worker.scheduled(controller, baseEnv(moved));
 		expect(await count("SELECT COUNT(*) AS n FROM job_runs WHERE last_outcome = 'succeeded'")).toBe(
-			5
+			6
 		);
 		const daily = createScheduledController({ cron: '17 3 * * *', scheduledTime: Date.now() });
 		await worker.scheduled(daily, baseEnv(moved));
 		expect(await count("SELECT COUNT(*) AS n FROM job_runs WHERE last_outcome = 'succeeded'")).toBe(
-			12
+			14
 		);
+		const recorded = await env.IDENTITY.prepare(
+			"SELECT job FROM job_runs WHERE job IN ('webhook_deliveries', 'webhook_cleanup') ORDER BY job"
+		).all<{ job: string }>();
+		expect(recorded.results.map((row) => row.job)).toEqual([
+			'webhook_cleanup',
+			'webhook_deliveries'
+		]);
 		expect((await call(`${movedOrigin}/healthz`, {}, moved)).status).toBe(200);
 	});
 

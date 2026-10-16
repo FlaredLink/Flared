@@ -180,6 +180,24 @@ export async function ingestClick(
 				`INSERT INTO daily_dimensions (tenant_id, link_id, day, dimension, value, clicks) SELECT ?, ?, ?, 'referrer', 'other', 1 WHERE ${admitted} AND NOT EXISTS (${referrerRow}) ON CONFLICT(tenant_id, link_id, day, dimension, value) DO UPDATE SET clicks = clicks + 1`
 			)
 			.bind(tenantId, linkId, day, ...guard, tenantId, linkId, day, click.referrer),
+		// The link's counted clicks for webhook milestones. The first counted click seeds the
+		// counter from the retained daily totals, which already hold this click.
+		db
+			.prepare(
+				`INSERT INTO link_click_totals (tenant_id, link_id, clicks, last_event_id, updated_at)
+				SELECT ?, ?, COALESCE((SELECT SUM(clicks) FROM daily_totals WHERE tenant_id = ? AND link_id = ?), 1), ?, ? WHERE ${admitted}
+				ON CONFLICT(tenant_id, link_id) DO UPDATE SET clicks = clicks + 1, last_event_id = excluded.last_event_id, updated_at = excluded.updated_at`
+			)
+			.bind(tenantId, linkId, tenantId, linkId, eventId, now, ...guard),
+		// Only the click that reached a multiple of 100 records it.
+		db
+			.prepare(
+				`INSERT INTO click_milestones (id, tenant_id, link_id, clicks, created_at)
+				SELECT 'link.click_milestone:' || link_id || ':' || clicks, tenant_id, link_id, clicks, ? FROM link_click_totals
+				WHERE tenant_id = ? AND link_id = ? AND last_event_id = ? AND clicks % 100 = 0 AND ${admitted}
+				ON CONFLICT(id) DO NOTHING`
+			)
+			.bind(now, tenantId, linkId, eventId, ...guard),
 		db
 			.prepare(
 				'SELECT (SELECT outcome FROM event_receipts WHERE tenant_id = ? AND event_id = ? AND attempt_token = ?) AS outcome, EXISTS (SELECT 1 FROM event_receipts WHERE tenant_id = ? AND event_id = ?) AS seen'

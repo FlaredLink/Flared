@@ -16,6 +16,7 @@
 		"./export": "./src/export.ts",
 		"./workspace": "./src/workspace.ts",
 		"./members": "./src/members.ts",
-		"./icons": "./src/icons.ts"
+		"./icons": "./src/icons.ts",
+		"./webhooks": "./src/webhooks.ts"
 	}
 }

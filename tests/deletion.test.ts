@@ -141,7 +141,36 @@ async function addWorkspace(name: string, db = identity()): Promise<string> {
 			)
 			.bind(tenantId, start + 86400000)
 	]);
+	await routing().batch([
+		routing()
+			.prepare(
+				"INSERT INTO webhook_endpoints (id, tenant_id, url, events, key_id, created_at, updated_at) VALUES (?, ?, 'https://hooks.example.com/in', '[\"link.created\"]', 'key', 0, 0)"
+			)
+			.bind(`hook-${name}`, tenantId),
+		...[1, 2].map((index) =>
+			routing()
+				.prepare(
+					"INSERT INTO webhook_events (id, tenant_id, type, payload, created_at) VALUES (?, ?, 'link.created', '{}', 0)"
+				)
+				.bind(`evt-${name}-${index}`, tenantId)
+		),
+		routing()
+			.prepare(
+				'INSERT INTO webhook_deliveries (id, tenant_id, event_id, endpoint_id, next_attempt_at, created_at) VALUES (?, ?, ?, ?, 0, 0)'
+			)
+			.bind(`dlv-${name}`, tenantId, `evt-${name}-1`, `hook-${name}`)
+	]);
 	await shard().batch([
+		shard()
+			.prepare(
+				"INSERT INTO link_click_totals (tenant_id, link_id, clicks, last_event_id, updated_at) VALUES (?, ?, 100, 'e', 0)"
+			)
+			.bind(tenantId, `link-${name}-0`),
+		shard()
+			.prepare(
+				'INSERT INTO click_milestones (id, tenant_id, link_id, clicks, created_at) VALUES (?, ?, ?, 100, 0)'
+			)
+			.bind(`link.click_milestone:link-${name}-0:100`, tenantId, `link-${name}-0`),
 		shard()
 			.prepare(
 				"INSERT INTO daily_totals (tenant_id, link_id, day, clicks) VALUES (?, ?, '2026-10-19', 3)"
@@ -308,6 +337,17 @@ describe('workspace deletion', () => {
 		expect(await rows(shard(), 'monthly_usage WHERE tenant_id = ?', 't-gone')).toBe(0);
 		expect(await rows(routing(), 'links WHERE tenant_id = ?', 't-gone')).toBe(0);
 		expect(await rows(routing(), 'idempotency_records WHERE tenant_id = ?', 't-gone')).toBe(0);
+		const webhookTables = [
+			[routing(), 'webhook_endpoints', 1],
+			[routing(), 'webhook_events', 2],
+			[routing(), 'webhook_deliveries', 1],
+			[shard(), 'link_click_totals', 1],
+			[shard(), 'click_milestones', 1]
+		] as const;
+		for (const [db, table, kept] of webhookTables) {
+			expect(await rows(db, `${table} WHERE tenant_id = ?`, 't-gone'), table).toBe(0);
+			expect(await rows(db, `${table} WHERE tenant_id = ?`, 't-kept'), table).toBe(kept);
+		}
 		const late = click('t-gone');
 		await createClickConsumer({ shards: shards(), now: () => start })({ messages: [late.value] });
 		expect(late.state).toEqual({ acked: true, retried: false });

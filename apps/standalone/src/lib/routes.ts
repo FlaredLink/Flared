@@ -21,6 +21,7 @@ export const settingsRoutes = {
 	limits: '/app/settings/limits',
 	updates: '/app/settings/updates',
 	tokens: '/app/settings/tokens',
+	webhooks: '/app/settings/webhooks',
 	apps: '/app/settings/apps'
 } as const;
 

@@ -16,6 +16,7 @@ import {
 import { isApiTokenPage, type ApiTokenPage } from '@flared/contracts/tokens';
 import { isConnectedAppPage, type ConnectedAppPage } from '@flared/contracts/oauth';
 import { isDomainPage, type DomainPage } from '@flared/contracts/domains';
+import { isWebhookEndpointPage, type WebhookEndpointPage } from '@flared/contracts/webhooks';
 import {
 	isWorkspace,
 	isWorkspaceList,
@@ -406,6 +407,17 @@ export async function fetchDomains(
 	const result = await getJson(service, headers, '/v1/domains');
 	if (!result.ok) return result;
 	return isDomainPage(result.body)
+		? { ok: true, page: result.body }
+		: { ok: false, failure: malformed };
+}
+
+export async function fetchWebhooks(
+	service: ApiService,
+	headers: Headers
+): Promise<{ ok: true; page: WebhookEndpointPage } | { ok: false; failure: ApiFailure }> {
+	const result = await getJson(service, headers, '/v1/webhooks');
+	if (!result.ok) return result;
+	return isWebhookEndpointPage(result.body)
 		? { ok: true, page: result.body }
 		: { ok: false, failure: malformed };
 }

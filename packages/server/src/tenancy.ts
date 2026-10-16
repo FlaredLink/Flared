@@ -2,7 +2,11 @@
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
 import type { BlockReason } from '@flared/contracts/links';
 import { applyAnalyticsPolicy } from '@flared/data/analytics';
-import { applyRoutingPolicy } from '@flared/data/routing-policy';
+import {
+	applyRoutingPolicy,
+	listUnprojectedWebhookLimits,
+	type RoutingPolicy
+} from '@flared/data/routing-policy';
 import {
 	acknowledgeProjection,
 	listPendingProjections,
@@ -12,6 +16,7 @@ import {
 	type MembershipQuery,
 	type MembershipRole,
 	type PolicyLimits,
+	type PolicyProjection,
 	type PolicyStore
 } from '@flared/data/tenancy';
 import { resolveShard, type AnalyticsShards } from './shards';
@@ -49,6 +54,19 @@ export async function resolveTenant(
 	return { status: 'active', tenantId, role, suspension };
 }
 
+function routingPolicyOf(policy: PolicyProjection, now: number): RoutingPolicy {
+	return {
+		tenantId: policy.tenantId,
+		revision: policy.revision,
+		analyticsShardId: policy.analyticsShardId,
+		activeLinkLimit: policy.activeLinkLimit,
+		domainLimit: policy.domainLimit,
+		webhookEndpointLimit: policy.webhookEndpointLimit,
+		suspendedAt: policy.suspendedAt,
+		now
+	};
+}
+
 // Safe to repeat: routing keeps the newest revision, and the acknowledgement only moves forward.
 export async function projectRoutingPolicy(
 	identity: D1Database,
@@ -59,15 +77,7 @@ export async function projectRoutingPolicy(
 	const policy = await readPolicyProjection(identity, tenantId);
 	if (!policy) throw new TenancyError('POLICY_MISSING');
 	if (policy.routingRevision < policy.revision)
-		await applyRoutingPolicy(routing, {
-			tenantId,
-			revision: policy.revision,
-			analyticsShardId: policy.analyticsShardId,
-			activeLinkLimit: policy.activeLinkLimit,
-			domainLimit: policy.domainLimit,
-			suspendedAt: policy.suspendedAt,
-			now
-		});
+		await applyRoutingPolicy(routing, routingPolicyOf(policy, now));
 	await acknowledgeProjection(identity, 'routing', tenantId, policy.revision, now);
 }
 
@@ -149,5 +159,20 @@ export async function retryProjections(
 				console.error(JSON.stringify({ event: 'policy_projection_failed', store, tenantId }));
 			}
 		}
+	// A routing row projected before routing stored the webhook endpoint limit gets it at the
+	// same revision. A tenant whose deletion has started has no policy to copy.
+	for (const tenantId of await listUnprojectedWebhookLimits(stores.routing, limit)) {
+		try {
+			const policy = await readPolicyProjection(identity, tenantId);
+			if (!policy) continue;
+			await applyRoutingPolicy(stores.routing, routingPolicyOf(policy, now));
+			projected += 1;
+		} catch {
+			failed += 1;
+			console.error(
+				JSON.stringify({ event: 'policy_projection_failed', store: 'routing', tenantId })
+			);
+		}
+	}
 	return { projected, failed };
 }

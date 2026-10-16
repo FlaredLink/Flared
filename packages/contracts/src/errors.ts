@@ -35,6 +35,8 @@ export const errorStatus = {
 	OWNER_REQUIRED: 403,
 	// Members and open invites fill the workspace's member limit.
 	MEMBER_LIMIT_REACHED: 403,
+	// The workspace keeps as many webhook endpoints as its limit allows.
+	WEBHOOK_LIMIT_REACHED: 403,
 	ALREADY_MEMBER: 409,
 	// The address already has an open invite to the workspace.
 	INVITE_PENDING: 409,

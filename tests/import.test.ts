@@ -7,6 +7,8 @@ import { betterAuth } from 'better-auth';
 import { isImportLinksResult } from '../packages/contracts/src/links';
 import { isTokenScope, scopePresets } from '../packages/contracts/src/tokens';
 import { setSlugReserved } from '../packages/data/src/links';
+import { createWebhookEndpoint } from '../packages/data/src/webhooks';
+import { keyId } from '../packages/server/src/webhooks/signing';
 import { createIdentityAdapter } from '../packages/data/src/identity-adapter';
 import { createTenant } from '../packages/data/src/tenancy';
 import { createSessionOptions } from '../packages/server/src/auth/options';
@@ -541,13 +543,40 @@ describe('D1 query budget', () => {
 			tenantId: 'tenant-count',
 			input: { name: 'Import', scopes: scopePresets.full, expiresInDays: 30 }
 		});
+		// One endpoint, so each created link stages an event and the delivery runs in the same
+		// invocation.
+		const webhookSecret = 'test-only-webhook-secret';
+		await routing()
+			.prepare(
+				"UPDATE tenant_policy SET webhook_endpoint_limit = 5 WHERE tenant_id = 'tenant-count'"
+			)
+			.run();
+		await createWebhookEndpoint(routing(), {
+			id: 'whk-count',
+			tenantId: 'tenant-count',
+			url: 'https://hooks.example.com/in',
+			events: ['link.created'],
+			milestoneInterval: null,
+			keyId: await keyId(webhookSecret),
+			now: 0
+		});
+		const background: Promise<unknown>[] = [];
+		let sent = 0;
 		const app = createApi({
 			identity: counted,
 			routing: countedRouting,
 			appOrigin: origin,
 			authenticate: (request) => authenticateBearer(auth, counted, request),
 			now: () => clock,
-			events: { record: async () => {} }
+			events: { record: async () => {} },
+			webhooks: {
+				secret: webhookSecret,
+				fetch: async () => {
+					sent += 1;
+					return new Response(null, { status: 200 });
+				},
+				background: (task) => background.push(task)
+			}
 		});
 		const send = (dryRun: boolean, items: unknown[], key: string) =>
 			app.fetch(
@@ -569,14 +598,19 @@ describe('D1 query budget', () => {
 			counter.queries = 0;
 			const response = await send(dryRun, items, key);
 			expect(response.status).toBe(200);
-			return { queries: counter.queries, body: await json(response) };
+			const body = await json(response);
+			// The delivery runs after the response, in the same invocation.
+			await Promise.all(background.splice(0));
+			return { queries: counter.queries, body };
 		};
 		const preview = await measure(true, 'budget-preview');
 		const created = await measure(false, 'budget-1');
 		const replayed = await measure(false, 'budget-1');
 		expect(created.body.summary).toEqual({ created: 3, failed: 0 });
 		expect(replayed.body).toEqual(created.body);
-		// Measured when the default was set: 10 (dry run), 34 (created), 40 (replayed).
+		expect(sent).toBe(3);
+		// Measured: 10 (dry run), 44 (created: 37 and the 7 of the delivery), 43 (replayed).
+		expect([preview.queries, created.queries, replayed.queries]).toEqual([10, 44, 43]);
 		for (const run of [preview, created, replayed]) expect(run.queries).toBeLessThan(50);
 		// One more item would pass the budget on a replay; the default leaves no room for it.
 		const tooMany = await send(false, [...items, { destination: 'https://e.com/4' }], 'budget-2');

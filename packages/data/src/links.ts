@@ -2,6 +2,7 @@
 // Routing-store records for domains, permanent slug reservations, links, and create keys.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
 import { isBlockReason, type BlockReason } from '@flared/contracts/links';
+import { linkJson, webhooksOn } from './webhooks';
 
 export interface DomainRow {
 	id: string;
@@ -45,6 +46,15 @@ export interface NewLinkRecord {
 	now: number;
 	expiresAt: number;
 	bodies: { created: string; slugTaken: string; limitReached: string };
+	// The link.created event staged with the link while the workspace has webhooks on. payload
+	// is the event's data object: the 201 body.
+	event: { id: string; payload: string };
+}
+
+// eventStaged: a webhook event was written with the change, so a delivery can start now.
+export interface CreateResult {
+	outcome: CreateOutcome;
+	eventStaged: boolean;
 }
 
 export interface StoredResult {
@@ -61,6 +71,8 @@ export interface LinkChange {
 	androidDestination?: string | null;
 	active?: boolean;
 	now: number;
+	// The ID of the webhook event staged with the change while the workspace has webhooks on.
+	eventId: string;
 }
 
 const linkColumns =
@@ -229,10 +241,11 @@ export async function readStoredResult(
 // One batch claims the key, decides the outcome with SQL conditions, and writes the
 // reservation, link, and stored response together. Expected rejections never raise an
 // error, so their stored result is not rolled back; the reservation key stays the final guard.
+// The webhook event comes last, so the earlier result indexes stay where they are.
 export async function createLinkRecord(
 	db: D1Database,
 	record: NewLinkRecord
-): Promise<CreateOutcome> {
+): Promise<CreateResult> {
 	const { tenantId: t, key: k } = record;
 	const outcomeOf = 'SELECT outcome FROM idempotency_records WHERE tenant_id = ?1 AND key = ?2';
 	try {
@@ -294,7 +307,13 @@ export async function createLinkRecord(
 				.prepare(
 					"DELETE FROM idempotency_records WHERE tenant_id = ? AND key = ? AND outcome IN ('retry', 'unavailable')"
 				)
-				.bind(t, k)
+				.bind(t, k),
+			db
+				.prepare(
+					`INSERT INTO webhook_events (id, tenant_id, type, subject_id, payload, created_at)
+					SELECT ?3, ?1, 'link.created', ?4, ?5, ?6 WHERE (${outcomeOf}) = 'created' AND ${webhooksOn('?1')}`
+				)
+				.bind(t, k, record.event.id, record.linkId, record.event.payload, record.now)
 		]);
 		const outcome = (results[6].results[0] as { outcome?: unknown } | undefined)?.outcome;
 		if (
@@ -305,10 +324,11 @@ export async function createLinkRecord(
 			outcome !== 'unavailable'
 		)
 			throw new Error('Link creation returned no outcome');
-		return outcome;
+		return { outcome, eventStaged: results[8].meta.changes === 1 };
 	} catch (error) {
 		// The key's insert failed: an earlier or concurrent request already holds it.
-		if (await keyExists(db, t, k, record.now)) return 'duplicate_key';
+		if (await keyExists(db, t, k, record.now))
+			return { outcome: 'duplicate_key', eventStaged: false };
 		throw error;
 	}
 }
@@ -377,48 +397,94 @@ export async function listLinks(
 	return results.map(toLink);
 }
 
-// One statement, so reactivation and the active-link count cannot race. Returns false when
-// the link is missing, blocked, or reactivation would exceed the limit; the caller tells them
-// apart. The owner may still turn a blocked link off, which frees its place in the limit.
+// The conditions of a link change, bound as in updateLink: the owner may still turn a blocked
+// link off, which frees its place in the limit, and reactivation must fit the limit.
+const changeWhere = `tenant_id = ?1 AND id = ?2
+	AND (blocked_at IS NULL OR (?3 IS NULL AND ?4 = 0 AND ?8 = 0 AND ?10 = 0 AND ?6 = 'disabled'))
+	AND NOT (
+		status = 'disabled' AND ?6 = 'active' AND
+		(SELECT COUNT(*) FROM links WHERE tenant_id = ?1 AND status = 'active') >=
+		COALESCE((SELECT active_link_limit FROM tenant_policy WHERE tenant_id = ?1), 0)
+	)`;
+
+// One batch, so reactivation and the active-link count cannot race and the webhook event matches
+// the change. updated is false when the link is missing, blocked, or reactivation would exceed
+// the limit; the caller tells them apart. While the workspace has webhooks on, the event is
+// staged with the state before, completed with the state after and its type, and dropped when
+// nothing the event reports changed.
 export async function updateLink(
 	db: D1Database,
 	tenantId: string,
 	linkId: string,
 	change: LinkChange
-): Promise<boolean> {
+): Promise<{ updated: boolean; eventStaged: boolean }> {
 	const status = change.active === undefined ? null : change.active ? 'active' : 'disabled';
-	const result = await db
-		.prepare(
-			`UPDATE links SET
-				destination = COALESCE(?3, destination),
-				title = CASE WHEN ?4 = 1 THEN ?5 ELSE title END,
-				ios_destination = CASE WHEN ?8 = 1 THEN ?9 ELSE ios_destination END,
-				android_destination = CASE WHEN ?10 = 1 THEN ?11 ELSE android_destination END,
-				status = COALESCE(?6, status),
-				updated_at = ?7
-			WHERE tenant_id = ?1 AND id = ?2
-			AND (blocked_at IS NULL OR (?3 IS NULL AND ?4 = 0 AND ?8 = 0 AND ?10 = 0 AND ?6 = 'disabled'))
-			AND NOT (
-				status = 'disabled' AND ?6 = 'active' AND
-				(SELECT COUNT(*) FROM links WHERE tenant_id = ?1 AND status = 'active') >=
-				COALESCE((SELECT active_link_limit FROM tenant_policy WHERE tenant_id = ?1), 0)
-			)`
-		)
-		.bind(
-			tenantId,
-			linkId,
-			change.destination ?? null,
-			change.title === undefined ? 0 : 1,
-			change.title ?? null,
-			status,
-			change.now,
-			change.iosDestination === undefined ? 0 : 1,
-			change.iosDestination ?? null,
-			change.androidDestination === undefined ? 0 : 1,
-			change.androidDestination ?? null
-		)
-		.run();
-	return result.meta.changes === 1;
+	const values = [
+		tenantId,
+		linkId,
+		change.destination ?? null,
+		change.title === undefined ? 0 : 1,
+		change.title ?? null,
+		status,
+		change.now,
+		change.iosDestination === undefined ? 0 : 1,
+		change.iosDestination ?? null,
+		change.androidDestination === undefined ? 0 : 1,
+		change.androidDestination ?? null
+	];
+	const previous = (field: string) => `json_extract(e.payload, '$.previous.${field}')`;
+	const results = await db.batch([
+		db
+			.prepare(
+				`INSERT INTO webhook_events (id, tenant_id, type, subject_id, payload, created_at)
+				SELECT ?12, ?1, 'link.updated', ?2, json_object('link', NULL, 'previous', json_object(
+					'destination', destination, 'title', title, 'iosDestination', ios_destination,
+					'androidDestination', android_destination, 'enabled', json(CASE status WHEN 'active' THEN 'true' ELSE 'false' END))), ?7
+				FROM links WHERE ${changeWhere} AND ${webhooksOn('?1')}`
+			)
+			.bind(...values, change.eventId),
+		db
+			.prepare(
+				`UPDATE links SET
+					destination = COALESCE(?3, destination),
+					title = CASE WHEN ?4 = 1 THEN ?5 ELSE title END,
+					ios_destination = CASE WHEN ?8 = 1 THEN ?9 ELSE ios_destination END,
+					android_destination = CASE WHEN ?10 = 1 THEN ?11 ELSE android_destination END,
+					status = COALESCE(?6, status),
+					updated_at = ?7
+				WHERE ${changeWhere}`
+			)
+			.bind(...values),
+		// A change of the on/off state wins the type.
+		db
+			.prepare(
+				`UPDATE webhook_events AS e SET
+					payload = json_set(e.payload, '$.link', ${linkJson('l', 'n')}),
+					type = CASE
+						WHEN ${previous('enabled')} = (l.status = 'active') THEN 'link.updated'
+						WHEN l.status = 'active' THEN 'link.enabled'
+						ELSE 'link.disabled' END
+				FROM links l JOIN domain_namespaces n ON n.id = l.domain_id
+				WHERE e.id = ?1 AND l.tenant_id = ?2 AND l.id = ?3`
+			)
+			.bind(change.eventId, tenantId, linkId),
+		db
+			.prepare(
+				`DELETE FROM webhook_events AS e WHERE e.id = ?1 AND EXISTS (
+					SELECT 1 FROM links l WHERE l.tenant_id = ?2 AND l.id = ?3
+					AND l.destination IS ${previous('destination')}
+					AND l.title IS ${previous('title')}
+					AND l.ios_destination IS ${previous('iosDestination')}
+					AND l.android_destination IS ${previous('androidDestination')}
+					AND (l.status = 'active') = ${previous('enabled')}
+				)`
+			)
+			.bind(change.eventId, tenantId, linkId)
+	]);
+	return {
+		updated: results[1].meta.changes === 1,
+		eventStaged: results[0].meta.changes === 1 && results[3].meta.changes === 0
+	};
 }
 
 export async function deleteExpiredCreationRecords(

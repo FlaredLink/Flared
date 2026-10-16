@@ -51,6 +51,11 @@
 			"svelte": "./src/tokens/TokenList.svelte"
 		},
 		"./tokens/client": "./src/tokens/client.ts",
+		"./webhooks/WebhookList.svelte": {
+			"types": "./src/webhooks/WebhookList.svelte",
+			"svelte": "./src/webhooks/WebhookList.svelte"
+		},
+		"./webhooks/client": "./src/webhooks/client.ts",
 		"./account/DeleteAccount.svelte": {
 			"types": "./src/account/DeleteAccount.svelte",
 			"svelte": "./src/account/DeleteAccount.svelte"

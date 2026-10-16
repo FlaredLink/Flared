@@ -40,11 +40,13 @@
 	],
 	"queues": {
 		"producers": [{ "binding": "CLICKS", "queue": "flared-clicks" }],
-		// max_batch_size 5 keeps one consumer run within 50 D1 queries: a click takes about 10.
+		// max_batch_size 3 keeps one consumer run within the 50 D1 queries of Workers Free: a
+		// click is a 14-statement batch, so 3 clicks and the ingestion minute are 3 × 14 + 1 = 43,
+		// and the installation status read makes 44.
 		"consumers": [
 			{
 				"queue": "flared-clicks",
-				"max_batch_size": 5,
+				"max_batch_size": 3,
 				"max_batch_timeout": 5,
 				"max_retries": 5,
 				"dead_letter_queue": "flared-clicks-dlq"
