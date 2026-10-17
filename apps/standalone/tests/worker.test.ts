@@ -463,6 +463,8 @@ describe('the frequent run budget', () => {
 	const hour = Math.ceil((Date.now() + 1) / 3_600_000) * 3_600_000 + 3_600_000;
 	let tenantId = '';
 	let endpointId = '';
+	let endDateId = '';
+	let checksId = '';
 	const domainIds: string[] = [];
 	const linkIds: string[] = [];
 
@@ -494,13 +496,15 @@ describe('the frequent run budget', () => {
 	}
 
 	async function scheduledRun(
-		scheduledTime: number
+		scheduledTime: number,
+		answer: (url: string) => Response = () => new Response('ok')
 	): Promise<{ queries: number; fetched: string[] }> {
 		const counter = { queries: 0 };
 		const fetched: string[] = [];
 		const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
-			fetched.push(input instanceof Request ? input.url : String(input));
-			return new Response('ok');
+			const url = input instanceof Request ? input.url : String(input);
+			fetched.push(url);
+			return answer(url);
 		});
 		try {
 			await worker.scheduled(
@@ -601,6 +605,7 @@ describe('the frequent run budget', () => {
 		});
 		expect(template.status).toBe(201);
 		const { automation } = (await template.json()) as { automation: { id: string } };
+		endDateId = automation.id;
 		// An end date in the past: due at the next automation turn.
 		const applied = await call(`${origin}/api/v1/automations/${automation.id}/links`, {
 			method: 'POST',
@@ -680,7 +685,99 @@ describe('the frequent run budget', () => {
 			expect(await jobOutcome(job, before), job).toBe('succeeded');
 	});
 
-	it('removes the staged domains and endpoint, so no later job fetches them', async () => {
+	it('checks destinations first in the :30 turn, within the budget', async () => {
+		await stageWork('thirty');
+		// The endpoint receives the events these requests stage, so no failed delivery holds the
+		// endpoint back in the scheduled run.
+		const staging = vi
+			.spyOn(globalThis, 'fetch')
+			.mockImplementation(async () => new Response('ok'));
+		// The 25 end-date applications ran in the odd turn; applying again makes them due.
+		const rearmed = await call(`${origin}/api/v1/automations/${endDateId}/links`, {
+			method: 'POST',
+			headers: browser(owner),
+			body: JSON.stringify({ linkIds, endsAt: new Date(Date.now() - 60_000).toISOString() })
+		});
+		expect(rearmed.status).toBe(200);
+		const template = await call(`${origin}/api/v1/automations`, {
+			method: 'POST',
+			headers: browser(owner),
+			body: JSON.stringify({
+				name: 'Shop down',
+				trigger: { type: 'destination_down' },
+				actions: [{ type: 'disable_link' }, { type: 'send_webhook', endpointId }]
+			})
+		});
+		expect(template.status).toBe(201);
+		checksId = ((await template.json()) as { automation: { id: string } }).automation.id;
+		// 10 destinations, each two redirects to new hosts and a third redirect: 3 requests and 3
+		// domain lookups for each check.
+		const checkLinks: string[] = [];
+		for (let index = 0; index < 10; index += 1) {
+			const link = await call(`${origin}/api/v1/links`, {
+				method: 'POST',
+				headers: browser(owner, { 'idempotency-key': crypto.randomUUID() }),
+				body: JSON.stringify({
+					destination: `https://shop${index}.example.org/`,
+					slug: `budget-check-${index}`
+				})
+			});
+			expect(link.status).toBe(201);
+			checkLinks.push(((await link.json()) as { link: { id: string } }).link.id);
+		}
+		const applied = await call(`${origin}/api/v1/automations/${checksId}/links`, {
+			method: 'POST',
+			headers: browser(owner),
+			body: JSON.stringify({ linkIds: checkLinks })
+		});
+		expect(applied.status).toBe(200);
+		staging.mockRestore();
+		const hop = (url: string): Response => {
+			const { hostname } = new URL(url);
+			const next = hostname.startsWith('shop')
+				? `https://a-${hostname.replace('.example.org', '')}.example.net/`
+				: hostname.startsWith('a-')
+					? `https://b-${hostname.slice(2).replace('.example.net', '')}.example.com/`
+					: '/again';
+			return new Response(null, { status: 302, headers: { location: next } });
+		};
+		const before = Date.now();
+		const { queries, fetched } = await scheduledRun(hour + 30 * 60_000, (url) =>
+			url === 'https://hooks.example.net/budget' ? new Response('ok') : hop(url)
+		);
+		const checks = fetched.filter((url) => url !== 'https://hooks.example.net/budget');
+		console.log(JSON.stringify({ turn: ':30', queries, fetches: fetched.length }));
+		expect(queries).toBeLessThan(50);
+		expect(fetched.length).toBeLessThanOrEqual(45);
+		// 6 checks of 3 requests each, and no domain check.
+		expect(checks).toHaveLength(18);
+		expect(checks.filter((url) => url.endsWith(challengePath))).toEqual([]);
+		expect(fetched.filter((url) => url === 'https://hooks.example.net/budget')).toHaveLength(25);
+		const checked = await env.ROUTING.prepare(
+			"SELECT COUNT(*) AS n FROM link_automations WHERE automation_id = ? AND last_check_result = '302'"
+		)
+			.bind(checksId)
+			.first<{ n: number }>();
+		expect(checked?.n).toBe(6);
+		const ran = await env.ROUTING.prepare(
+			"SELECT COUNT(*) AS n FROM link_automations WHERE automation_id = ? AND state = 'done'"
+		)
+			.bind(endDateId)
+			.first<{ n: number }>();
+		expect(ran?.n).toBe(25);
+		for (const job of ['policy_projections', 'domain_checks', 'automations', 'webhook_deliveries'])
+			expect(await jobOutcome(job, before), job).toBe('succeeded');
+	});
+
+	it('removes the staged domains, endpoint, and check template, so no later job fetches them', async () => {
+		expect(
+			(
+				await call(`${origin}/api/v1/automations/${checksId}`, {
+					method: 'DELETE',
+					headers: browser(owner)
+				})
+			).status
+		).toBe(204);
 		for (const id of domainIds)
 			expect(
 				(

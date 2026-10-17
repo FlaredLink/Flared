@@ -517,6 +517,26 @@ export async function listLinkAutomations(
 	});
 }
 
+// The destinations of the workspace's links that are not blocked, by link ID: a
+// destination_down template goes only on a link whose destination a check can request.
+export async function readLinkDestinations(
+	db: D1Database,
+	tenantId: string,
+	linkIds: readonly string[]
+): Promise<Map<string, string>> {
+	batchSize(linkIds.length, 100);
+	const { results } = await db
+		.prepare(
+			`SELECT l.id, l.destination FROM json_each(?2) j
+			JOIN links l ON l.id = j.value AND l.tenant_id = ?1 WHERE l.blocked_at IS NULL`
+		)
+		.bind(tenantId, JSON.stringify(linkIds))
+		.all<Record<string, unknown>>();
+	return new Map(
+		results.map((row) => [text(row.id, 'link'), text(row.destination, 'destination')])
+	);
+}
+
 // Applies the template to each link in one statement, which also keeps the per-link limit and
 // refuses a blocked link and a workspace at automation limit 0. A finished application is
 // armed again; a waiting one with the same end date is left as it is. Only when a link was not
@@ -1019,7 +1039,8 @@ export async function claimDestinationChecks(
 
 // Records check results in one statement. A success clears the count; a failure counts on the
 // same key and starts again at 1 on another. destinationFailuresToTrigger failures in a row make
-// the application due now.
+// the application due now. A not_checkable result is no failure: it clears the count, and the
+// application waits with that result until a later check can request the destination.
 export async function finishDestinationChecks(
 	db: D1Database,
 	finish: { now: number; results: DestinationCheckResult[] }
@@ -1033,6 +1054,7 @@ export async function finishDestinationChecks(
 				check_failures = ${failures},
 				check_key = r.check_key,
 				last_check_result = r.result,
+				result_code = CASE WHEN r.result = 'not_checkable' THEN 'not_checkable' END,
 				due_at = CASE WHEN link_automations.due_at IS NULL AND ${failures} >= ?2 THEN ?1 ELSE link_automations.due_at END,
 				updated_at = ?1
 			FROM (SELECT json_extract(value, '$.linkId') AS link_id, json_extract(value, '$.automationId') AS automation_id,

@@ -141,11 +141,9 @@ import {
 	listLinkAutomations,
 	readAutomation,
 	removeLinkAutomation,
-	updateAutomation,
-	type ApplyLinkOutcome,
-	type ApplyResult
+	updateAutomation
 } from '@flared/data/automations';
-import { applyToLinks } from './automations/apply';
+import { applyToLinks, type LinkApplyOutcome, type LinkApplyResult } from './automations/apply';
 import {
 	automationPage,
 	automationSummary,
@@ -437,7 +435,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	const importItemsPerRequest = dependencies.importItemsPerRequest ?? defaultImportItemsPerRequest;
 	const importsPerHour = dependencies.importsPerHour ?? 2000;
 	const domainSettings: DomainSettings = dependencies.domains ?? { reservedHostnames: [] };
-	// A webhook may not call the installation itself.
+	// A webhook or a destination check may not call the installation itself.
 	const webhookReserved = [
 		...domainSettings.reservedHostnames,
 		new URL(appOrigin).hostname,
@@ -1631,14 +1629,16 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 				: `This workspace has room for ${limit} automations. Delete an automation first.`
 		);
 
-	// The template is read first, so the end date is checked against its trigger.
+	// The template is read first, so the end date is checked against its trigger. A
+	// destination_down template goes only on links whose destination a check may request, on
+	// none of the installation's own hostnames.
 	async function apply(
 		context: ApiContext,
 		automationId: string,
 		linkIds: string[],
 		input: { endsAt?: string },
 		time: number
-	): Promise<Extract<ApplyResult, { status: 'done' }>> {
+	): Promise<Extract<LinkApplyResult, { status: 'done' }>> {
 		const { tenantId, requestId } = context.var;
 		const automation = await readAutomation(routing, tenantId, automationId);
 		if (!automation) throw new ApiError('NOT_FOUND', 'Automation not found.');
@@ -1646,7 +1646,8 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		const result = await applyToLinks(
 			{ identity, routing, analytics: dependencies.analytics },
 			{ tenantId, automationId, linkIds, endsAt, now: time },
-			automation.trigger.type
+			automation.trigger.type,
+			webhookReserved
 		);
 		if (result.status === 'not_found') throw new ApiError('NOT_FOUND', 'Automation not found.');
 		if (result.status === 'off') throw automationLimitError(0);
@@ -1784,6 +1785,8 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			const linkId = context.req.param('id');
 			const result = await apply(context, context.req.param('automationId'), [linkId], input, time);
 			const outcome = result.links[0]?.outcome ?? 'not_found';
+			if (outcome === 'not_checkable')
+				throw new LinkInputError('destination', applyRefusals.not_checkable.message);
 			if (outcome !== 'applied' && outcome !== 'unchanged') {
 				const refused = applyLinkResult({ linkId, outcome }).error;
 				if (refused) throw new ApiError(refused.code, refused.message);
@@ -2086,7 +2089,7 @@ function deliverySummary(row: WebhookDeliveryRow): WebhookDelivery {
 }
 
 const applyRefusals: Record<
-	Exclude<ApplyLinkOutcome, 'applied' | 'unchanged'>,
+	Exclude<LinkApplyOutcome, 'applied' | 'unchanged'>,
 	NonNullable<ApplyAutomationLinkResult['error']>
 > = {
 	not_found: { code: 'NOT_FOUND', message: 'Link not found.' },
@@ -2097,12 +2100,17 @@ const applyRefusals: Record<
 	link_limit: {
 		code: 'LINK_AUTOMATION_LIMIT_REACHED',
 		message: 'This link has 5 automations. Remove one from the link first.'
+	},
+	not_checkable: {
+		code: 'INVALID_INPUT',
+		message:
+			'Flared cannot check this destination. It needs an http or https URL on the default port, on a public hostname that is not a Flared address.'
 	}
 };
 
 function applyLinkResult(link: {
 	linkId: string;
-	outcome: ApplyLinkOutcome;
+	outcome: LinkApplyOutcome;
 }): ApplyAutomationLinkResult {
 	if (link.outcome === 'applied' || link.outcome === 'unchanged')
 		return { linkId: link.linkId, status: link.outcome };

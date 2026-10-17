@@ -63,8 +63,8 @@ export function webhookBody(delivery: ClaimedDelivery): string {
 	return JSON.stringify(envelope);
 }
 
-// Reads at most responseBytes of the body, then lets the rest go.
-async function drain(response: Response): Promise<void> {
+// Reads at most responseBytes of the body, then lets the rest go. Destination checks use it too.
+export async function drain(response: Response): Promise<void> {
 	if (!response.body) return;
 	const reader = response.body.getReader();
 	let size = 0;

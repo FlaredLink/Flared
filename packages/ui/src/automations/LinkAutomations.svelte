@@ -25,7 +25,7 @@
 		localDateTimeToIso,
 		removeLinkAutomation
 	} from './client';
-	import { resultText, triggerText } from './text';
+	import { checkResultText, resultText, triggerText } from './text';
 	import { shownWorkspace } from '../workspace/shown';
 	import Glyph from '../icons/Glyph.svelte';
 	import Badge from '../atoms/Badge.svelte';
@@ -129,7 +129,7 @@
 					check.failures > 0
 						? ` ${check.failures === 1 ? '1 failed check' : `${check.failures} failed checks`} in a row.`
 						: '';
-				const result = check.lastResult ? ` (${check.lastResult})` : '';
+				const result = check.lastResult ? `: ${checkResultText(check.lastResult)}` : '';
 				return `Last checked ${at(check.lastCheckedAt)}${result}.${failures}`;
 			}
 		}

@@ -191,8 +191,9 @@ class Installation {
 				secret: config.secret,
 				background: (task) => ctx.waitUntil(task)
 			},
-			// No email in this edition, so templates cannot email the owner.
-			automations: { email: false, destinationChecks: false }
+			// No email in this edition, so templates cannot email the owner. The scheduled job
+			// checks destinations at :30.
+			automations: { email: false, destinationChecks: true }
 		});
 	}
 

@@ -281,6 +281,24 @@ export async function activeDomainKind(
 	return row.tenant_id === null ? 'platform' : 'workspace';
 }
 
+// Which of the hostnames are active platform or workspace domains, in one statement. A
+// destination check never requests a short link.
+export async function activeDomainHostnames(
+	db: D1Database,
+	hostnames: readonly string[]
+): Promise<Set<string>> {
+	if (hostnames.length === 0) return new Set();
+	const { results } = await db
+		.prepare(
+			"SELECT n.hostname FROM domain_namespaces n JOIN domains d ON d.id = n.id WHERE d.state = 'active' AND n.hostname IN (SELECT value FROM json_each(?))"
+		)
+		.bind(JSON.stringify(hostnames))
+		.all<{ hostname: unknown }>();
+	return new Set(
+		results.flatMap((row) => (typeof row.hostname === 'string' ? [row.hostname] : []))
+	);
+}
+
 // Makes a hostname an active platform domain, the default when none exists. Safe to repeat:
 // the hostname keeps its namespace, and a domain that exists is left as it is. A standalone
 // installation adds its app host this way during setup.

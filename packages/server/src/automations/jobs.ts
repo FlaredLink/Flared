@@ -14,8 +14,15 @@ import {
 } from '@flared/data/automations';
 import { recordNotices, type NewNotice } from '@flared/data/notices';
 import type { AnalyticsShards } from '../shards';
+import {
+	checkDestinations,
+	type DestinationCheckSettings,
+	type DestinationCheckSummary
+} from './checks';
 import { transferClickMilestones } from './milestones';
 import { automationNoticeKind } from './notices';
+
+export type { DestinationCheckSettings, DestinationCheckSummary } from './checks';
 
 // claimAutomations takes at most this many at once.
 const claimBatch = 100;
@@ -31,6 +38,9 @@ export interface AutomationJobOptions {
 	email: boolean;
 	// Applications run in one job, in rounds of at most 100. 25 by default.
 	maxApplications?: number;
+	// Destination checks for destination_down templates, run first, so a destination found down
+	// a second time runs in the same job. Without it, nothing is checked.
+	checks?: DestinationCheckSettings;
 	now?: () => number;
 }
 
@@ -43,6 +53,8 @@ export interface AutomationJobSummary {
 	claimed: number;
 	ran: number;
 	notices: number;
+	// Null when the job ran without checks.
+	checks: DestinationCheckSummary | null;
 }
 
 function notice(email: AutomationEmail, token: string, now: number): NewNotice {
@@ -61,11 +73,13 @@ function notice(email: AutomationEmail, token: string, now: number): NewNotice {
 	};
 }
 
-// Statements: the milestone transfer (1 read per shard; 4 with milestones), then in each round
-// the 2-statement claim, 1 for skipped run records, and the 8-statement run batch, then 1 for
-// notices; each only when it has work. Idle: 1 per shard and 2. The emails are recorded after the
-// run batches, so a stop in between loses it: at most once. A shard that fails does not stop the
-// runs; the job then throws, so the edition records a failure.
+// Statements: with checks, the check claim (and 2 to 4 more when it claims any; see
+// checkDestinations); the milestone transfer (1 read per shard; 4 with milestones), then in each
+// round the 2-statement claim, 1 for skipped run records, and the 8-statement run batch, then 1
+// for notices; each only when it has work. Idle: 1 per shard and 2, and 1 with checks. The emails
+// are recorded after the run batches, so a stop in between loses it: at most once. Failed checks
+// or a shard that fails do not stop the runs; the job then throws, so the edition records a
+// failure.
 export async function runAutomationJob(
 	stores: { identity: D1Database; routing: D1Database; analytics: AnalyticsShards },
 	options: AutomationJobOptions
@@ -75,8 +89,24 @@ export async function runAutomationJob(
 	const maxApplications = options.maxApplications ?? 25;
 	if (!Number.isSafeInteger(maxApplications) || maxApplications < 1)
 		throw new Error('Invalid automation run limit');
+	let checks: DestinationCheckSummary | null = null;
+	let checkError: unknown = null;
+	if (options.checks)
+		try {
+			checks = await checkDestinations({ routing }, { ...options.checks, now });
+		} catch (error) {
+			checkError = error;
+			console.error(JSON.stringify({ event: 'destination_checks_failed' }));
+		}
 	const { milestones, failedShards } = await transferClickMilestones(stores, now);
-	const summary: AutomationJobSummary = { milestones, skipped: 0, claimed: 0, ran: 0, notices: 0 };
+	const summary: AutomationJobSummary = {
+		milestones,
+		skipped: 0,
+		claimed: 0,
+		ran: 0,
+		notices: 0,
+		checks
+	};
 	// One email per template per job run, whatever the number of rounds.
 	const emails = new Map<string, AutomationEmail>();
 	const invocation = crypto.randomUUID();
@@ -125,6 +155,7 @@ export async function runAutomationJob(
 	}
 	if (failedShards.length > 0)
 		throw new Error('Click milestones could not be moved from every analytics shard');
+	if (checkError !== null) throw checkError;
 	return summary;
 }
 

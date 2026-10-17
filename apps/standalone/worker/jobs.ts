@@ -108,7 +108,9 @@ async function sampleShards(config: JobConfig, scheduledTime: number): Promise<v
 // A job outside its turn returns at once and still records a successful run. Measured worst
 // cases (tests/worker.test.ts), with a pending policy projection and 30 due deliveries:
 // - even turn, on the hour, 5 waiting domains, milestones waiting: 45 queries, 28 fetches;
-// - odd turn, 25 due automations with every action, milestones waiting: 42 queries, 25 fetches.
+// - odd turn, 25 due automations with every action, milestones waiting: 42 queries, 25 fetches;
+// - the odd turn at :30 with that work and 10 due destination checks, each 3 requests to new
+//   hosts: 47 queries, 43 fetches (6 checks run).
 function automationTurn(scheduledTime: number): boolean {
 	return Math.floor(new Date(scheduledTime).getUTCMinutes() / 10) % 2 === 1;
 }
@@ -126,12 +128,38 @@ async function checkDomains(config: JobConfig, scheduledTime: number, now: numbe
 	if (result.failed > 0) throw new Error('Domain checks failed');
 }
 
-// Click milestones, then 25 due applications at most: 14 queries with the ledger and no fetch.
-// The events that the runs stage go out with the webhook job in the same invocation.
-function runAutomations(config: JobConfig, now: number): Promise<void> {
+// Destination checks go out with the requests that name this page.
+const checkUserAgent =
+	'Flared-LinkCheck/1.0 (+https://github.com/FlaredLink/Flared/blob/main/docs/self-hosting/automations.md)';
+
+// Applications whose destination one run checks. Each check takes up to 3 requests, and the
+// webhook job in the same run sends up to 25, so 6 checks keep the run at 43 requests or fewer.
+const checksPerRun = 6;
+
+// Destination checks run only in the turn at :30 (k = 3); the shard sample has the turn at :00.
+function checkTurn(scheduledTime: number): boolean {
+	return Math.floor(new Date(scheduledTime).getUTCMinutes() / 10) === 3;
+}
+
+// In the :30 turn, destination checks first: up to 5 queries and 18 requests. Then click
+// milestones and 25 due applications at most: 14 queries with the ledger and no request. The
+// events that the runs stage go out with the webhook job in the same invocation.
+function runAutomations(config: JobConfig, now: number, scheduledTime: number): Promise<void> {
 	return runAutomationJob(
 		{ identity: config.identity, routing: config.routing, analytics: config.shards },
-		{ email: false, maxApplications: 25, now: () => now }
+		{
+			email: false,
+			maxApplications: 25,
+			now: () => now,
+			checks: checkTurn(scheduledTime)
+				? {
+						limit: checksPerRun,
+						concurrency: 5,
+						userAgent: checkUserAgent,
+						reservedHostnames: reservedHostnames(config)
+					}
+				: undefined
+		}
 	).then(() => undefined);
 }
 
@@ -200,7 +228,9 @@ export async function runScheduled(
 		Promise.allSettled(list.map(([job, task]) => jobs.trackJob(config.identity, job, task)));
 	// Started once, so the webhook job can wait for it; null outside the automation turn.
 	const automations =
-		cron === frequentCron && automationTurn(scheduledTime) ? runAutomations(config, now) : null;
+		cron === frequentCron && automationTurn(scheduledTime)
+			? runAutomations(config, now, scheduledTime)
+			: null;
 	const results =
 		cron === frequentCron
 			? await run([

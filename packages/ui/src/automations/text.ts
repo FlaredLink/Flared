@@ -115,3 +115,11 @@ export function resultText(result: AutomationResult): string {
 			return 'Flared cannot check this destination.';
 	}
 }
+
+// What the last destination check saw: an HTTP status, no answer in time, or no connection.
+export function checkResultText(result: string): string {
+	if (/^\d{3}$/.test(result)) return `the page answered ${result}`;
+	if (result === 'timeout') return 'no answer within 10 seconds';
+	if (result === 'network') return 'no connection';
+	return result;
+}
