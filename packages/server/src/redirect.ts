@@ -3,15 +3,17 @@
 // Cache entry until 60 seconds after its lookup started, so an edit, disable, or block reaches
 // every visitor within that bound. Each counted GET sends one minimized click event after the
 // response. iPhone and Android visitors go to the link's device destination when it has one;
-// automated clients always get the destination, so link previews show the web page. Imports
-// only routing and contract code.
+// automated clients always get the destination, so link previews show the web page. For a
+// workspace that forwards its clicks, a counted GET also reads or sets the host-only visitor
+// cookie, unless the request sends Sec-GPC: 1; a response that sets it is private. Imports only
+// routing and contract code.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
-import type { ClickEvent } from '@flared/contracts/analytics';
+import { visitorIdPattern, type ClickEvent } from '@flared/contracts/analytics';
 import { slugPattern } from '@flared/contracts/links';
 import { isReservedPath } from '@flared/contracts/reserved';
 import { activeDomainKind } from '@flared/data/domains';
 import { findRedirectTarget, type RedirectLookup, type RedirectTarget } from '@flared/data/links';
-import { buildClickEvent, isAutomated, osFamily } from './clicks';
+import { buildClickEvent, isAutomated, osFamily, type ForwardContext } from './clicks';
 import {
 	unavailablePage,
 	unavailablePageHeaders,
@@ -49,6 +51,9 @@ interface Snapshot extends RedirectTarget {
 }
 
 export const snapshotLifetimeMs = 60000;
+
+export const visitorCookieName = 'flared_vid';
+export const visitorCookieMaxAgeSeconds = 31536000;
 
 function plain(
 	request: Request,
@@ -95,14 +100,40 @@ function redirect(location: string, headers: Record<string, string> = {}): Respo
 }
 
 // The location for this visitor. A link with a device destination varies by user agent.
-function targetResponse(request: Request, target: RedirectTarget): Response {
+function targetLocation(
+	request: Request,
+	target: RedirectTarget
+): { location: string; varies: boolean } {
 	if (target.iosDestination === null && target.androidDestination === null)
-		return redirect(target.destination);
+		return { location: target.destination, varies: false };
 	const agent = request.headers.get('user-agent');
 	const os = isAutomated(agent) ? null : osFamily(agent);
 	const device =
 		os === 'ios' ? target.iosDestination : os === 'android' ? target.androidDestination : null;
-	return redirect(device ?? target.destination, { vary: 'User-Agent' });
+	return { location: device ?? target.destination, varies: true };
+}
+
+function globalPrivacyControl(request: Request): boolean {
+	return request.headers.get('sec-gpc')?.trim() === '1';
+}
+
+// The first well-formed visitor cookie value; any other value is ignored.
+function visitorCookie(request: Request): string | null {
+	for (const part of (request.headers.get('cookie') ?? '').split(';')) {
+		const separator = part.indexOf('=');
+		if (separator < 0 || part.slice(0, separator).trim() !== visitorCookieName) continue;
+		const value = part.slice(separator + 1).trim();
+		if (visitorIdPattern.test(value)) return value;
+	}
+	return null;
+}
+
+function newVisitorId(): string {
+	const bytes = crypto.getRandomValues(new Uint8Array(16));
+	return btoa(String.fromCharCode(...bytes))
+		.replace(/\+/g, '-')
+		.replace(/\//g, '_')
+		.replace(/=+$/, '');
 }
 
 function optionalText(value: unknown): string | null | undefined {
@@ -119,13 +150,14 @@ function toSnapshot(value: unknown): Snapshot | null {
 		!('destination' in value && typeof value.destination === 'string') ||
 		!('iosDestination' in value) ||
 		!('androidDestination' in value) ||
+		!('forwardClicks' in value && typeof value.forwardClicks === 'boolean') ||
 		!('validUntil' in value && typeof value.validUntil === 'number')
 	)
 		return null;
 	const iosDestination = optionalText(value.iosDestination);
 	const androidDestination = optionalText(value.androidDestination);
 	if (iosDestination === undefined || androidDestination === undefined) return null;
-	const { tenantId, linkId, analyticsShardId, destination, validUntil } = value;
+	const { tenantId, linkId, analyticsShardId, destination, forwardClicks, validUntil } = value;
 	return {
 		tenantId,
 		linkId,
@@ -133,14 +165,16 @@ function toSnapshot(value: unknown): Snapshot | null {
 		destination,
 		iosDestination,
 		androidDestination,
+		forwardClicks,
 		validUntil
 	};
 }
 
 export function createRedirectHandler(dependencies: RedirectDependencies) {
 	const now = dependencies.now ?? Date.now;
-	// v2: snapshots carry the analytics shard ID. v3: and the device destinations.
-	const cacheName = dependencies.cacheName ?? 'flared-redirect-v3';
+	// v2: snapshots carry the analytics shard ID. v3: and the device destinations. v4: and the
+	// click forwarding flag.
+	const cacheName = dependencies.cacheName ?? 'flared-redirect-v4';
 
 	// A cache fault only costs a database read, so it counts as a miss.
 	async function readSnapshot(key: Request): Promise<Snapshot | null> {
@@ -165,12 +199,24 @@ export function createRedirectHandler(dependencies: RedirectDependencies) {
 		}
 	}
 
+	// HEAD, other methods, and automated clients send no event, so they never get the cookie.
+	function counts(request: Request): boolean {
+		return (
+			dependencies.clicks !== undefined &&
+			request.method === 'GET' &&
+			!isAutomated(request.headers.get('user-agent'))
+		);
+	}
+
 	// The click never delays or changes the redirect; a failed send is only logged.
-	async function recordClick(request: Request, target: RedirectTarget): Promise<void> {
-		if (!dependencies.clicks || request.method !== 'GET') return;
-		if (isAutomated(request.headers.get('user-agent'))) return;
+	async function recordClick(
+		request: Request,
+		target: RedirectTarget,
+		context: ForwardContext | undefined
+	): Promise<void> {
+		if (!dependencies.clicks || !counts(request)) return;
 		try {
-			await dependencies.clicks.send(buildClickEvent(request, target, now()));
+			await dependencies.clicks.send(buildClickEvent(request, target, now(), context));
 		} catch {
 			console.error(JSON.stringify({ event: 'click_enqueue_failed' }));
 		}
@@ -179,11 +225,28 @@ export function createRedirectHandler(dependencies: RedirectDependencies) {
 	function redirectTo(
 		request: Request,
 		target: RedirectTarget,
+		address: { hostname: string; slug: string },
 		background: BackgroundWork | undefined,
 		work: Promise<unknown>[] = []
 	): Promise<Response> | Response {
-		const pending = Promise.all([...work, recordClick(request, target)]);
-		const response = targetResponse(request, target);
+		const { location, varies } = targetLocation(request, target);
+		const headers: Record<string, string> = varies ? { vary: 'User-Agent' } : {};
+		let context: ForwardContext | undefined;
+		if (target.forwardClicks && counts(request)) {
+			let visitorId: string | undefined;
+			if (!globalPrivacyControl(request)) {
+				const existing = visitorCookie(request);
+				visitorId = existing ?? newVisitorId();
+				if (existing === null) {
+					headers['set-cookie'] =
+						`${visitorCookieName}=${visitorId}; Max-Age=${visitorCookieMaxAgeSeconds}; Path=/; Secure; HttpOnly; SameSite=Lax`;
+					headers['cache-control'] = 'private, no-store';
+				}
+			}
+			context = { ...address, location, ...(visitorId !== undefined ? { visitorId } : {}) };
+		}
+		const pending = Promise.all([...work, recordClick(request, target, context)]);
+		const response = redirect(location, headers);
 		if (background) {
 			background.waitUntil(pending);
 			return response;
@@ -222,7 +285,9 @@ export function createRedirectHandler(dependencies: RedirectDependencies) {
 		const key = new Request(`https://${hostname}/${slug}`);
 		const cached = await readSnapshot(key);
 		if (cached && now() < cached.validUntil)
-			return foreign(cached) ? notFound(request) : redirectTo(request, cached, background);
+			return foreign(cached)
+				? notFound(request)
+				: redirectTo(request, cached, { hostname, slug }, background);
 
 		// The deadline counts from the query start, so a slow read cannot extend it.
 		const validUntil = now() + snapshotLifetimeMs;
@@ -240,7 +305,9 @@ export function createRedirectHandler(dependencies: RedirectDependencies) {
 
 		const { target } = lookup;
 		if (foreign(target)) return notFound(request);
-		return redirectTo(request, target, background, [storeSnapshot(key, { ...target, validUntil })]);
+		return redirectTo(request, target, { hostname, slug }, background, [
+			storeSnapshot(key, { ...target, validUntil })
+		]);
 	}
 
 	return { fetch };

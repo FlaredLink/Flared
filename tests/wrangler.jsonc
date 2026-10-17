@@ -432,6 +432,21 @@
 			"binding": "TRANSPORTS_ANALYTICS",
 			"database_name": "transports-analytics",
 			"database_id": "00000000-0000-0000-0000-000000000109"
+		},
+		{
+			"binding": "FORWARDING_IDENTITY",
+			"database_name": "forwarding-identity",
+			"database_id": "00000000-0000-0000-0000-000000000110"
+		},
+		{
+			"binding": "FORWARDING_ROUTING",
+			"database_name": "forwarding-routing",
+			"database_id": "00000000-0000-0000-0000-000000000111"
+		},
+		{
+			"binding": "FORWARDING_ANALYTICS",
+			"database_name": "forwarding-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000112"
 		}
 	]
 }

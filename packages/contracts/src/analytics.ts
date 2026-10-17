@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Click events on the Queue and the analytics responses of the API. An event carries only
 // coarse fields derived at the edge: no IP address, user agent, full referrer, or destination.
+// One exception: while an edition forwards a workspace's clicks to another service (routing
+// tenant_policy.click_forwarding and a webhook endpoint limit above 0), its events also carry
+// `forward`: the visitor cookie value, the user agent, the short URL, and the utm_* tags of the
+// location sent. It is transient: the click consumer never reads or stores it, and the dead-letter
+// consumer strips it. Without that flag no event carries it.
 
 export const clickEventSchemaVersion = 1;
 // Events older than the Queue replay horizon are refused, so a late replay cannot count.
@@ -38,6 +43,37 @@ export type OsFamily = (typeof osFamilies)[number];
 
 export type ClickEventKind = 'production' | 'test';
 
+export const utmTags = [
+	'utm_source',
+	'utm_medium',
+	'utm_campaign',
+	'utm_term',
+	'utm_content',
+	'utm_id'
+] as const;
+export type UtmTag = (typeof utmTags)[number];
+
+export const forwardUserAgentMaxLength = 512;
+export const forwardShortUrlMaxLength = 300;
+export const forwardUtmMaxLength = 100;
+// The visitor cookie value: 128 random bits as unpadded base64url, so the last of the 22
+// characters carries 2 bits.
+export const visitorIdPattern = /^[A-Za-z0-9_-]{21}[AQgw]$/;
+const printableAsciiPattern = /^[\x20-\x7e]+$/;
+const shortUrlPattern =
+	/^https:\/\/(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\/[a-z0-9-]{1,64}$/;
+const controlPattern = /\p{Cc}/u;
+
+// For the edition's forwarder only. The visitor ID is the cookie value the browser sent or the new
+// one set on the redirect; it is absent with Sec-GPC: 1. The user agent is absent when nothing
+// printable was left of it.
+export interface ClickForward {
+	visitorId?: string;
+	userAgent?: string;
+	shortUrl: string;
+	utm?: Partial<Record<UtmTag, string>>;
+}
+
 export interface ClickEvent {
 	schemaVersion: typeof clickEventSchemaVersion;
 	eventId: string;
@@ -55,6 +91,8 @@ export interface ClickEvent {
 	// Absent from events sent before browser and OS recording, which count without them.
 	browser?: BrowserFamily;
 	os?: OsFamily;
+	// Only while the workspace forwards clicks; see the header.
+	forward?: ClickForward;
 }
 
 const idPattern = /^[A-Za-z0-9_-]{1,64}$/;
@@ -104,6 +142,65 @@ function isOs(value: unknown): value is OsFamily {
 	return typeof value === 'string' && osFamilies.some((os) => os === value);
 }
 
+function isUtmTag(value: string): value is UtmTag {
+	return utmTags.some((tag) => tag === value);
+}
+
+function parseUtm(value: unknown): Partial<Record<UtmTag, string>> | null {
+	if (!isRecord(value)) return null;
+	const entries = Object.entries(value);
+	if (entries.length === 0) return null;
+	const utm: Partial<Record<UtmTag, string>> = {};
+	for (const [key, item] of entries) {
+		if (!isUtmTag(key) || typeof item !== 'string') return null;
+		if (item.length < 1 || item.length > forwardUtmMaxLength || controlPattern.test(item))
+			return null;
+		utm[key] = item;
+	}
+	return utm;
+}
+
+// Unknown keys are refused here too, so nothing else can ride along.
+function parseForward(value: unknown): ClickForward | null {
+	if (!isRecord(value)) return null;
+	const allowed = ['visitorId', 'userAgent', 'shortUrl', 'utm'];
+	if (Object.keys(value).some((key) => !allowed.includes(key))) return null;
+	const { visitorId, userAgent, shortUrl, utm } = value;
+	if (
+		visitorId !== undefined &&
+		(typeof visitorId !== 'string' || !visitorIdPattern.test(visitorId))
+	)
+		return null;
+	if (
+		userAgent !== undefined &&
+		(typeof userAgent !== 'string' ||
+			userAgent.length > forwardUserAgentMaxLength ||
+			!printableAsciiPattern.test(userAgent))
+	)
+		return null;
+	if (
+		typeof shortUrl !== 'string' ||
+		shortUrl.length > forwardShortUrlMaxLength ||
+		!shortUrlPattern.test(shortUrl)
+	)
+		return null;
+	const tags = utm === undefined ? undefined : parseUtm(utm);
+	if (tags === null) return null;
+	return {
+		...(typeof visitorId === 'string' ? { visitorId } : {}),
+		...(typeof userAgent === 'string' ? { userAgent } : {}),
+		shortUrl,
+		...(tags ? { utm: tags } : {})
+	};
+}
+
+// The event without its forwarding fields, for anything that keeps an event.
+export function withoutForward(event: ClickEvent): ClickEvent {
+	const copy = { ...event };
+	delete copy.forward;
+	return copy;
+}
+
 // Returns null for any event that the consumer must not count.
 export function parseClickEvent(value: unknown): ClickEvent | null {
 	if (!isRecord(value)) return null;
@@ -120,7 +217,8 @@ export function parseClickEvent(value: unknown): ClickEvent | null {
 		'deviceCategory',
 		'referrerHostname',
 		'browser',
-		'os'
+		'os',
+		'forward'
 	];
 	if (Object.keys(value).some((key) => !allowed.includes(key))) return null;
 	const {
@@ -136,7 +234,8 @@ export function parseClickEvent(value: unknown): ClickEvent | null {
 		deviceCategory,
 		referrerHostname,
 		browser,
-		os
+		os,
+		forward
 	} = value;
 	if (schemaVersion !== clickEventSchemaVersion) return null;
 	if (typeof eventId !== 'string' || !uuidPattern.test(eventId)) return null;
@@ -161,6 +260,8 @@ export function parseClickEvent(value: unknown): ClickEvent | null {
 		return null;
 	if (browser !== undefined && !isBrowser(browser)) return null;
 	if (os !== undefined && !isOs(os)) return null;
+	const forwarded = forward === undefined ? undefined : parseForward(forward);
+	if (forwarded === null) return null;
 	return {
 		schemaVersion,
 		eventId,
@@ -174,7 +275,8 @@ export function parseClickEvent(value: unknown): ClickEvent | null {
 		deviceCategory,
 		referrerHostname,
 		...(browser !== undefined ? { browser } : {}),
-		...(os !== undefined ? { os } : {})
+		...(os !== undefined ? { os } : {}),
+		...(forwarded ? { forward: forwarded } : {})
 	};
 }
 

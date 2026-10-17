@@ -553,6 +553,9 @@ export interface RedirectTarget {
 	destination: string;
 	iosDestination: string | null;
 	androidDestination: string | null;
+	// The edition forwards this workspace's clicks (routing migration 0011) and its plan allows
+	// integrations (a webhook endpoint limit above 0).
+	forwardClicks: boolean;
 }
 
 // blocked: the link would open, but the operator blocked it or suspended its tenant.
@@ -570,7 +573,8 @@ export async function findRedirectTarget(
 		.withSession('first-primary')
 		.prepare(
 			`SELECT l.tenant_id, l.id, p.analytics_shard_id, l.destination, l.ios_destination, l.android_destination,
-				l.blocked_at IS NOT NULL OR p.suspended_at IS NOT NULL AS blocked
+				l.blocked_at IS NOT NULL OR p.suspended_at IS NOT NULL AS blocked,
+				(p.click_forwarding = 1 AND COALESCE(p.webhook_endpoint_limit, 0) > 0) AS forward
 			FROM domain_namespaces n
 			JOIN domains d ON d.id = n.id AND d.state = 'active'
 			JOIN links l ON l.domain_id = n.id AND l.slug = ? AND l.status = 'active'
@@ -589,7 +593,8 @@ export async function findRedirectTarget(
 			analyticsShardId: text(row.analytics_shard_id, 'shard'),
 			destination: text(row.destination, 'destination'),
 			iosDestination: optionalText(row.ios_destination, 'iOS destination'),
-			androidDestination: optionalText(row.android_destination, 'Android destination')
+			androidDestination: optionalText(row.android_destination, 'Android destination'),
+			forwardClicks: row.forward === 1
 		}
 	};
 }

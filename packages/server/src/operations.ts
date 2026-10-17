@@ -2,7 +2,7 @@
 // Operating the installation: analytics shard sizes and their growth, and click events that
 // the Queue gave up on. Each edition chooses its own capacity thresholds.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
-import { clickEventMaxAgeMs, parseClickEvent } from '@flared/contracts/analytics';
+import { clickEventMaxAgeMs, parseClickEvent, withoutForward } from '@flared/contracts/analytics';
 import { readIngestionSummary, type IngestionSummary } from '@flared/data/analytics';
 import {
 	claimDeadLetter,
@@ -132,7 +132,8 @@ export interface DeadLetterMessage extends QueueMessage {
 }
 
 // Consumer of the click dead-letter queue. It stores each message for the operator and
-// acknowledges it; only the validated event fields are kept.
+// acknowledges it; only the validated event fields are kept, without the forwarding fields, so a
+// requeued click counts but is not forwarded.
 export function createDeadLetterConsumer(dependencies: {
 	identity: D1Database;
 	now?: () => number;
@@ -149,7 +150,7 @@ export function createDeadLetterConsumer(dependencies: {
 					receivedAt: now(),
 					shardId: event?.analyticsShardId ?? null,
 					occurredAt: event?.occurredAt ?? null,
-					event: event ? JSON.stringify(event) : null
+					event: event ? JSON.stringify(withoutForward(event)) : null
 				});
 				console.error(
 					JSON.stringify({ event: 'click_dead_letter', valid: event !== null, id: message.id })

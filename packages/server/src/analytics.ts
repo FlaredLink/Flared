@@ -59,6 +59,10 @@ export interface ClickConsumerDependencies {
 	policyRetryDelaySeconds?: number;
 	// A single-workspace installation's tenant. An event of any other tenant is dropped.
 	fixedTenantId?: string;
+	// The edition's click forwarder. It gets the admitted events of a batch that carry `forward`,
+	// once, after their messages are acknowledged, so a click is forwarded at most once from here.
+	// A failure is logged and never retries a click.
+	forward?: (events: readonly ClickEvent[]) => Promise<void>;
 }
 
 export type ConsumeResult = 'admitted' | 'skipped' | 'duplicate' | 'dropped' | 'retry';
@@ -129,12 +133,14 @@ export function createClickConsumer(dependencies: ClickConsumerDependencies) {
 	return async function consume(batch: QueueBatch): Promise<ConsumeResult[]> {
 		const results: ConsumeResult[] = [];
 		const minutes = new Map<string, Map<number, IngestionMinute>>();
+		const forwards: ClickEvent[] = [];
 		for (const message of batch.messages) {
 			const time = now();
 			const event = parseClickEvent(message.body);
 			const result = await consumeOne(message, event, time);
 			results.push(result);
 			if (!event) continue;
+			if (result === 'admitted' && event.forward) forwards.push(event);
 			const minute = Math.floor(time / 60000) * 60000;
 			const shard = minutes.get(event.analyticsShardId) ?? new Map<number, IngestionMinute>();
 			minutes.set(event.analyticsShardId, shard);
@@ -162,6 +168,13 @@ export function createClickConsumer(dependencies: ClickConsumerDependencies) {
 				await recordIngestionMinutes(db, [...shard.values()]);
 			} catch {
 				console.error(JSON.stringify({ event: 'ingestion_stats_failed', shardId }));
+			}
+		}
+		if (dependencies.forward && forwards.length > 0) {
+			try {
+				await dependencies.forward(forwards);
+			} catch {
+				console.error(JSON.stringify({ event: 'click_forward_failed', count: forwards.length }));
 			}
 		}
 		return results;

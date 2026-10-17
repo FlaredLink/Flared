@@ -57,6 +57,45 @@ export async function listUnprojectedLimits(db: D1Database, limit: number): Prom
 	});
 }
 
+// Sets the click forwarding flag (routing migration 0011), which the policy projection never
+// writes. Returns whether the stored value changed; a tenant without a routing row changes nothing.
+export async function setClickForwarding(
+	db: D1Database,
+	tenantId: string,
+	on: boolean,
+	now: number
+): Promise<boolean> {
+	const value = on ? 1 : 0;
+	const result = await db
+		.prepare(
+			'UPDATE tenant_policy SET click_forwarding = ?, updated_at = ? WHERE tenant_id = ? AND click_forwarding <> ?'
+		)
+		.bind(value, now, tenantId, value)
+		.run();
+	return result.meta.changes === 1;
+}
+
+// Tenants with the flag set, in tenant order after the cursor, for the edition's reconciliation.
+export async function listClickForwardingTenants(
+	db: D1Database,
+	after: string,
+	limit: number
+): Promise<string[]> {
+	if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500)
+		throw new Error('Invalid forwarding batch size');
+	const { results } = await db
+		.prepare(
+			'SELECT tenant_id FROM tenant_policy WHERE click_forwarding = 1 AND tenant_id > ? ORDER BY tenant_id LIMIT ?'
+		)
+		.bind(after, limit)
+		.all<{ tenant_id: unknown }>();
+	return results.map((row) => {
+		if (typeof row.tenant_id !== 'string' || !row.tenant_id)
+			throw new Error('Invalid stored tenant');
+		return row.tenant_id;
+	});
+}
+
 export interface LimitUsage {
 	tenantId: string;
 	revision: number;

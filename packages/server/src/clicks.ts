@@ -1,15 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Edge side of click analytics: decide whether a redirect counts, and build the minimized event.
 // Only coarse fields leave this module: the user agent, IP, and full referrer stay here, and the
-// user agent is reduced to a device category and a browser and OS family.
+// user agent is reduced to a device category and a browser and OS family. The exception is a
+// workspace that forwards its clicks (target.forwardClicks): its events also carry `forward`, with
+// the visitor cookie value, the cleaned user agent, the short URL, and the utm_* tags of the
+// location sent. The IP address and the destination never leave.
 import {
 	clickEventSchemaVersion,
+	forwardShortUrlMaxLength,
+	forwardUserAgentMaxLength,
+	forwardUtmMaxLength,
 	normalizeCountry,
 	normalizeReferrer,
+	utmTags,
 	type BrowserFamily,
 	type ClickEvent,
+	type ClickForward,
 	type DeviceCategory,
-	type OsFamily
+	type OsFamily,
+	type UtmTag
 } from '@flared/contracts/analytics';
 
 // Change the version with the list, so counts can be explained against the rules in force.
@@ -87,6 +96,64 @@ export interface ClickTarget {
 	tenantId: string;
 	linkId: string;
 	analyticsShardId: string;
+	forwardClicks?: boolean;
+}
+
+// What the redirect knows about a forwarded click: the short-link address, the location it sent,
+// and the visitor cookie value (absent with Sec-GPC: 1).
+export interface ForwardContext {
+	hostname: string;
+	slug: string;
+	location: string;
+	visitorId?: string;
+}
+
+// Printable ASCII only, cut at the field limit.
+function forwardUserAgent(value: string | null): string | undefined {
+	const agent = (value ?? '')
+		.replace(/[^\x20-\x7e]/g, '')
+		.trim()
+		.slice(0, forwardUserAgentMaxLength)
+		.trimEnd();
+	return agent || undefined;
+}
+
+// The first value of each utm_* tag, without control characters and cut at the field limit. A
+// location that is not a URL, or has no tags, gives none.
+export function utmTagsOf(location: string): Partial<Record<UtmTag, string>> | undefined {
+	let params: URLSearchParams;
+	try {
+		params = new URL(location).searchParams;
+	} catch {
+		return undefined;
+	}
+	const utm: Partial<Record<UtmTag, string>> = {};
+	for (const tag of utmTags) {
+		const raw = params.get(tag);
+		if (raw === null) continue;
+		let value = raw
+			.replace(/\p{Cc}/gu, '')
+			.trim()
+			.slice(0, forwardUtmMaxLength);
+		// A cut must not leave half of a surrogate pair.
+		if (/[\ud800-\udbff]$/.test(value)) value = value.slice(0, -1);
+		if (value) utm[tag] = value;
+	}
+	return Object.keys(utm).length > 0 ? utm : undefined;
+}
+
+// Null when the short URL is longer than the field allows; the click then counts without it.
+function forwardFields(request: Request, context: ForwardContext): ClickForward | null {
+	const shortUrl = `https://${context.hostname}/${context.slug}`;
+	if (shortUrl.length > forwardShortUrlMaxLength) return null;
+	const userAgent = forwardUserAgent(request.headers.get('user-agent'));
+	const utm = utmTagsOf(context.location);
+	return {
+		...(context.visitorId !== undefined ? { visitorId: context.visitorId } : {}),
+		...(userAgent !== undefined ? { userAgent } : {}),
+		shortUrl,
+		...(utm ? { utm } : {})
+	};
 }
 
 // Cloudflare adds request.cf at the edge; elsewhere it is absent and the country is unknown.
@@ -97,8 +164,14 @@ function countryOf(request: Request): string {
 	);
 }
 
-export function buildClickEvent(request: Request, target: ClickTarget, now: number): ClickEvent {
+export function buildClickEvent(
+	request: Request,
+	target: ClickTarget,
+	now: number,
+	context?: ForwardContext
+): ClickEvent {
 	const userAgent = request.headers.get('user-agent');
+	const forward = target.forwardClicks && context ? forwardFields(request, context) : null;
 	return {
 		schemaVersion: clickEventSchemaVersion,
 		eventId: crypto.randomUUID(),
@@ -111,6 +184,7 @@ export function buildClickEvent(request: Request, target: ClickTarget, now: numb
 		deviceCategory: deviceCategory(userAgent),
 		referrerHostname: normalizeReferrer(request.headers.get('referer')),
 		browser: browserFamily(userAgent),
-		os: osFamily(userAgent)
+		os: osFamily(userAgent),
+		...(forward ? { forward } : {})
 	};
 }
