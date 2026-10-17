@@ -250,19 +250,21 @@
 		background: var(--color-paper);
 		color: var(--color-ink);
 		box-shadow: var(--shadow-float);
+		/* The gap stays outside :popover-open: the closing menu keeps its layout while it fades. */
+		gap: 2px;
 		/* Closing: the menu fades back toward its trigger, faster than it opens. overlay and display
-		   keep it in the top layer until the fade ends. */
+		   keep it in the top layer until the fade ends. The ease-out curve fades it from the first
+		   frame; --ease-in held it opaque, then cut it off at about 65%. */
 		opacity: 0;
 		transform: translateY(var(--menu-shift, -0.25rem)) scale(0.98);
 		transform-origin: top;
 		transition-property: opacity, transform, overlay, display;
 		transition-duration: calc(var(--dur-fast) * 0.7);
-		transition-timing-function: var(--ease-in);
+		transition-timing-function: var(--ease-out);
 		transition-behavior: allow-discrete;
 	}
 	.menu:popover-open {
 		display: grid;
-		gap: 2px;
 		opacity: 1;
 		transform: none;
 		transition-duration: var(--dur-fast);
