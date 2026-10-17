@@ -175,13 +175,16 @@
 	function readTrigger(): AutomationTrigger | string {
 		switch (triggerType) {
 			case 'link_age': {
-				const value = Number(days.trim());
+				// A number input binds a number (or null when empty), whatever the initial string was.
+				const value = Number(String(days ?? '').trim());
 				return Number.isSafeInteger(value) && value >= minTriggerDays && value <= maxTriggerDays
 					? { type: 'link_age', days: value }
 					: `Use a whole number of days from ${minTriggerDays} to ${numbers.format(maxTriggerDays)}.`;
 			}
 			case 'clicks': {
-				const value = Number(clicks === 'custom' ? customClicks.replaceAll(/[\s,]/g, '') : clicks);
+				const value = Number(
+					clicks === 'custom' ? String(customClicks ?? '').replaceAll(/[\s,]/g, '') : clicks
+				);
 				return Number.isSafeInteger(value) &&
 					value >= minTriggerClicks &&
 					value <= maxTriggerClicks &&

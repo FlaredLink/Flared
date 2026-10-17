@@ -116,7 +116,10 @@
 		if (milestones) {
 			try {
 				milestoneInterval = parseMilestoneInterval(
-					interval === 'custom' ? Number(custom.replaceAll(/[\s,]/g, '')) : Number(interval)
+					// A number input binds a number (or null when empty), not the initial string.
+					interval === 'custom'
+						? Number(String(custom ?? '').replaceAll(/[\s,]/g, ''))
+						: Number(interval)
 				);
 			} catch (problem) {
 				if (!(problem instanceof LinkInputError)) throw problem;
