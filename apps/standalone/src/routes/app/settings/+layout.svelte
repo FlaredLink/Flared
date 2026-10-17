@@ -2,7 +2,7 @@
 <script lang="ts">
 	import { onMount, tick, type Snippet } from 'svelte';
 	import { goto, invalidateAll } from '$app/navigation';
-	import { page } from '$app/state';
+	import { navigating, page } from '$app/state';
 	import PageHeader from '@flared/ui/molecules/PageHeader.svelte';
 	import SettingsNav, { type SettingsGroup } from '@flared/ui/molecules/SettingsNav.svelte';
 	import Badge from '@flared/ui/atoms/Badge.svelte';
@@ -71,6 +71,12 @@
 	const current = $derived(
 		groups.flatMap((group) => group.sections).find((section) => section.href === path) ??
 			groups[0].sections[0]
+	);
+	// The section list marks the section being opened at once; the heading follows its data.
+	const selected = $derived(
+		groups
+			.flatMap((group) => group.sections)
+			.find((section) => section.href === navigating.to?.url.pathname)?.href ?? current.href
 	);
 	const inWorkspace = $derived(groups[1].sections.some((section) => section.href === path));
 
@@ -172,7 +178,7 @@
 </PageHeader>
 
 <div class="settings">
-	<SettingsNav {groups} current={current.href} onselect={(href) => void goto(href)} />
+	<SettingsNav {groups} current={selected} onselect={(href) => void goto(href)} />
 
 	<div class="content">
 		{#if reauthOpen}

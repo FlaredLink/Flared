@@ -1,14 +1,15 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
-	import type { Snippet } from 'svelte';
-	import { goto } from '$app/navigation';
-	import { page } from '$app/state';
+	import { tick, type Snippet } from 'svelte';
+	import { afterNavigate, goto } from '$app/navigation';
+	import { navigating, page } from '$app/state';
 	import { Collapsible } from 'bits-ui';
 	import type { Usage } from '@flared/contracts/analytics';
 	import UsageBanner from '@flared/ui/usage/UsageBanner.svelte';
 	import Callout from '@flared/ui/molecules/Callout.svelte';
 	import Avatar from '@flared/ui/atoms/Avatar.svelte';
 	import Menu from '@flared/ui/molecules/Menu.svelte';
+	import NavigationProgress from '@flared/ui/molecules/NavigationProgress.svelte';
 	import Brand from './Brand.svelte';
 	import Icon, { type IconName } from './Icon.svelte';
 	import SourceFooter from './SourceFooter.svelte';
@@ -37,6 +38,20 @@
 	// The links and domains pages leave out the domain warning; the domain list shows its own.
 	// Limits and usage shows the same usage as meters.
 	const path = $derived(page.url.pathname);
+	// The sidebar marks the page being opened at once; the content changes when its data arrives.
+	const shownPath = $derived(navigating.to?.url.pathname ?? path);
+	// A switch to another page, not a new search on the same page.
+	const switching = $derived(navigating.to !== null && navigating.to.url.pathname !== path);
+	// Set by the progress bar once a load is slow enough to show; the content dims with it.
+	let slow = $state(false);
+	// The new page fades in after each switch.
+	let entering = $state(false);
+	afterNavigate(async ({ from, to }) => {
+		if (!from || !to || from.url.pathname === to.url.pathname) return;
+		entering = false;
+		await tick();
+		entering = true;
+	});
 	const bannerUsage = $derived.by(() => {
 		if (!usage || path === settingsRoutes.limits) return null;
 		const linksOrDomains =
@@ -54,25 +69,25 @@
 			label: 'Links',
 			href: appRoutes.app,
 			icon: 'link',
-			current: path === appRoutes.app || path.startsWith('/app/links/')
+			current: shownPath === appRoutes.app || shownPath.startsWith('/app/links/')
 		},
 		{
 			label: 'Domains',
 			href: appRoutes.domains,
 			icon: 'globe',
-			current: path === appRoutes.domains
+			current: shownPath === appRoutes.domains
 		},
 		{
 			label: 'Automations',
 			href: appRoutes.automations,
 			icon: 'lightning',
-			current: path === appRoutes.automations
+			current: shownPath === appRoutes.automations
 		},
 		{
 			label: 'Settings',
 			href: appRoutes.settings,
 			icon: 'settings',
-			current: path.startsWith(`${appRoutes.settings}/`)
+			current: shownPath.startsWith(`${appRoutes.settings}/`)
 		}
 	]);
 
@@ -126,6 +141,7 @@
 	</div>
 {/snippet}
 
+<NavigationProgress active={navigating.to !== null} bind:shown={slow} />
 <div class="app-shell">
 	<Collapsible.Root bind:open class="app-sidebar">
 		<div class="sidebar-top">
@@ -139,7 +155,16 @@
 			>{@render menu('mobile')}</Collapsible.Content
 		>
 	</Collapsible.Root>
-	<main id="main" class="app-main">
+	<main
+		id="main"
+		class="app-main"
+		class:dimmed={slow && switching}
+		class:entering
+		aria-busy={slow || undefined}
+		onanimationend={(event) => {
+			if (event.target === event.currentTarget) entering = false;
+		}}
+	>
 		<div class="app-content">
 			{#if bannerUsage}<UsageBanner usage={bannerUsage} href={settingsRoutes.limits} />{/if}
 			{#if release && path !== settingsRoutes.updates}
@@ -283,6 +308,20 @@
 	.app-main {
 		min-width: 0;
 		padding: 1.75rem clamp(1.25rem, 3vw, 2.5rem) 3rem;
+		transition: opacity var(--dur-base) var(--ease-out);
+	}
+	/* While a slow page loads, the old one stays readable but steps back. */
+	.app-main.dimmed {
+		opacity: 0.55;
+	}
+	/* The new page fades in from the dimmed level, so a slow switch has no jump. */
+	.app-main.entering {
+		animation: page-in var(--dur-base) var(--ease-out);
+	}
+	@keyframes page-in {
+		from {
+			opacity: 0.55;
+		}
 	}
 	.app-content {
 		max-width: 92rem;
