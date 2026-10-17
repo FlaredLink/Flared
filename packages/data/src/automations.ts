@@ -52,7 +52,8 @@ export interface NewAutomation {
 }
 
 // limit: the workspace keeps as many templates as its limit allows (0: automations are off).
-// endpoint_missing: the send_webhook action names no endpoint of the workspace.
+// endpoint_missing: the send_webhook action names no http endpoint of the workspace, or the
+// post_message action no endpoint of another transport.
 export type CreateAutomationResult =
 	| { status: 'created'; automation: AutomationRow }
 	| { status: 'limit'; limit: number }
@@ -124,13 +125,14 @@ export interface SkippedApplication extends ClaimedApplication {
 }
 
 // One claimed application in a run, with the IDs the run may write: the link event (staged only
-// while the workspace has webhooks on and the link changes), the automation.triggered event, and
-// the run record.
+// while the workspace has webhooks on and the link changes), the automation.triggered events for
+// the send_webhook endpoint and the post_message endpoint, and the run record.
 export interface RunItem {
 	linkId: string;
 	automationId: string;
 	linkEventId: string;
 	triggerEventId: string;
+	messageEventId: string;
 	runId: string;
 }
 
@@ -248,12 +250,24 @@ function toActions(row: Record<string, unknown>): AutomationAction[] {
 	if (row.disable_link === 1) actions.push({ type: 'disable_link' });
 	if (row.webhook_endpoint_id !== null)
 		actions.push({ type: 'send_webhook', endpointId: text(row.webhook_endpoint_id, 'endpoint') });
+	if (row.message_endpoint_id !== null)
+		actions.push({
+			type: 'post_message',
+			endpointId: text(row.message_endpoint_id, 'message endpoint')
+		});
 	if (row.email_owner === 1) actions.push({ type: 'email_owner' });
 	return actions;
 }
 
 const automationColumns =
-	'id, tenant_id, name, enabled, trigger_type, trigger_days, trigger_clicks, set_destination, disable_link, webhook_endpoint_id, email_owner, created_at, updated_at';
+	'id, tenant_id, name, enabled, trigger_type, trigger_days, trigger_clicks, set_destination, disable_link, webhook_endpoint_id, message_endpoint_id, email_owner, created_at, updated_at';
+
+// SQL: whether the endpoint bound to `endpoint` is one of the tenant `tenant`'s that the action
+// can name: http for send_webhook, another transport for post_message.
+const webhookEndpointOf = (endpoint: string, tenant: string) =>
+	`EXISTS (SELECT 1 FROM webhook_endpoints WHERE id = ${endpoint} AND tenant_id = ${tenant} AND transport = 'http')`;
+const messageEndpointOf = (endpoint: string, tenant: string) =>
+	`EXISTS (SELECT 1 FROM webhook_endpoints WHERE id = ${endpoint} AND tenant_id = ${tenant} AND transport <> 'http')`;
 
 // SQL: the applications of the template row `a`.
 const applicationCount = (a: string) =>
@@ -281,26 +295,28 @@ function triggerColumns(trigger: AutomationTrigger): [string, number | null, num
 	];
 }
 
-// set_destination, disable_link, webhook_endpoint_id, email_owner.
+// set_destination, disable_link, webhook_endpoint_id, message_endpoint_id, email_owner.
 function actionColumns(
 	actions: AutomationAction[]
-): [string | null, number, string | null, number] {
+): [string | null, number, string | null, string | null, number] {
 	if (actions.length === 0 || actions.length > automationActionTypes.length)
 		throw new Error('Invalid automation actions');
 	let destination: string | null = null;
 	let disable = 0;
 	let endpoint: string | null = null;
+	let message: string | null = null;
 	let email = 0;
 	for (const action of actions)
 		if (action.type === 'change_destination') destination = action.destination;
 		else if (action.type === 'disable_link') disable = 1;
 		else if (action.type === 'send_webhook') endpoint = action.endpointId;
+		else if (action.type === 'post_message') message = action.endpointId;
 		else email = 1;
-	return [destination, disable, endpoint, email];
+	return [destination, disable, endpoint, message, email];
 }
 
-// One statement counts the templates, checks the webhook endpoint, and inserts, so two creates at
-// once cannot both take the last place under the limit.
+// One statement counts the templates, checks the endpoints, and inserts, so two creates at once
+// cannot both take the last place under the limit.
 export async function createAutomation(
 	db: D1Database,
 	automation: NewAutomation
@@ -308,10 +324,11 @@ export async function createAutomation(
 	const actions = actionColumns(automation.actions);
 	const row = await db
 		.prepare(
-			`INSERT INTO automations (id, tenant_id, name, trigger_type, trigger_days, trigger_clicks, set_destination, disable_link, webhook_endpoint_id, email_owner, created_at, updated_at)
-			SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11 FROM tenant_policy p WHERE p.tenant_id = ?2
+			`INSERT INTO automations (id, tenant_id, name, trigger_type, trigger_days, trigger_clicks, set_destination, disable_link, webhook_endpoint_id, message_endpoint_id, email_owner, created_at, updated_at)
+			SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12 FROM tenant_policy p WHERE p.tenant_id = ?2
 			AND (SELECT COUNT(*) FROM automations WHERE tenant_id = ?2) < COALESCE(p.automation_limit, 0)
-			AND (?9 IS NULL OR EXISTS (SELECT 1 FROM webhook_endpoints WHERE id = ?9 AND tenant_id = ?2))
+			AND (?9 IS NULL OR ${webhookEndpointOf('?9', '?2')})
+			AND (?10 IS NULL OR ${messageEndpointOf('?10', '?2')})
 			RETURNING ${automationColumns}, 0 AS links`
 		)
 		.bind(
@@ -329,10 +346,10 @@ export async function createAutomation(
 		.prepare(
 			`SELECT COALESCE(automation_limit, 0) AS automation_limit,
 				(SELECT COUNT(*) FROM automations WHERE tenant_id = ?1) AS used,
-				(?2 IS NULL OR EXISTS (SELECT 1 FROM webhook_endpoints WHERE id = ?2 AND tenant_id = ?1)) AS endpoint
+				((?2 IS NULL OR ${webhookEndpointOf('?2', '?1')}) AND (?3 IS NULL OR ${messageEndpointOf('?3', '?1')})) AS endpoint
 			FROM tenant_policy WHERE tenant_id = ?1`
 		)
-		.bind(automation.tenantId, actions[2])
+		.bind(automation.tenantId, actions[2], actions[3])
 		.first<Record<string, unknown>>();
 	if (!policy) return { status: 'no_workspace' };
 	const limit = count(policy.automation_limit, 'automation limit');
@@ -351,7 +368,7 @@ export async function updateAutomation(
 	change: AutomationChange
 ): Promise<UpdateAutomationResult> {
 	const trigger = change.trigger ? triggerColumns(change.trigger) : [null, null, null];
-	const actions = change.actions ? actionColumns(change.actions) : [null, 0, null, 0];
+	const actions = change.actions ? actionColumns(change.actions) : [null, 0, null, null, 0];
 	const statements = [
 		db
 			.prepare(
@@ -363,10 +380,12 @@ export async function updateAutomation(
 					set_destination = CASE WHEN ?8 = 1 THEN ?9 ELSE set_destination END,
 					disable_link = CASE WHEN ?8 = 1 THEN ?10 ELSE disable_link END,
 					webhook_endpoint_id = CASE WHEN ?8 = 1 THEN ?11 ELSE webhook_endpoint_id END,
-					email_owner = CASE WHEN ?8 = 1 THEN ?12 ELSE email_owner END,
-					updated_at = ?13
+					message_endpoint_id = CASE WHEN ?8 = 1 THEN ?12 ELSE message_endpoint_id END,
+					email_owner = CASE WHEN ?8 = 1 THEN ?13 ELSE email_owner END,
+					updated_at = ?14
 				WHERE tenant_id = ?1 AND id = ?2 AND (?5 IS NULL OR trigger_type = ?5)
-				AND (?8 = 0 OR ?11 IS NULL OR EXISTS (SELECT 1 FROM webhook_endpoints WHERE id = ?11 AND tenant_id = ?1))
+				AND (?8 = 0 OR ((?11 IS NULL OR ${webhookEndpointOf('?11', '?1')})
+					AND (?12 IS NULL OR ${messageEndpointOf('?12', '?1')})))
 				RETURNING ${automationColumns}, ${applicationCount('automations')} AS links`
 			)
 			.bind(
@@ -404,10 +423,11 @@ export async function updateAutomation(
 	if (row) return { status: 'updated', automation: toAutomation(row) };
 	const stored = await db
 		.prepare(
-			`SELECT trigger_type, (?3 IS NULL OR EXISTS (SELECT 1 FROM webhook_endpoints WHERE id = ?3 AND tenant_id = ?1)) AS endpoint
+			`SELECT trigger_type,
+				((?3 IS NULL OR ${webhookEndpointOf('?3', '?1')}) AND (?4 IS NULL OR ${messageEndpointOf('?4', '?1')})) AS endpoint
 			FROM automations WHERE tenant_id = ?1 AND id = ?2`
 		)
-		.bind(tenantId, automationId, actions[2])
+		.bind(tenantId, automationId, actions[2], actions[3])
 		.first<Record<string, unknown>>();
 	if (!stored) return { status: 'not_found' };
 	if (change.trigger && stored.trigger_type !== change.trigger.type)
@@ -766,7 +786,8 @@ export async function recordSkippedRuns(
 // leaves its applications for the next claim.
 const runRows = `(SELECT json_extract(value, '$.linkId') AS link_id, json_extract(value, '$.automationId') AS automation_id,
 		json_extract(value, '$.linkEventId') AS link_event_id, json_extract(value, '$.triggerEventId') AS trigger_event_id,
-		json_extract(value, '$.runId') AS run_id FROM json_each(?1)) AS r
+		json_extract(value, '$.messageEventId') AS message_event_id, json_extract(value, '$.runId') AS run_id
+		FROM json_each(?1)) AS r
 	JOIN link_automations la ON la.link_id = r.link_id AND la.automation_id = r.automation_id
 		AND la.claim_token = ?2 AND la.state = 'waiting'
 	JOIN automations a ON a.id = la.automation_id AND a.tenant_id = la.tenant_id AND a.enabled = 1
@@ -777,13 +798,16 @@ const runRows = `(SELECT json_extract(value, '$.linkId') AS link_id, json_extrac
 // action runs; turning a blocked link off works.
 const refused = '(l.blocked_at IS NOT NULL AND a.set_destination IS NOT NULL)';
 const changesLink = `(a.set_destination IS NOT NULL OR a.disable_link = 1) AND NOT ${refused}`;
-const endpointExists =
-	'EXISTS (SELECT 1 FROM webhook_endpoints w WHERE w.id = a.webhook_endpoint_id AND w.tenant_id = la.tenant_id)';
-const webhookSent = `a.webhook_endpoint_id IS NOT NULL AND ${endpointExists} AND COALESCE(p.webhook_endpoint_limit, 0) > 0`;
+const endpointExists = webhookEndpointOf('a.webhook_endpoint_id', 'la.tenant_id');
+const messageExists = messageEndpointOf('a.message_endpoint_id', 'la.tenant_id');
+const webhooksAllowed = 'COALESCE(p.webhook_endpoint_limit, 0) > 0';
+const webhookSent = `a.webhook_endpoint_id IS NOT NULL AND ${endpointExists} AND ${webhooksAllowed}`;
+const messageSent = `a.message_endpoint_id IS NOT NULL AND ${messageExists} AND ${webhooksAllowed}`;
 const emailed = `NOT ${refused} AND a.email_owner = 1`;
 const runResult = `CASE WHEN ${refused} THEN 'link_blocked'
 	WHEN a.webhook_endpoint_id IS NOT NULL AND NOT ${endpointExists} THEN 'endpoint_missing'
-	WHEN a.webhook_endpoint_id IS NOT NULL AND COALESCE(p.webhook_endpoint_limit, 0) = 0 THEN 'webhooks_off' END`;
+	WHEN a.message_endpoint_id IS NOT NULL AND NOT ${messageExists} THEN 'target_missing'
+	WHEN (a.webhook_endpoint_id IS NOT NULL OR a.message_endpoint_id IS NOT NULL) AND NOT ${webhooksAllowed} THEN 'webhooks_off' END`;
 
 // SQL: a JSON array of the action kinds whose condition holds, in the order they run.
 function actionList(conditions: Record<AutomationActionType, string>): string {
@@ -800,10 +824,10 @@ const triggerJson = `json(CASE a.trigger_type
 	ELSE json_object('type', 'destination_down', 'lastResult', la.last_check_result) END)`;
 
 // Runs claimed applications in one batch of 8 statements: stage link events, change the links,
-// complete and drop no-op link events (as updateLink), write each automation.triggered event for
-// its target endpoint, record the runs, finish the applications, and read the email notices to
-// send, one per template. Applications whose claim has ended or changed are left alone. ran is
-// the number of applications finished.
+// complete and drop no-op link events (as updateLink), write the automation.triggered events for
+// the send_webhook and post_message endpoints, record the runs, finish the applications, and read
+// the email notices to send, one per template. Applications whose claim has ended or changed are
+// left alone. ran is the number of applications finished.
 export async function runAutomations(
 	db: D1Database,
 	run: { token: string; now: number; items: RunItem[] }
@@ -811,16 +835,29 @@ export async function runAutomations(
 	if (run.items.length === 0) return { ran: 0, emails: [] };
 	batchSize(run.items.length, 100);
 	const items = JSON.stringify(
-		run.items.map(({ linkId, automationId, linkEventId, triggerEventId, runId }) => ({
-			linkId,
-			automationId,
-			linkEventId,
-			triggerEventId,
-			runId
-		}))
+		run.items.map(
+			({ linkId, automationId, linkEventId, triggerEventId, messageEventId, runId }) => ({
+				linkId,
+				automationId,
+				linkEventId,
+				triggerEventId,
+				messageEventId,
+				runId
+			})
+		)
 	);
 	const linkEventIds = "(SELECT json_extract(value, '$.linkEventId') FROM json_each(?1))";
 	const previous = (field: string) => `json_extract(e.payload, '$.previous.${field}')`;
+	// The data of an automation.triggered event: the actions that ran, in their order.
+	const triggered = `json_object('automation', json_object('id', a.id, 'name', a.name, 'trigger', ${triggerJson}),
+		'link', ${linkJson('l', 'n')},
+		'actions', ${actionList({
+			change_destination: 'a.set_destination IS NOT NULL',
+			disable_link: 'a.disable_link = 1',
+			send_webhook: webhookSent,
+			post_message: messageSent,
+			email_owner: 'a.email_owner = 1'
+		})})`;
 	const results = await db.batch<Record<string, unknown>>([
 		db
 			.prepare(
@@ -867,22 +904,20 @@ export async function runAutomations(
 				)`
 			)
 			.bind(items),
-		// Reports the link after the change. A turned-off endpoint gets no delivery (fan-out).
+		// Reports the link after the change, once for each endpoint, with its own event ID. A
+		// turned-off endpoint gets no delivery (fan-out).
 		db
 			.prepare(
 				`INSERT INTO webhook_events (id, tenant_id, type, subject_id, target_endpoint_id, payload, created_at)
-				SELECT r.trigger_event_id, la.tenant_id, 'automation.triggered', l.id, a.webhook_endpoint_id,
-					json_object('automation', json_object('id', a.id, 'name', a.name, 'trigger', ${triggerJson}),
-						'link', ${linkJson('l', 'n')},
-						'actions', ${actionList({
-							change_destination: 'a.set_destination IS NOT NULL',
-							disable_link: 'a.disable_link = 1',
-							send_webhook: '1',
-							email_owner: 'a.email_owner = 1'
-						})}), ?3
+				SELECT r.trigger_event_id, la.tenant_id, 'automation.triggered', l.id, a.webhook_endpoint_id, ${triggered}, ?3
 				FROM ${runRows}
 				JOIN domain_namespaces n ON n.id = l.domain_id
-				WHERE NOT ${refused} AND ${webhookSent}`
+				WHERE NOT ${refused} AND ${webhookSent}
+				UNION ALL
+				SELECT r.message_event_id, la.tenant_id, 'automation.triggered', l.id, a.message_endpoint_id, ${triggered}, ?3
+				FROM ${runRows}
+				JOIN domain_namespaces n ON n.id = l.domain_id
+				WHERE NOT ${refused} AND ${messageSent}`
 			)
 			.bind(items, run.token, run.now),
 		db
@@ -895,6 +930,7 @@ export async function runAutomations(
 						change_destination: `NOT ${refused} AND a.set_destination IS NOT NULL`,
 						disable_link: `NOT ${refused} AND a.disable_link = 1`,
 						send_webhook: `NOT ${refused} AND ${webhookSent}`,
+						post_message: `NOT ${refused} AND ${messageSent}`,
 						email_owner: emailed
 					})} AS actions,
 					CASE WHEN ${emailed} THEN 1 ELSE 0 END AS email

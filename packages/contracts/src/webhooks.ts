@@ -17,9 +17,12 @@ export const subscribableWebhookEvents = [
 ] as const;
 export type SubscribableWebhookEvent = (typeof subscribableWebhookEvents)[number];
 
-// webhook.test and automation.triggered go only to the endpoint they target; no endpoint
-// subscribes to them. An automation event skips a turned-off endpoint; a test reaches it.
-export type WebhookEventType = SubscribableWebhookEvent | 'webhook.test' | 'automation.triggered';
+// webhook.test, automation.triggered, and integration.message go only to the endpoint they
+// target; no endpoint subscribes to them. An automation event or an integration message skips a
+// turned-off endpoint; a test reaches it. integration.message goes only to an endpoint of another
+// transport than http: its payload is the edition's own message.
+export type WebhookEventType =
+	SubscribableWebhookEvent | 'webhook.test' | 'automation.triggered' | 'integration.message';
 
 export const maxWebhookUrlLength = 2048;
 // Milestones are counted in steps of 100 clicks, so an interval is a multiple of 100.
@@ -30,7 +33,9 @@ export const maxMilestoneInterval = 1_000_000;
 export const defaultMilestoneInterval = 1000;
 
 // Why a delivery failed or was skipped. timeout, network, redirect, and http_status come from
-// the receiver; the rest from Flared.
+// the receiver; unauthorized, target_unavailable, rate_limited, and rejected from the sender of
+// another transport; the rest from Flared. transport_missing: the installation has no sender for
+// the endpoint's transport.
 export const webhookDeliveryErrors = [
 	'timeout',
 	'network',
@@ -40,9 +45,24 @@ export const webhookDeliveryErrors = [
 	'secret_changed',
 	'plan',
 	'disabled',
-	'expired'
+	'expired',
+	'transport_missing',
+	'unauthorized',
+	'target_unavailable',
+	'rate_limited',
+	'rejected'
 ] as const;
 export type WebhookDeliveryError = (typeof webhookDeliveryErrors)[number];
+
+// Why Flared turned an endpoint of another transport off. target_unavailable: that endpoint's
+// target is gone. unauthorized: the transport refused the workspace's credentials, so every
+// endpoint of the workspace on that transport is off until it connects again.
+export const webhookOffReasons = ['target_unavailable', 'unauthorized'] as const;
+export type WebhookOffReason = (typeof webhookOffReasons)[number];
+
+export function isWebhookOffReason(value: unknown): value is WebhookOffReason {
+	return typeof value === 'string' && (webhookOffReasons as readonly string[]).includes(value);
+}
 
 export type WebhookDeliveryState = 'pending' | 'succeeded' | 'failed' | 'skipped';
 
@@ -168,6 +188,7 @@ export function isWebhookEventType(value: unknown): value is WebhookEventType {
 	return (
 		value === 'webhook.test' ||
 		value === 'automation.triggered' ||
+		value === 'integration.message' ||
 		isSubscribableWebhookEvent(value)
 	);
 }

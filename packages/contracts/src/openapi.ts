@@ -31,7 +31,7 @@ import { tokenScopes, type TokenScope } from './tokens';
 // Duplicated from the client's QR module, which this package cannot import.
 const qrSizes = { minimum: 128, maximum: 2048, default: 512 };
 
-export const openApiVersion = '1.6.0';
+export const openApiVersion = '1.7.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const dateTime = { type: 'string', format: 'date-time' };
@@ -358,10 +358,17 @@ const schemas = {
 				type: { const: 'send_webhook' },
 				endpointId: { type: 'string', description: 'A webhook endpoint of the workspace.' }
 			}),
+			object({
+				type: { const: 'post_message' },
+				endpointId: {
+					type: 'string',
+					description: 'A message target of the workspace, where the installation posts messages.'
+				}
+			}),
 			object({ type: { const: 'email_owner' } })
 		],
 		description:
-			'Actions run in this order: change the destination, turn the link off, send an automation.triggered event to the webhook endpoint, email the workspace owner.'
+			'Actions run in this order: change the destination, turn the link off, send an automation.triggered event to the webhook endpoint, post a message to the message target, email the workspace owner.'
 	},
 	Automation: object({
 		id: { type: 'string' },

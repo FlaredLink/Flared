@@ -20,7 +20,13 @@
 	} from '@flared/contracts/automations';
 	import { LinkInputError, parseDestination } from '@flared/contracts/links';
 	import { endpointLabel } from '../webhooks/client';
-	import { actionLabels, triggerLabels, type AutomationEndpoint } from './text';
+	import {
+		actionLabels,
+		defaultMessageLabel,
+		triggerLabels,
+		type AutomationEndpoint,
+		type AutomationMessageTarget
+	} from './text';
 	import Glyph, { type GlyphName } from '../icons/Glyph.svelte';
 	import Button from '../atoms/Button.svelte';
 	import Checkbox from '../atoms/Checkbox.svelte';
@@ -41,6 +47,11 @@
 		triggerTypes: readonly AutomationTriggerType[];
 		// Where webhook endpoints are added.
 		webhooksHref?: string;
+		// The places the post-message action can post to, or null when the page could not read
+		// them. The edition names the action and says where the owner adds places.
+		messageTargets?: readonly AutomationMessageTarget[] | null;
+		messageLabel?: string;
+		messageTargetsHref?: string;
 		pending: boolean;
 		// A problem the server reported, and the field it names.
 		error: string;
@@ -54,6 +65,9 @@
 		actionTypes,
 		triggerTypes,
 		webhooksHref,
+		messageTargets = null,
+		messageLabel = defaultMessageLabel,
+		messageTargetsHref,
 		pending,
 		error,
 		errorField,
@@ -61,7 +75,7 @@
 		oncancel
 	}: Props = $props();
 
-	type Field = 'name' | 'trigger' | 'actions' | 'destination' | 'endpointId';
+	type Field = 'name' | 'trigger' | 'actions' | 'destination' | 'endpointId' | 'messageTarget';
 	const fields: readonly string[] = ['name', 'trigger', 'actions', 'destination', 'endpointId'];
 	const clickPresets = [100, 500, 1000, 5000, 10_000];
 	const triggerIcons: Record<AutomationTriggerType, GlyphName> = {
@@ -81,6 +95,9 @@
 		const clicks = trigger?.type === 'clicks' ? trigger.clicks : 1000;
 		const preset = clickPresets.includes(clicks);
 		const endpointId = action('send_webhook')?.endpointId ?? '';
+		const targetId = action('post_message')?.endpointId ?? '';
+		const targetKnown =
+			messageTargets === null || messageTargets.some((item) => item.id === targetId);
 		return {
 			editing: from !== undefined,
 			name: from?.name ?? '',
@@ -91,7 +108,11 @@
 			chosen: from?.actions.map((item) => item.type) ?? [],
 			destination: action('change_destination')?.destination ?? '',
 			// A deleted endpoint is not offered, so the person chooses another.
-			endpointId: endpoints?.some((item) => item.id === endpointId) ? endpointId : ''
+			endpointId: endpoints?.some((item) => item.id === endpointId) ? endpointId : '',
+			// A removed target is not offered either. While the targets are unknown, the stored one
+			// stays, so a change to the name keeps the action.
+			targetId: targetKnown ? targetId : '',
+			targetLost: targetId !== '' && !targetKnown
 		};
 	}
 	const start = untrack(() => startValues(initial));
@@ -106,6 +127,7 @@
 	let chosen = $state<AutomationActionType[]>(start.chosen);
 	let destination = $state(start.destination);
 	let endpointId = $state(start.endpointId);
+	let targetId = $state(start.targetId);
 	let localError = $state<{ field: Field; text: string } | null>(null);
 	let nameInput = $state<HTMLInputElement>();
 	// The panel opens with the keyboard in the name field.
@@ -123,12 +145,22 @@
 		)
 	);
 	const noEndpoints = $derived(endpoints === null || endpoints.length === 0);
+	const noTargets = $derived(messageTargets === null || messageTargets.length === 0);
 
 	const fieldError = (field: Field) =>
 		localError?.field === field ? localError.text : errorField === field ? error : null;
 	// A server error that names no field of this form goes above the buttons.
 	const formError = $derived(
 		localError === null && error && !fields.includes(errorField ?? '') ? error : ''
+	);
+	// The server names endpointId for both actions and cannot tell which one is missing, so the
+	// error shows at each chosen picker.
+	const targetError = $derived(
+		localError?.field === 'messageTarget'
+			? localError.text
+			: errorField === 'endpointId'
+				? error
+				: null
 	);
 	const describedBy = (id: string, field: Field, hint = true) =>
 		[hint ? `${id}-hint` : '', fieldError(field) ? `${id}-error` : ''].filter(Boolean).join(' ') ||
@@ -201,6 +233,12 @@
 					return;
 				}
 				actions.push({ type, endpointId });
+			} else if (type === 'post_message') {
+				if (!targetId) {
+					localError = { field: 'messageTarget', text: 'Choose where to post the message.' };
+					return;
+				}
+				actions.push({ type, endpointId: targetId });
 			} else actions.push({ type });
 		}
 		onsubmit({ name: checkedName, trigger, actions });
@@ -315,19 +353,29 @@
 				<div class="action">
 					<Checkbox
 						{checked}
-						disabled={type === 'send_webhook' && noEndpoints && !checked}
+						disabled={((type === 'send_webhook' && noEndpoints) ||
+							(type === 'post_message' && noTargets)) &&
+							!checked}
 						hint={type === 'send_webhook' && noEndpoints
 							? endpoints === null
 								? 'Webhook endpoints are not available right now.'
 								: 'Add a webhook endpoint first.'
-							: type === 'email_owner'
-								? 'One email for each run, with the links it changed.'
-								: undefined}
+							: type === 'post_message' && noTargets
+								? messageTargets === null
+									? 'The places to post are not available right now.'
+									: 'Add a place to post first.'
+								: type === 'email_owner'
+									? 'One email for each run, with the links it changed.'
+									: undefined}
 						onchange={(event) => toggle(type, event.currentTarget.checked)}
-						>{actionLabels[type]}</Checkbox
+						>{type === 'post_message' ? messageLabel : actionLabels[type]}</Checkbox
 					>
 					{#if type === 'send_webhook' && noEndpoints && webhooksHref}
 						<a class="more" href={webhooksHref}>Open webhooks<Glyph name="arrow" size={16} /></a>
+					{:else if type === 'post_message' && messageTargets !== null && messageTargets.length === 0 && messageTargetsHref}
+						<a class="more" href={messageTargetsHref}
+							>Add a place to post<Glyph name="arrow" size={16} /></a
+						>
 					{/if}
 					{#if checked && type === 'change_destination'}
 						<div class="nested">
@@ -373,6 +421,38 @@
 						</div>
 					{:else if checked && type === 'send_webhook' && fieldError('endpointId')}
 						<p class="error" role="alert">{fieldError('endpointId')}</p>
+					{:else if checked && type === 'post_message' && messageTargets && messageTargets.length > 0}
+						<div class="nested">
+							<FormField
+								for="automation-message-target"
+								label="Post to"
+								hint={start.targetLost
+									? 'The place this automation posted to was removed. Choose where to post the message.'
+									: 'Flared posts a message about the link here.'}
+								error={targetError}
+							>
+								<Select
+									id="automation-message-target"
+									bind:value={targetId}
+									aria-invalid={targetError !== null || undefined}
+									aria-describedby={[
+										'automation-message-target-hint',
+										targetError ? 'automation-message-target-error' : ''
+									]
+										.filter(Boolean)
+										.join(' ')}
+								>
+									<option value="" disabled>Choose where to post</option>
+									{#each messageTargets as target (target.id)}
+										<option value={target.id}
+											>{target.enabled ? target.label : `${target.label} (off)`}</option
+										>
+									{/each}
+								</Select>
+							</FormField>
+						</div>
+					{:else if checked && type === 'post_message' && targetError}
+						<p class="error" role="alert">{targetError}</p>
 					{/if}
 				</div>
 			{/each}

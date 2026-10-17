@@ -14,7 +14,13 @@
 		updateAutomation,
 		type AutomationFailure
 	} from './client';
-	import { actionText, triggerText, type AutomationEndpoint } from './text';
+	import {
+		actionText,
+		defaultMessageLabel,
+		triggerText,
+		type AutomationEndpoint,
+		type AutomationMessageTarget
+	} from './text';
 	import AutomationForm from './AutomationForm.svelte';
 	import AutomationRuns from './AutomationRuns.svelte';
 	import { shownWorkspace } from '../workspace/shown';
@@ -38,10 +44,26 @@
 		endpoints: readonly AutomationEndpoint[] | null;
 		// Where webhook endpoints are added and changed.
 		webhooksHref?: string;
+		// The places the post-message action can post to, or null when the page could not read
+		// them; the edition's name for the action; and where the owner adds places.
+		messageTargets?: readonly AutomationMessageTarget[] | null;
+		messageLabel?: string;
+		messageTargetsHref?: string;
 		// What the edition says when the workspace may keep no automations, such as a plan to choose.
 		limitNotice?: Snippet;
 	}
-	let { page, apiBase, canManage, endpoints, webhooksHref, limitNotice }: Props = $props();
+	let {
+		page,
+		apiBase,
+		canManage,
+		endpoints,
+		webhooksHref,
+		messageTargets = null,
+		messageLabel = defaultMessageLabel,
+		messageTargetsHref,
+		limitNotice
+	}: Props = $props();
+	const messages = $derived({ label: messageLabel, targets: messageTargets });
 	const workspace = shownWorkspace();
 
 	// The server load gives the first list; each change replaces it with the server's answer. A
@@ -75,6 +97,16 @@
 		return automation.actions.some(
 			(action) =>
 				action.type === 'send_webhook' && !list.some((item) => item.id === action.endpointId)
+		);
+	}
+
+	// A post-message action whose target is gone. Unknown while the targets are unknown.
+	function lostTarget(automation: Automation): boolean {
+		const list = messageTargets;
+		if (list === null) return false;
+		return automation.actions.some(
+			(action) =>
+				action.type === 'post_message' && !list.some((item) => item.id === action.endpointId)
 		);
 	}
 
@@ -168,6 +200,9 @@
 					actionTypes={page.actionTypes}
 					triggerTypes={page.triggerTypes}
 					{webhooksHref}
+					{messageTargets}
+					{messageLabel}
+					{messageTargetsHref}
 					pending={pending === `edit:${automation.id}`}
 					{error}
 					{errorField}
@@ -183,6 +218,9 @@
 				actionTypes={page.actionTypes}
 				triggerTypes={page.triggerTypes}
 				{webhooksHref}
+				{messageTargets}
+				{messageLabel}
+				{messageTargetsHref}
 				pending={pending === 'create'}
 				{error}
 				{errorField}
@@ -273,7 +311,7 @@
 								<span class="step"><b>When</b>{triggerText(automation.trigger)}</span>
 								<span class="arrow"><Glyph name="arrow" size={14} /></span>
 								{#each automation.actions as action (action.type)}
-									<span class="step"><b>Then</b>{actionText(action, endpoints)}</span>
+									<span class="step"><b>Then</b>{actionText(action, endpoints, messages)}</span>
 								{/each}
 							</p>
 
@@ -282,6 +320,14 @@
 									<p>
 										The webhook endpoint of this automation was deleted. Runs record a failure until
 										you choose another endpoint.
+									</p>
+								</Callout>
+							{/if}
+							{#if lostTarget(automation)}
+								<Callout tone="warning" icon="plugs">
+									<p>
+										The place this automation posts to was removed. Runs record a failure until you
+										choose another place.
 									</p>
 								</Callout>
 							{/if}

@@ -56,6 +56,10 @@ declare namespace Cloudflare {
 		SETUP_ANALYTICS: D1Database;
 		SETUP_BROKEN: D1Database;
 		MIGRATION_ANALYTICS: D1Database;
+		MIGRATION_ROUTING: D1Database;
+		TRANSPORTS_IDENTITY: D1Database;
+		TRANSPORTS_ROUTING: D1Database;
+		TRANSPORTS_ANALYTICS: D1Database;
 		ICONS_IDENTITY: D1Database;
 		ICONS_ROUTING: D1Database;
 		ICONS_ANALYTICS: D1Database;

@@ -1,17 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Routing-store records for webhooks: endpoints, the event outbox, and deliveries; and the click
 // milestones that the analytics shards hand over. Link events are staged by links.ts in the
-// batch of the change, with the fragments below.
+// batch of the change, with the fragments below. An endpoint has a transport: 'http' is the
+// signed POST that the webhook routes manage; the endpoints of another transport belong to the
+// edition that sends them and are managed with the transport functions below.
 import type { D1Database, D1PreparedStatement } from '@cloudflare/workers-types/index.ts';
 import {
 	defaultMilestoneInterval,
 	isSubscribableWebhookEvent,
 	isWebhookEventType,
+	isWebhookOffReason,
+	maxMilestoneInterval,
+	milestoneStep,
+	minMilestoneInterval,
 	webhookDeliveryErrors,
 	type SubscribableWebhookEvent,
 	type WebhookDeliveryError,
 	type WebhookDeliveryState,
-	type WebhookEventType
+	type WebhookEventType,
+	type WebhookOffReason
 } from '@flared/contracts/webhooks';
 
 // A delivery is tried at most this many times, then fails.
@@ -21,6 +28,11 @@ export const webhookDeliveryLifetimeMs = 72 * 60 * 60 * 1000;
 // Events and deliveries are kept this long.
 export const webhookRecordLifetimeMs = 30 * 86400000;
 export const recentDeliveryCount = 50;
+// The transport of the signed POST, and the key_id of every endpoint of another transport.
+export const httpTransport = 'http';
+export const transportKeyId = 'transport';
+// Integration messages staged in one call at most.
+export const maxIntegrationMessages = 100;
 
 // SQL: whether the tenant bound to `tenant` has webhooks on. A limit of 0, or one not projected
 // yet (NULL), turns them off.
@@ -47,6 +59,13 @@ export function linkJson(l: string, n: string): string {
 export interface WebhookEndpointRow {
 	id: string;
 	tenantId: string;
+	transport: string;
+	// Set for an endpoint of another transport: unique per workspace and transport.
+	targetKey: string | null;
+	// The edition's JSON for another transport; the core never reads it.
+	target: string | null;
+	// Why Flared turned the endpoint off.
+	offReason: WebhookOffReason | null;
 	url: string;
 	events: SubscribableWebhookEvent[];
 	milestoneInterval: number | null;
@@ -76,6 +95,47 @@ export type CreateEndpointResult =
 	| { status: 'created'; endpoint: WebhookEndpointRow }
 	| { status: 'limit'; limit: number }
 	| { status: 'no_workspace' };
+
+// An endpoint of another transport. url is an https link that opens the target. events may be
+// empty: the endpoint then gets only the events that target it. limit caps the workspace's
+// endpoints on this transport; the http endpoints do not count.
+export interface NewTransportEndpoint {
+	id: string;
+	tenantId: string;
+	transport: string;
+	targetKey: string;
+	target: string | null;
+	url: string;
+	events: SubscribableWebhookEvent[];
+	milestoneInterval: number | null;
+	limit: number;
+	now: number;
+}
+
+// limit: 0 while the workspace has webhooks off, else the limit asked for. taken: the workspace
+// has an endpoint with this target key on the transport.
+export type CreateTransportEndpointResult =
+	| { status: 'created'; endpoint: WebhookEndpointRow }
+	| { status: 'limit'; limit: number }
+	| { status: 'taken' }
+	| { status: 'no_workspace' };
+
+// An endpoint of another transport with what a scheduled job needs of its workspace. on: the
+// workspace has webhooks on and is not suspended.
+export interface TransportEndpointState extends WebhookEndpointRow {
+	analyticsShardId: string;
+	on: boolean;
+}
+
+// A message for one endpoint of another transport. payload is the edition's JSON text; id is
+// stable, so a repeat stages nothing twice.
+export interface IntegrationMessage {
+	id: string;
+	tenantId: string;
+	endpointId: string;
+	payload: string;
+	createdAt: number;
+}
 
 // undefined keeps a field.
 export interface WebhookEndpointChange {
@@ -126,6 +186,9 @@ export interface ClaimedDelivery {
 	};
 	endpoint: {
 		id: string;
+		transport: string;
+		// The edition's JSON for another transport.
+		target: string | null;
 		url: string;
 		enabled: boolean;
 		secretVersion: number;
@@ -177,6 +240,29 @@ function batchSize(limit: number, max: number): number {
 	return limit;
 }
 
+// 2 to 16 lowercase letters, as the column allows.
+function transportName(value: string): string {
+	if (!/^[a-z]{2,16}$/.test(value)) throw new Error('Invalid webhook transport');
+	return value;
+}
+
+// A transport other than http, for the transport functions.
+function otherTransport(value: string): string {
+	if (transportName(value) === httpTransport) throw new Error('Use the webhook functions for http');
+	return value;
+}
+
+function targetKey(value: string): string {
+	if (!value || value.length > 160) throw new Error('Invalid webhook target key');
+	return value;
+}
+
+function offReason(value: unknown): WebhookOffReason | null {
+	if (value === null) return null;
+	if (!isWebhookOffReason(value)) throw new Error('Invalid stored off reason');
+	return value;
+}
+
 function eventType(value: unknown): WebhookEventType {
 	if (isWebhookEventType(value)) return value;
 	throw new Error('Invalid stored webhook event type');
@@ -205,12 +291,16 @@ function deliveryError(value: unknown): WebhookDeliveryError | null {
 }
 
 const endpointColumns =
-	'id, tenant_id, url, events, milestone_interval, enabled, secret_version, previous_secret_until, key_id, failure_count, paused_until, last_success_at, last_failure_at, created_at, updated_at';
+	'id, tenant_id, transport, target_key, target, off_reason, url, events, milestone_interval, enabled, secret_version, previous_secret_until, key_id, failure_count, paused_until, last_success_at, last_failure_at, created_at, updated_at';
 
 function toEndpoint(row: Record<string, unknown>): WebhookEndpointRow {
 	return {
 		id: text(row.id, 'endpoint'),
 		tenantId: text(row.tenant_id, 'tenant'),
+		transport: text(row.transport, 'transport'),
+		targetKey: optionalText(row.target_key, 'target key'),
+		target: optionalText(row.target, 'target'),
+		offReason: offReason(row.off_reason),
 		url: text(row.url, 'endpoint URL'),
 		events: storedEvents(row.events),
 		milestoneInterval: optionalCount(row.milestone_interval, 'milestone interval'),
@@ -227,8 +317,8 @@ function toEndpoint(row: Record<string, unknown>): WebhookEndpointRow {
 	};
 }
 
-// One statement counts the endpoints and inserts, so two creates at once cannot both take the
-// last place under the limit.
+// One statement counts the http endpoints and inserts, so two creates at once cannot both take
+// the last place under the limit. Endpoints of another transport do not count.
 export async function createWebhookEndpoint(
 	db: D1Database,
 	endpoint: NewWebhookEndpoint
@@ -237,7 +327,7 @@ export async function createWebhookEndpoint(
 		.prepare(
 			`INSERT INTO webhook_endpoints (id, tenant_id, url, events, milestone_interval, key_id, created_at, updated_at)
 			SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7 FROM tenant_policy p WHERE p.tenant_id = ?2
-			AND (SELECT COUNT(*) FROM webhook_endpoints WHERE tenant_id = ?2) < COALESCE(p.webhook_endpoint_limit, 0)
+			AND (SELECT COUNT(*) FROM webhook_endpoints WHERE tenant_id = ?2 AND transport = 'http') < COALESCE(p.webhook_endpoint_limit, 0)
 			RETURNING ${endpointColumns}`
 		)
 		.bind(
@@ -262,23 +352,24 @@ export async function createWebhookEndpoint(
 	return { status: 'limit', limit: count(policy.endpoint_limit, 'webhook endpoint limit') };
 }
 
-// The tenant's endpoints, oldest first, with the number in use and the limit. Null when routing
-// holds no policy for the tenant.
+// The tenant's endpoints of one transport, oldest first, with the number in use and the limit.
+// Null when routing holds no policy for the tenant.
 export async function listWebhookEndpoints(
 	db: D1Database,
-	tenantId: string
+	tenantId: string,
+	transport = httpTransport
 ): Promise<{ endpoints: WebhookEndpointRow[]; used: number; limit: number } | null> {
 	const [policy, endpoints] = await db.batch<Record<string, unknown>>([
 		db
 			.prepare(
-				'SELECT COALESCE(webhook_endpoint_limit, 0) AS endpoint_limit, (SELECT COUNT(*) FROM webhook_endpoints WHERE tenant_id = ?1) AS used FROM tenant_policy WHERE tenant_id = ?1'
+				'SELECT COALESCE(webhook_endpoint_limit, 0) AS endpoint_limit, (SELECT COUNT(*) FROM webhook_endpoints WHERE tenant_id = ?1 AND transport = ?2) AS used FROM tenant_policy WHERE tenant_id = ?1'
 			)
-			.bind(tenantId),
+			.bind(tenantId, transportName(transport)),
 		db
 			.prepare(
-				`SELECT ${endpointColumns} FROM webhook_endpoints WHERE tenant_id = ? ORDER BY created_at, id LIMIT 100`
+				`SELECT ${endpointColumns} FROM webhook_endpoints WHERE tenant_id = ? AND transport = ? ORDER BY created_at, id LIMIT 100`
 			)
-			.bind(tenantId)
+			.bind(tenantId, transport)
 	]);
 	const row = policy.results[0];
 	if (!row) return null;
@@ -289,26 +380,32 @@ export async function listWebhookEndpoints(
 	};
 }
 
+// Null when the tenant has no such endpoint on the transport.
 export async function readWebhookEndpoint(
 	db: D1Database,
 	tenantId: string,
-	endpointId: string
+	endpointId: string,
+	transport = httpTransport
 ): Promise<WebhookEndpointRow | null> {
 	const row = await db
-		.prepare(`SELECT ${endpointColumns} FROM webhook_endpoints WHERE tenant_id = ? AND id = ?`)
-		.bind(tenantId, endpointId)
+		.prepare(
+			`SELECT ${endpointColumns} FROM webhook_endpoints WHERE tenant_id = ? AND id = ? AND transport = ?`
+		)
+		.bind(tenantId, endpointId, transportName(transport))
 		.first<Record<string, unknown>>();
 	return row ? toEndpoint(row) : null;
 }
 
-// Null when the tenant has no such endpoint. The interval follows the events: without
-// link.click_milestone it is cleared; with it, a missing interval keeps the stored one or takes
-// the default. Turning the endpoint on or changing its URL ends a pause.
+// Null when the tenant has no such endpoint on the transport. The interval follows the events:
+// without link.click_milestone it is cleared; with it, a missing interval keeps the stored one or
+// takes the default. Turning the endpoint on or changing its URL ends a pause. Turning it on or
+// off clears the reason Flared turned it off: the owner's choice replaces it.
 export async function updateWebhookEndpoint(
 	db: D1Database,
 	tenantId: string,
 	endpointId: string,
-	change: WebhookEndpointChange
+	change: WebhookEndpointChange,
+	transport = httpTransport
 ): Promise<WebhookEndpointRow | null> {
 	const restart = '(?6 = 1 AND enabled = 0) OR (?3 IS NOT NULL AND ?3 <> url)';
 	const row = await db
@@ -320,10 +417,11 @@ export async function updateWebhookEndpoint(
 					WHEN EXISTS (SELECT 1 FROM json_each(COALESCE(?4, events)) WHERE value = 'link.click_milestone')
 					THEN COALESCE(?5, milestone_interval, ?8) ELSE NULL END,
 				enabled = COALESCE(?6, enabled),
+				off_reason = CASE WHEN ?6 IS NULL THEN off_reason END,
 				failure_count = CASE WHEN ${restart} THEN 0 ELSE failure_count END,
 				paused_until = CASE WHEN ${restart} THEN NULL ELSE paused_until END,
 				updated_at = ?7
-			WHERE tenant_id = ?1 AND id = ?2
+			WHERE tenant_id = ?1 AND id = ?2 AND transport = ?9
 			RETURNING ${endpointColumns}`
 		)
 		.bind(
@@ -334,26 +432,31 @@ export async function updateWebhookEndpoint(
 			change.milestoneInterval ?? null,
 			change.enabled === undefined ? null : change.enabled ? 1 : 0,
 			change.now,
-			defaultMilestoneInterval
+			defaultMilestoneInterval,
+			transportName(transport)
 		)
 		.first<Record<string, unknown>>();
 	return row ? toEndpoint(row) : null;
 }
 
 // Removes the endpoint and its delivery history. Returns false when the tenant has no such
-// endpoint.
+// endpoint on the transport.
 export async function deleteWebhookEndpoint(
 	db: D1Database,
 	tenantId: string,
-	endpointId: string
+	endpointId: string,
+	transport = httpTransport
 ): Promise<boolean> {
 	const [, endpoint] = await db.batch([
 		db
-			.prepare('DELETE FROM webhook_deliveries WHERE tenant_id = ? AND endpoint_id = ?')
-			.bind(tenantId, endpointId),
+			.prepare(
+				`DELETE FROM webhook_deliveries WHERE tenant_id = ?1 AND endpoint_id = ?2
+				AND EXISTS (SELECT 1 FROM webhook_endpoints WHERE id = ?2 AND tenant_id = ?1 AND transport = ?3)`
+			)
+			.bind(tenantId, endpointId, transportName(transport)),
 		db
-			.prepare('DELETE FROM webhook_endpoints WHERE tenant_id = ? AND id = ?')
-			.bind(tenantId, endpointId)
+			.prepare('DELETE FROM webhook_endpoints WHERE tenant_id = ? AND id = ? AND transport = ?')
+			.bind(tenantId, endpointId, transport)
 	]);
 	return endpoint.meta.changes === 1;
 }
@@ -364,19 +467,235 @@ export async function rotateWebhookSecret(
 	db: D1Database,
 	tenantId: string,
 	endpointId: string,
-	rotation: { keyId: string; now: number; previousUntil: number }
+	rotation: { keyId: string; now: number; previousUntil: number },
+	transport = httpTransport
 ): Promise<WebhookEndpointRow | null> {
 	const row = await db
 		.prepare(
 			`UPDATE webhook_endpoints SET secret_version = secret_version + 1,
 				previous_secret_until = CASE WHEN key_id = ?3 THEN ?5 ELSE NULL END,
 				key_id = ?3, updated_at = ?4
-			WHERE tenant_id = ?1 AND id = ?2
+			WHERE tenant_id = ?1 AND id = ?2 AND transport = ?6
 			RETURNING ${endpointColumns}`
 		)
-		.bind(tenantId, endpointId, rotation.keyId, rotation.now, rotation.previousUntil)
+		.bind(
+			tenantId,
+			endpointId,
+			rotation.keyId,
+			rotation.now,
+			rotation.previousUntil,
+			transportName(transport)
+		)
 		.first<Record<string, unknown>>();
 	return row ? toEndpoint(row) : null;
+}
+
+// The interval a transport endpoint keeps: only with link.click_milestone, the default when
+// none is given.
+function transportInterval(
+	events: readonly SubscribableWebhookEvent[],
+	interval: number | null
+): number | null {
+	if (!events.includes('link.click_milestone')) return null;
+	const value = interval ?? defaultMilestoneInterval;
+	if (
+		!Number.isSafeInteger(value) ||
+		value < minMilestoneInterval ||
+		value > maxMilestoneInterval ||
+		value % milestoneStep !== 0
+	)
+		throw new Error('Invalid milestone interval');
+	return value;
+}
+
+function transportEvents(events: readonly unknown[]): SubscribableWebhookEvent[] {
+	if (!events.every(isSubscribableWebhookEvent)) throw new Error('Invalid webhook events');
+	return [...new Set(events)];
+}
+
+// One statement checks the plan, counts the workspace's endpoints on the transport, and inserts,
+// so two creates at once cannot both take the last place under the limit or the same target key.
+// Only when nothing is written, a second read says why.
+export async function createTransportEndpoint(
+	db: D1Database,
+	endpoint: NewTransportEndpoint
+): Promise<CreateTransportEndpointResult> {
+	const transport = otherTransport(endpoint.transport);
+	const key = targetKey(endpoint.targetKey);
+	if (endpoint.target !== null && endpoint.target.length > 2048)
+		throw new Error('Invalid webhook target');
+	const events = transportEvents(endpoint.events);
+	const limit = batchSize(endpoint.limit, 1000);
+	const row = await db
+		.prepare(
+			`INSERT INTO webhook_endpoints (id, tenant_id, transport, target_key, target, url, events, milestone_interval, key_id, created_at, updated_at)
+			SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10 FROM tenant_policy p WHERE p.tenant_id = ?2
+			AND COALESCE(p.webhook_endpoint_limit, 0) > 0
+			AND (SELECT COUNT(*) FROM webhook_endpoints WHERE tenant_id = ?2 AND transport = ?3) < ?11
+			ON CONFLICT(tenant_id, transport, target_key) WHERE target_key IS NOT NULL DO NOTHING
+			RETURNING ${endpointColumns}`
+		)
+		.bind(
+			endpoint.id,
+			endpoint.tenantId,
+			transport,
+			key,
+			endpoint.target,
+			endpoint.url,
+			JSON.stringify(events),
+			transportInterval(events, endpoint.milestoneInterval),
+			transportKeyId,
+			endpoint.now,
+			limit
+		)
+		.first<Record<string, unknown>>();
+	if (row) return { status: 'created', endpoint: toEndpoint(row) };
+	const policy = await db
+		.prepare(
+			`SELECT COALESCE(webhook_endpoint_limit, 0) AS endpoint_limit,
+				EXISTS (SELECT 1 FROM webhook_endpoints WHERE tenant_id = ?1 AND transport = ?2 AND target_key = ?3) AS taken
+			FROM tenant_policy WHERE tenant_id = ?1`
+		)
+		.bind(endpoint.tenantId, transport, key)
+		.first<Record<string, unknown>>();
+	if (!policy) return { status: 'no_workspace' };
+	if (count(policy.endpoint_limit, 'webhook endpoint limit') === 0)
+		return { status: 'limit', limit: 0 };
+	if (policy.taken === 1) return { status: 'taken' };
+	return { status: 'limit', limit };
+}
+
+// The tenant's endpoints on a transport other than http, in target key order, at most limit.
+// keyPrefix keeps the keys that start with it; after is the last target key of the previous page.
+export async function listTransportEndpoints(
+	db: D1Database,
+	options: {
+		transport: string;
+		tenantId: string;
+		keyPrefix?: string;
+		after?: string;
+		limit: number;
+	}
+): Promise<WebhookEndpointRow[]> {
+	const values: (string | number)[] = [
+		otherTransport(options.transport),
+		options.tenantId,
+		batchSize(options.limit, 100)
+	];
+	const bound = (value: string | number) => `?${values.push(value)}`;
+	const conditions = [
+		options.keyPrefix === undefined
+			? ''
+			: ` AND substr(target_key, 1, ${bound(targetKey(options.keyPrefix).length)}) = ${bound(options.keyPrefix)}`,
+		options.after === undefined ? '' : ` AND target_key > ${bound(options.after)}`
+	].join('');
+	const { results } = await db
+		.prepare(
+			`SELECT ${endpointColumns} FROM webhook_endpoints
+			WHERE transport = ?1 AND tenant_id = ?2 AND target_key IS NOT NULL${conditions}
+			ORDER BY target_key LIMIT ?3`
+		)
+		.bind(...values)
+		.all<Record<string, unknown>>();
+	return results.map(toEndpoint);
+}
+
+// Endpoints of a transport other than http by ID, across workspaces, with each workspace's
+// analytics shard and whether it has webhooks on, for a scheduled job. IDs not found are left out.
+export async function readTransportEndpoints(
+	db: D1Database,
+	ids: readonly string[]
+): Promise<TransportEndpointState[]> {
+	if (ids.length === 0) return [];
+	batchSize(ids.length, 100);
+	const columns = endpointColumns
+		.split(', ')
+		.map((column) => `w.${column}`)
+		.join(', ');
+	const { results } = await db
+		.prepare(
+			`SELECT ${columns}, p.analytics_shard_id,
+				(COALESCE(p.webhook_endpoint_limit, 0) > 0 AND p.suspended_at IS NULL) AS workspace_on
+			FROM json_each(?1) j
+			JOIN webhook_endpoints w ON w.id = j.value AND w.transport <> 'http'
+			JOIN tenant_policy p ON p.tenant_id = w.tenant_id`
+		)
+		.bind(JSON.stringify(ids))
+		.all<Record<string, unknown>>();
+	return results.map((row) => ({
+		...toEndpoint(row),
+		analyticsShardId: text(row.analytics_shard_id, 'analytics shard'),
+		on: row.workspace_on === 1
+	}));
+}
+
+// Changes an endpoint of a transport other than http as updateWebhookEndpoint does: turning it
+// on clears its off reason and its pause. Its url and target stay. Null when the tenant has no
+// such endpoint on the transport.
+export async function updateTransportEndpoint(
+	db: D1Database,
+	tenantId: string,
+	transport: string,
+	endpointId: string,
+	change: Omit<WebhookEndpointChange, 'url'>
+): Promise<WebhookEndpointRow | null> {
+	if (change.milestoneInterval !== undefined)
+		transportInterval(['link.click_milestone'], change.milestoneInterval);
+	return updateWebhookEndpoint(
+		db,
+		tenantId,
+		endpointId,
+		{
+			events: change.events === undefined ? undefined : transportEvents(change.events),
+			milestoneInterval: change.milestoneInterval,
+			enabled: change.enabled,
+			now: change.now
+		},
+		otherTransport(transport)
+	);
+}
+
+// Removes one endpoint of a transport other than http (with endpointId) or all of the tenant's
+// on that transport, deliveries first. Returns the endpoints removed.
+export async function deleteTransportEndpoints(
+	db: D1Database,
+	tenantId: string,
+	transport: string,
+	endpointId?: string
+): Promise<number> {
+	const values = [tenantId, otherTransport(transport)];
+	const only = endpointId === undefined ? '' : ` AND id = ?${values.push(endpointId)}`;
+	const [, endpoints] = await db.batch([
+		db
+			.prepare(
+				`DELETE FROM webhook_deliveries WHERE tenant_id = ?1 AND endpoint_id IN
+				(SELECT id FROM webhook_endpoints WHERE tenant_id = ?1 AND transport = ?2${only})`
+			)
+			.bind(...values),
+		db
+			.prepare(`DELETE FROM webhook_endpoints WHERE tenant_id = ?1 AND transport = ?2${only}`)
+			.bind(...values)
+	]);
+	return endpoints.meta.changes;
+}
+
+// Turns on again the tenant's endpoints on a transport other than http that Flared turned off
+// as unauthorized, after the workspace connects again. Endpoints the owner turned off, or turned
+// off for target_unavailable, stay off. Returns the endpoints turned on.
+export async function restoreTransportEndpoints(
+	db: D1Database,
+	tenantId: string,
+	transport: string,
+	now: number
+): Promise<number> {
+	const result = await db
+		.prepare(
+			`UPDATE webhook_endpoints SET enabled = 1, off_reason = NULL, failure_count = 0, paused_until = NULL, updated_at = ?3
+			WHERE tenant_id = ?1 AND transport = ?2 AND off_reason = 'unauthorized'`
+		)
+		.bind(tenantId, otherTransport(transport), now)
+		.run();
+	return result.meta.changes;
 }
 
 function toEvent(row: Record<string, unknown>): WebhookEventRow {
@@ -407,27 +726,82 @@ export async function listWebhookEvents(
 	return results.map(toEvent);
 }
 
-// A test event for one endpoint of the tenant, enabled or not. Returns false when the tenant
-// has no such endpoint.
+// A test event for one endpoint of the tenant on the transport (http unless given), enabled or
+// not. Returns false when the tenant has no such endpoint.
 export async function insertTestEvent(
 	db: D1Database,
-	event: { id: string; tenantId: string; endpointId: string; payload: string; now: number }
+	event: {
+		id: string;
+		tenantId: string;
+		endpointId: string;
+		payload: string;
+		now: number;
+		transport?: string;
+	}
 ): Promise<boolean> {
 	const result = await db
 		.prepare(
 			`INSERT INTO webhook_events (id, tenant_id, type, target_endpoint_id, payload, created_at)
-			SELECT ?1, ?2, 'webhook.test', ?3, ?4, ?5 FROM webhook_endpoints WHERE id = ?3 AND tenant_id = ?2`
+			SELECT ?1, ?2, 'webhook.test', ?3, ?4, ?5 FROM webhook_endpoints WHERE id = ?3 AND tenant_id = ?2 AND transport = ?6`
 		)
-		.bind(event.id, event.tenantId, event.endpointId, event.payload, event.now)
+		.bind(
+			event.id,
+			event.tenantId,
+			event.endpointId,
+			event.payload,
+			event.now,
+			transportName(event.transport ?? httpTransport)
+		)
 		.run();
 	return result.meta.changes === 1;
+}
+
+// Writes an integration.message event for each message whose endpoint is of a transport other
+// than http, enabled, and in a workspace that has webhooks on and is not suspended; the others are
+// dropped. An event ID already written is left alone, so a repeat stages nothing twice. Returns
+// the events written.
+export async function stageIntegrationMessages(
+	db: D1Database,
+	messages: readonly IntegrationMessage[]
+): Promise<number> {
+	if (messages.length === 0) return 0;
+	batchSize(messages.length, maxIntegrationMessages);
+	for (const message of messages)
+		if (message.payload.length > 65536) throw new Error('Invalid integration message payload');
+	const result = await db
+		.prepare(
+			`INSERT INTO webhook_events (id, tenant_id, type, target_endpoint_id, payload, created_at)
+			SELECT m.id, m.tenant_id, 'integration.message', w.id, m.payload, m.created_at
+			FROM (SELECT json_extract(value, '$.id') AS id, json_extract(value, '$.tenantId') AS tenant_id,
+				json_extract(value, '$.endpointId') AS endpoint_id, json_extract(value, '$.payload') AS payload,
+				json_extract(value, '$.createdAt') AS created_at FROM json_each(?1)) AS m
+			JOIN webhook_endpoints w ON w.id = m.endpoint_id AND w.tenant_id = m.tenant_id
+				AND w.transport <> 'http' AND w.enabled = 1
+			JOIN tenant_policy p ON p.tenant_id = m.tenant_id
+			WHERE COALESCE(p.webhook_endpoint_limit, 0) > 0 AND p.suspended_at IS NULL
+			ON CONFLICT(id) DO NOTHING`
+		)
+		.bind(
+			JSON.stringify(
+				messages.map(({ id, tenantId, endpointId, payload, createdAt }) => ({
+					id,
+					tenantId,
+					endpointId,
+					payload,
+					createdAt
+				}))
+			)
+		)
+		.run();
+	return result.meta.changes;
 }
 
 // Turns the oldest events not fanned out yet into deliveries, in one batch: first, pending
 // deliveries of a workspace whose limit is now 0 are skipped. An event goes to each enabled
 // endpoint of its workspace that existed when it happened and subscribes to its type (for a
 // milestone, with an interval that divides the clicks), or only to its target: a test to the
-// target enabled or not, an automation event only while the target is enabled. Nothing goes to a
+// target enabled or not, an automation event or an integration message only while the target is
+// enabled, and an integration message never to an http endpoint. Nothing goes to a
 // workspace at limit 0 or suspended. The same ordered set is marked in the same batch, and a
 // pair that already has a delivery is left alone, so a repeat creates no second delivery.
 // With tenantId, only that workspace's events and deliveries.
@@ -457,7 +831,8 @@ export async function fanOutWebhookEvents(
 				JOIN tenant_policy p ON p.tenant_id = e.tenant_id
 				JOIN webhook_endpoints w ON w.tenant_id = e.tenant_id
 				WHERE COALESCE(p.webhook_endpoint_limit, 0) > 0 AND p.suspended_at IS NULL
-				AND ((w.id = e.target_endpoint_id AND (w.enabled = 1 OR e.type = 'webhook.test')) OR (
+				AND ((w.id = e.target_endpoint_id AND (w.enabled = 1 OR e.type = 'webhook.test')
+					AND (e.type <> 'integration.message' OR w.transport <> 'http')) OR (
 					e.target_endpoint_id IS NULL AND w.enabled = 1 AND w.created_at <= e.created_at
 					AND EXISTS (SELECT 1 FROM json_each(w.events) WHERE value = e.type)
 					AND (e.type <> 'link.click_milestone' OR json_extract(e.payload, '$.clicks') % w.milestone_interval = 0)
@@ -529,7 +904,8 @@ export async function readClaimedDeliveries(
 	const { results } = await db
 		.prepare(
 			`SELECT d.id, d.tenant_id, d.attempts, e.id AS event_id, e.type, e.payload, e.created_at AS event_created_at,
-				e.target_endpoint_id, w.id AS endpoint_id, w.url, w.enabled, w.secret_version, w.previous_secret_until, w.key_id
+				e.target_endpoint_id, w.id AS endpoint_id, w.transport, w.target, w.url, w.enabled, w.secret_version,
+				w.previous_secret_until, w.key_id
 			FROM json_each(?1) j
 			JOIN webhook_deliveries d ON d.id = j.value
 			JOIN webhook_events e ON e.id = d.event_id
@@ -551,6 +927,8 @@ export async function readClaimedDeliveries(
 		},
 		endpoint: {
 			id: text(row.endpoint_id, 'endpoint'),
+			transport: text(row.transport, 'transport'),
+			target: optionalText(row.target, 'target'),
 			url: text(row.url, 'endpoint URL'),
 			enabled: row.enabled === 1,
 			secretVersion: count(row.secret_version, 'secret version'),
@@ -560,7 +938,8 @@ export async function readClaimedDeliveries(
 	}));
 }
 
-// Failures that come from the receiver count against its endpoint.
+// Failures that come from the receiver count against its endpoint. rate_limited does not: the
+// transport asked to wait, and the delivery retries without a pause.
 const receiverErrors = new Set<WebhookDeliveryError>([
 	'timeout',
 	'network',
@@ -569,8 +948,10 @@ const receiverErrors = new Set<WebhookDeliveryError>([
 ]);
 
 // Records the results of a run in one batch: one statement for the deliveries, one for the
-// endpoints' health. A receiver failure pauses its endpoint for 1 minute doubling with each
-// failing run, up to 512 minutes; a success in the run ends the pause.
+// endpoints' health, and one for off reasons when a result has one. A receiver failure pauses
+// its endpoint for 1 minute doubling with each failing run, up to 512 minutes; a success in the
+// run ends the pause. A failed target_unavailable turns that endpoint off; a failed unauthorized
+// turns off every enabled endpoint of the workspace on that transport. http endpoints keep on.
 export async function finishWebhookDeliveries(
 	db: D1Database,
 	results: DeliveryResult[],
@@ -578,6 +959,16 @@ export async function finishWebhookDeliveries(
 ): Promise<void> {
 	if (results.length === 0) return;
 	const health = new Map<string, { endpointId: string; succeeded: number; failed: number }>();
+	// unauthorized wins: it turns off the endpoint too.
+	const offReasons = new Map<string, WebhookOffReason>();
+	for (const result of results) {
+		if (
+			result.outcome === 'failed' &&
+			(result.errorCode === 'unauthorized' || result.errorCode === 'target_unavailable') &&
+			offReasons.get(result.endpointId) !== 'unauthorized'
+		)
+			offReasons.set(result.endpointId, result.errorCode);
+	}
 	for (const result of results) {
 		const succeeded = result.outcome === 'succeeded';
 		const failed = result.errorCode !== null && receiverErrors.has(result.errorCode);
@@ -631,6 +1022,23 @@ export async function finishWebhookDeliveries(
 					WHERE webhook_endpoints.id = h.endpoint_id`
 				)
 				.bind(now, JSON.stringify([...health.values()]))
+		);
+	if (offReasons.size > 0)
+		statements.push(
+			db
+				.prepare(
+					`UPDATE webhook_endpoints SET enabled = 0, off_reason = r.reason, updated_at = ?1
+					FROM (SELECT json_extract(value, '$.endpointId') AS endpoint_id, json_extract(value, '$.reason') AS reason
+						FROM json_each(?2)) AS r
+					WHERE webhook_endpoints.enabled = 1 AND webhook_endpoints.transport <> 'http' AND (
+						(r.reason = 'target_unavailable' AND webhook_endpoints.id = r.endpoint_id)
+						OR (r.reason = 'unauthorized' AND (webhook_endpoints.tenant_id, webhook_endpoints.transport) =
+							(SELECT o.tenant_id, o.transport FROM webhook_endpoints o WHERE o.id = r.endpoint_id)))`
+				)
+				.bind(
+					now,
+					JSON.stringify([...offReasons].map(([endpointId, reason]) => ({ endpointId, reason })))
+				)
 		);
 	await db.batch(statements);
 }
@@ -745,21 +1153,24 @@ export async function deleteOldWebhookRecords(
 	return results.reduce((sum, result) => sum + result.meta.changes, 0);
 }
 
-// The endpoint's newest deliveries first. Empty when the tenant has no such endpoint.
+// The endpoint's newest deliveries first. Empty when the tenant has no such endpoint on the
+// transport.
 export async function listEndpointDeliveries(
 	db: D1Database,
 	tenantId: string,
 	endpointId: string,
-	limit = recentDeliveryCount
+	limit = recentDeliveryCount,
+	transport = httpTransport
 ): Promise<WebhookDeliveryRow[]> {
 	const { results } = await db
 		.prepare(
 			`SELECT d.id, d.event_id, e.type, d.state, d.attempts, d.response_status, d.error_code, d.duration_ms,
 				d.created_at, d.last_attempt_at, d.completed_at
 			FROM webhook_deliveries d JOIN webhook_events e ON e.id = d.event_id
-			WHERE d.tenant_id = ? AND d.endpoint_id = ? ORDER BY d.created_at DESC, d.id DESC LIMIT ?`
+			JOIN webhook_endpoints w ON w.id = d.endpoint_id AND w.tenant_id = d.tenant_id AND w.transport = ?4
+			WHERE d.tenant_id = ?1 AND d.endpoint_id = ?2 ORDER BY d.created_at DESC, d.id DESC LIMIT ?3`
 		)
-		.bind(tenantId, endpointId, batchSize(limit, 100))
+		.bind(tenantId, endpointId, batchSize(limit, 100), transportName(transport))
 		.all<Record<string, unknown>>();
 	return results.map((row) => ({
 		id: text(row.id, 'delivery'),

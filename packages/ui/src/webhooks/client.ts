@@ -252,6 +252,16 @@ export function deliveryReason(code: WebhookDeliveryError, responseStatus: numbe
 			return 'The endpoint is off.';
 		case 'expired':
 			return 'Not delivered within 72 hours.';
+		case 'transport_missing':
+			return 'This installation cannot send to this endpoint.';
+		case 'unauthorized':
+			return 'The connection was refused. Connect again to continue.';
+		case 'target_unavailable':
+			return 'The place to post is no longer available.';
+		case 'rate_limited':
+			return 'Too many messages for now. Flared tries again later.';
+		case 'rejected':
+			return 'The message was refused.';
 	}
 }
 

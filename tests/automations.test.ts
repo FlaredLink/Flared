@@ -783,6 +783,7 @@ describe('runs', () => {
 				automationId,
 				linkEventId: `evt_${linkId}_link`,
 				triggerEventId: `evt_${linkId}_trigger`,
+				messageEventId: `evt_${linkId}_message`,
 				runId: `run_${linkId}`
 			}));
 		const ran = await runAutomations(routing(), {

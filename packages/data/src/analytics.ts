@@ -297,6 +297,74 @@ export async function readLinkClickTotals(
 	return new Map(results.map((row) => [text(row.link_id, 'link'), count(row.clicks, 'clicks')]));
 }
 
+// One tenant's clicks over a period and the period before it, with its links of most clicks
+// in the period, most first. A link with no clicks in the period is left out.
+export interface TopLinks {
+	clicks: number;
+	previousClicks: number;
+	links: { linkId: string; clicks: number }[];
+}
+
+export const maxTopLinkTenants = 20;
+export const maxTopLinks = 10;
+
+const utcDay = /^\d{4}-\d{2}-\d{2}$/;
+
+// The period is the UTC days from `from` to `to`; the period before is from `previousFrom` up
+// to the day before `from`. One statement for up to maxTopLinkTenants tenants of this shard,
+// with at most limit links each. Every tenant asked for has an entry.
+export async function readTopLinks(
+	db: D1Database,
+	options: {
+		tenantIds: readonly string[];
+		from: string;
+		to: string;
+		previousFrom: string;
+		limit: number;
+	}
+): Promise<Map<string, TopLinks>> {
+	const { tenantIds, from, to, previousFrom, limit } = options;
+	if (tenantIds.length === 0) return new Map();
+	if (tenantIds.length > maxTopLinkTenants) throw new Error('Too many tenants');
+	if (!Number.isSafeInteger(limit) || limit < 1 || limit > maxTopLinks)
+		throw new Error('Invalid top link count');
+	if (
+		![from, to, previousFrom].every((day) => utcDay.test(day)) ||
+		!(previousFrom < from) ||
+		to < from
+	)
+		throw new Error('Invalid top link period');
+	const { results } = await db
+		.prepare(
+			`SELECT tenant_id, link_id, clicks, total, previous_total FROM (
+				SELECT tenant_id, link_id, clicks,
+					SUM(clicks) OVER (PARTITION BY tenant_id) AS total,
+					SUM(previous) OVER (PARTITION BY tenant_id) AS previous_total,
+					row_number() OVER (PARTITION BY tenant_id ORDER BY clicks DESC, link_id) AS n
+				FROM (SELECT tenant_id, link_id,
+						SUM(CASE WHEN day >= ?2 THEN clicks ELSE 0 END) AS clicks,
+						SUM(CASE WHEN day < ?2 THEN clicks ELSE 0 END) AS previous
+					FROM daily_totals
+					WHERE tenant_id IN (SELECT value FROM json_each(?1)) AND day >= ?4 AND day <= ?3
+					GROUP BY tenant_id, link_id))
+			WHERE n <= ?5 ORDER BY tenant_id, n`
+		)
+		.bind(JSON.stringify([...new Set(tenantIds)]), from, to, previousFrom, limit)
+		.all<Record<string, unknown>>();
+	const tops = new Map<string, TopLinks>(
+		tenantIds.map((tenantId) => [tenantId, { clicks: 0, previousClicks: 0, links: [] }])
+	);
+	for (const row of results) {
+		const top = tops.get(text(row.tenant_id, 'tenant'));
+		if (!top) throw new Error('Invalid top link tenant');
+		top.clicks = count(row.total, 'clicks');
+		top.previousClicks = count(row.previous_total, 'clicks');
+		const clicks = count(row.clicks, 'clicks');
+		if (clicks > 0) top.links.push({ linkId: text(row.link_id, 'link'), clicks });
+	}
+	return tops;
+}
+
 // One export page of a tenant's daily totals from a day on, in primary key order. after is the
 // last row of the previous page.
 export async function readExportTotals(

@@ -357,6 +357,44 @@ export async function readLink(
 	return row ? toLink(row) : null;
 }
 
+export interface LinkLabel {
+	id: string;
+	tenantId: string;
+	shortUrl: string;
+	title: string | null;
+}
+
+export const maxLinkLabels = 500;
+
+// The short link and title of each link asked for, across tenants, in one statement. A link the
+// tenant does not have is left out.
+export async function readLinkLabels(
+	db: D1Database,
+	items: readonly { tenantId: string; linkId: string }[]
+): Promise<LinkLabel[]> {
+	if (items.length === 0) return [];
+	if (items.length > maxLinkLabels) throw new Error('Too many links');
+	const { results } = await db
+		.prepare(
+			`SELECT l.id, l.tenant_id, 'https://' || n.hostname || '/' || l.slug AS short_url, l.title
+			FROM (SELECT json_extract(value, '$.tenantId') AS tenant_id, json_extract(value, '$.linkId') AS link_id
+				FROM json_each(?1)) AS j
+			JOIN links l ON l.id = j.link_id AND l.tenant_id = j.tenant_id
+			JOIN domain_namespaces n ON n.id = l.domain_id`
+		)
+		.bind(JSON.stringify(items.map(({ tenantId, linkId }) => ({ tenantId, linkId }))))
+		.all<Record<string, unknown>>();
+	return results.map((row) => {
+		if (row.title !== null && typeof row.title !== 'string') throw new Error('Invalid link title');
+		return {
+			id: text(row.id, 'link'),
+			tenantId: text(row.tenant_id, 'tenant'),
+			shortUrl: text(row.short_url, 'short URL'),
+			title: row.title
+		};
+	});
+}
+
 function escapeLike(value: string): string {
 	return value.replace(/[\\%_]/g, (character) => `\\${character}`);
 }

@@ -118,7 +118,7 @@ import {
 	type WebhookDeliveryRow,
 	type WebhookEndpointRow
 } from '@flared/data/webhooks';
-import { deliverWebhookEvent, deliverWebhooks } from './webhooks/deliver';
+import { deliverWebhookEvent, deliverWebhooks, type WebhookTransport } from './webhooks/deliver';
 import {
 	automationEndsAt,
 	newAutomationId,
@@ -129,6 +129,7 @@ import {
 	type ApplyAutomationLinkResult,
 	type ApplyAutomationLinksResult,
 	type ApplyLinkAutomationResult,
+	type AutomationAction,
 	type AutomationFeatures,
 	type AutomationRunPage,
 	type LinkAutomationPage
@@ -270,8 +271,9 @@ export interface ApiDependencies {
 	// Webhooks. Without them, the webhook routes answer 404 and changes only stage events.
 	webhooks?: WebhookSettings;
 	// Automations, with what this installation offers: without email, the email action is
-	// refused; without destination checks, the destination-down trigger is. Without them, the
-	// automation routes answer 404.
+	// refused; without destination checks, the destination-down trigger is; without messages
+	// (which needs webhooks.transports), post_message is. Without them, the automation routes
+	// answer 404.
 	automations?: AutomationFeatures;
 }
 
@@ -288,6 +290,9 @@ export interface WebhookSettings {
 	requestDeliveries?: number;
 	// Test events per workspace and hour.
 	testsPerHour?: number;
+	// The edition's senders for endpoints of other transports than http, by transport name. The
+	// webhook routes manage only http endpoints; the edition manages its own.
+	transports?: Readonly<Record<string, WebhookTransport>>;
 }
 
 // The limit that each plan-limit error stands for, for the limit_reached event.
@@ -487,6 +492,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 				secret: settings.secret,
 				reservedHostnames: webhookReserved,
 				fetch: settings.fetch,
+				transports: settings.transports,
 				now,
 				limit: settings.requestDeliveries
 			}).catch(() => console.error(JSON.stringify({ event: 'webhook_dispatch_failed', requestId })))
@@ -1581,6 +1587,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			secret: settings.secret,
 			reservedHostnames: webhookReserved,
 			fetch: settings.fetch,
+			transports: settings.transports,
 			now
 		});
 		const delivery = (await listEndpointDeliveries(routing, tenantId, endpointId)).find(
@@ -1619,6 +1626,18 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	const automationsOn: MiddlewareHandler<{ Variables: Variables }> = async (_context, next) => {
 		automationFeatures();
 		await next();
+	};
+
+	// send_webhook names an http endpoint of the workspace; post_message an endpoint of another
+	// transport, such as a channel the edition added.
+	const endpointMissing = (actions: readonly AutomationAction[]) => {
+		const kinds = new Set(actions.map((action) => action.type));
+		const message = kinds.has('post_message')
+			? kinds.has('send_webhook')
+				? 'Choose a webhook endpoint and a message target of this workspace.'
+				: 'Choose a message target of this workspace.'
+			: 'Choose a webhook endpoint of this workspace.';
+		return new LinkInputError('endpointId', message);
 	};
 
 	const automationLimitError = (limit: number) =>
@@ -1682,8 +1701,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		const result = await createAutomation(routing, { id, tenantId, ...input, now: now() });
 		if (result.status === 'no_workspace') throw new ApiError('NOT_FOUND', 'Workspace not found.');
 		if (result.status === 'limit') throw automationLimitError(result.limit);
-		if (result.status === 'endpoint_missing')
-			throw new LinkInputError('endpointId', 'Choose a webhook endpoint of this workspace.');
+		if (result.status === 'endpoint_missing') throw endpointMissing(input.actions);
 		console.log(JSON.stringify({ event: 'automation_created', requestId, automationId: id }));
 		return respond({
 			status: 201,
@@ -1705,8 +1723,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 				'trigger',
 				'The trigger type of an automation cannot change. Create another automation.'
 			);
-		if (result.status === 'endpoint_missing')
-			throw new LinkInputError('endpointId', 'Choose a webhook endpoint of this workspace.');
+		if (result.status === 'endpoint_missing') throw endpointMissing(change.actions ?? []);
 		return respond({
 			status: 200,
 			body: JSON.stringify({ automation: automationSummary(result.automation) })

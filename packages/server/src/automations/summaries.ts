@@ -28,7 +28,8 @@ export function automationSummary(row: AutomationRow): Automation {
 	};
 }
 
-// What this installation offers: email_owner needs email, destination_down needs checks.
+// What this installation offers: email_owner needs email, post_message needs messages,
+// destination_down needs checks.
 export function automationPage(
 	listed: { automations: AutomationRow[]; used: number; limit: number },
 	features: AutomationFeatures
@@ -37,7 +38,11 @@ export function automationPage(
 		automations: listed.automations.map(automationSummary),
 		used: listed.used,
 		limit: listed.limit,
-		actionTypes: automationActionTypes.filter((type) => type !== 'email_owner' || features.email),
+		actionTypes: automationActionTypes.filter(
+			(type) =>
+				(type !== 'email_owner' || features.email) &&
+				(type !== 'post_message' || features.messages === true)
+		),
 		triggerTypes: automationTriggerTypes.filter(
 			(type) => type !== 'destination_down' || features.destinationChecks
 		),

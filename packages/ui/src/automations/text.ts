@@ -16,6 +16,17 @@ export interface AutomationEndpoint {
 	url: string;
 }
 
+// A place the post-message action can post to. The edition names it, such as a channel; enabled
+// is false while the place is off.
+export interface AutomationMessageTarget {
+	id: string;
+	label: string;
+	enabled: boolean;
+}
+
+// The words for post_message when the edition gives none.
+export const defaultMessageLabel = 'Post a message';
+
 const numbers = new Intl.NumberFormat();
 
 export const triggerLabels: Record<AutomationTriggerType, { label: string; description: string }> =
@@ -42,6 +53,7 @@ export const actionLabels: Record<AutomationActionType, string> = {
 	change_destination: 'Change the destination',
 	disable_link: 'Turn off the link',
 	send_webhook: 'Send a webhook',
+	post_message: defaultMessageLabel,
 	email_owner: 'Email the workspace owner'
 };
 
@@ -50,6 +62,7 @@ export const ranLabels: Record<AutomationActionType, string> = {
 	change_destination: 'Changed the destination',
 	disable_link: 'Turned off the link',
 	send_webhook: 'Sent a webhook',
+	post_message: 'Posted a message',
 	email_owner: 'Emailed the owner'
 };
 
@@ -74,10 +87,16 @@ export function shortUrlText(url: string): string {
 	return url.replace(/^https?:\/\//, '').replace(/\/$/, '');
 }
 
-// A "Then" step of a template. endpoints is null when the viewer cannot see the endpoints.
+// A "Then" step of a template. endpoints is null when the viewer cannot see the endpoints. messages
+// gives the edition's label for post_message and its targets, or null targets when they are
+// unknown.
 export function actionText(
 	action: AutomationAction,
-	endpoints: readonly AutomationEndpoint[] | null
+	endpoints: readonly AutomationEndpoint[] | null,
+	messages: { label: string; targets: readonly AutomationMessageTarget[] | null } = {
+		label: defaultMessageLabel,
+		targets: null
+	}
 ): string {
 	switch (action.type) {
 		case 'change_destination':
@@ -91,6 +110,13 @@ export function actionText(
 				? `Send a webhook to ${endpointLabel(endpoint.url)}`
 				: 'Send a webhook to a deleted endpoint';
 		}
+		case 'post_message': {
+			if (messages.targets === null) return messages.label;
+			const target = messages.targets.find((item) => item.id === action.endpointId);
+			return target
+				? `${messages.label}: ${target.label}`
+				: `${messages.label}: the place to post was removed`;
+		}
 		case 'email_owner':
 			return 'Email the workspace owner';
 	}
@@ -103,6 +129,8 @@ export function resultText(result: AutomationResult): string {
 			return 'Flared blocked this link for abuse, so the destination did not change.';
 		case 'endpoint_missing':
 			return 'The webhook endpoint was deleted.';
+		case 'target_missing':
+			return 'The place to post the message was removed.';
 		case 'webhooks_off':
 			return 'Webhooks are off for this workspace.';
 		case 'plan':

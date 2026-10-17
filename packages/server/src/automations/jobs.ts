@@ -126,6 +126,7 @@ export async function runAutomationJob(
 					automationId,
 					linkEventId: newWebhookEventId(),
 					triggerEventId: newWebhookEventId(),
+					messageEventId: newWebhookEventId(),
 					runId: newAutomationRunId()
 				}))
 			});

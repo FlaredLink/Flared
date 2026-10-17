@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Automations: a template is one trigger, then up to four actions that run in a fixed order. A
+// Automations: a template is one trigger, then up to five actions that run in a fixed order. A
 // template applied to a link runs once when its trigger is met; applying it again re-arms it.
 import { isErrorCode, type ErrorCode } from './errors';
 import { ImportRequestError, LinkInputError, parseDestination } from './links';
@@ -18,11 +18,13 @@ export type AutomationTrigger =
 	| { type: 'clicks'; clicks: number }
 	| { type: 'destination_down' };
 
-// Also the order in which the actions run: the webhook reports the link after the change.
+// Also the order in which the actions run: the webhook and the message report the link after
+// the change. post_message posts through an endpoint of another transport than http.
 export const automationActionTypes = [
 	'change_destination',
 	'disable_link',
 	'send_webhook',
+	'post_message',
 	'email_owner'
 ] as const;
 export type AutomationActionType = (typeof automationActionTypes)[number];
@@ -31,6 +33,7 @@ export type AutomationAction =
 	| { type: 'change_destination'; destination: string }
 	| { type: 'disable_link' }
 	| { type: 'send_webhook'; endpointId: string }
+	| { type: 'post_message'; endpointId: string }
 	| { type: 'email_owner' };
 
 export const automationNameMaxLength = 80;
@@ -48,11 +51,13 @@ export const maxApplyLinks = 100;
 export const automationEndsAtRangeMs = 3653 * 86400000;
 export const maxAutomationIdLength = 128;
 
-// Why an application failed or was skipped. link_blocked, endpoint_missing, and webhooks_off come
-// from a run; plan, off, and attempts from the scheduler; not_checkable from a destination check.
+// Why an application failed or was skipped. link_blocked, endpoint_missing, target_missing, and
+// webhooks_off come from a run; plan, off, and attempts from the scheduler; not_checkable from a
+// destination check. target_missing: the endpoint of post_message is gone.
 export const automationResults = [
 	'link_blocked',
 	'endpoint_missing',
+	'target_missing',
 	'webhooks_off',
 	'plan',
 	'off',
@@ -77,7 +82,8 @@ export interface AutomationPage {
 	automations: Automation[];
 	used: number;
 	limit: number;
-	// What this installation offers: email_owner needs email, destination_down needs checks.
+	// What this installation offers: email_owner needs email, post_message needs messages,
+	// destination_down needs checks.
 	actionTypes: AutomationActionType[];
 	triggerTypes: AutomationTriggerType[];
 	perLinkLimit: typeof automationsPerLink;
@@ -168,10 +174,12 @@ export interface UpdateAutomationInput {
 }
 
 // What the installation can do: without email, email_owner is refused; without destination
-// checks, destination_down is refused.
+// checks, destination_down is refused; without messages (absent counts as false), post_message is
+// refused. messages needs an edition sender for another transport than http.
 export interface AutomationFeatures {
 	email: boolean;
 	destinationChecks: boolean;
+	messages?: boolean;
 }
 
 export function newAutomationId(): string {
@@ -212,7 +220,8 @@ function isTrigger(value: unknown): value is AutomationTrigger {
 function isAction(value: unknown): value is AutomationAction {
 	if (!isRecord(value)) return false;
 	if (value.type === 'change_destination') return typeof value.destination === 'string';
-	if (value.type === 'send_webhook') return typeof value.endpointId === 'string';
+	if (value.type === 'send_webhook' || value.type === 'post_message')
+		return typeof value.endpointId === 'string';
 	return value.type === 'disable_link' || value.type === 'email_owner';
 }
 
@@ -410,6 +419,11 @@ function parseAction(value: unknown, features: AutomationFeatures): AutomationAc
 		case 'send_webhook':
 			onlyFields(body, ['type', 'endpointId']);
 			return { type: 'send_webhook', endpointId: parseAutomationId(body.endpointId, 'endpointId') };
+		case 'post_message':
+			onlyFields(body, ['type', 'endpointId']);
+			if (features.messages !== true)
+				throw new LinkInputError('actions', 'This installation does not post messages.');
+			return { type: 'post_message', endpointId: parseAutomationId(body.endpointId, 'endpointId') };
 		case 'email_owner':
 			onlyFields(body, ['type']);
 			if (!features.email)
@@ -421,7 +435,7 @@ function parseAction(value: unknown, features: AutomationFeatures): AutomationAc
 	}
 }
 
-// One to four actions, each kind at most once, returned in the order they run.
+// One to five actions, each kind at most once, returned in the order they run.
 function parseActions(value: unknown, features: AutomationFeatures): AutomationAction[] {
 	if (!Array.isArray(value) || value.length === 0)
 		throw new LinkInputError('actions', 'Choose at least one action.');
