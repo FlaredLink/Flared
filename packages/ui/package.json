@@ -56,6 +56,20 @@
 			"svelte": "./src/webhooks/WebhookList.svelte"
 		},
 		"./webhooks/client": "./src/webhooks/client.ts",
+		"./automations/AutomationList.svelte": {
+			"types": "./src/automations/AutomationList.svelte",
+			"svelte": "./src/automations/AutomationList.svelte"
+		},
+		"./automations/ApplyAutomationDialog.svelte": {
+			"types": "./src/automations/ApplyAutomationDialog.svelte",
+			"svelte": "./src/automations/ApplyAutomationDialog.svelte"
+		},
+		"./automations/LinkAutomations.svelte": {
+			"types": "./src/automations/LinkAutomations.svelte",
+			"svelte": "./src/automations/LinkAutomations.svelte"
+		},
+		"./automations/client": "./src/automations/client.ts",
+		"./automations/text": "./src/automations/text.ts",
 		"./account/DeleteAccount.svelte": {
 			"types": "./src/account/DeleteAccount.svelte",
 			"svelte": "./src/account/DeleteAccount.svelte"

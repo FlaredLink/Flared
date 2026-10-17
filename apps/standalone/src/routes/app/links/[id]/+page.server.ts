@@ -1,18 +1,35 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { error, fail, redirect } from '@sveltejs/kit';
 import { oldestRetainedDay, utcDay, type LinkAnalytics } from '@flared/contracts/analytics';
+import type { AutomationPage } from '@flared/contracts/automations';
 import type { Link } from '@flared/contracts/links';
 import {
+	fetchAutomations,
 	fetchLink,
 	fetchLinkAnalytics,
 	linkChangeOf,
 	updateLink,
 	type ApiFailure
 } from '@flared/server/web/api';
+import type { AuthService } from '@flared/server/web';
 import { appRoutes } from '$lib/routes';
 import type { Actions, PageServerLoad } from './$types';
 
 type AnalyticsState = { status: 'ready'; analytics: LinkAnalytics } | { status: 'unavailable' };
+
+// The templates to apply. Without them, the page still lists the link's automations.
+async function loadAutomations(
+	service: AuthService,
+	headers: Headers
+): Promise<AutomationPage | null> {
+	try {
+		const result = await fetchAutomations(service, headers);
+		return result.ok ? result.page : null;
+	} catch {
+		console.error(JSON.stringify({ event: 'automations_unavailable' }));
+		return null;
+	}
+}
 
 export const load: PageServerLoad = async ({ parent, platform, request, params, url }) => {
 	const { auth } = await parent();
@@ -24,10 +41,12 @@ export const load: PageServerLoad = async ({ parent, platform, request, params, 
 	const range = { from: oldestRetainedDay(now, days), to: utcDay(now) };
 	let link: Link;
 	let analytics: AnalyticsState;
+	let automations: AutomationPage | null;
 	try {
-		const [linkResult, analyticsResult] = await Promise.all([
+		const [linkResult, analyticsResult, automationPage] = await Promise.all([
 			fetchLink(service, request.headers, params.id),
-			fetchLinkAnalytics(service, request.headers, params.id, range)
+			fetchLinkAnalytics(service, request.headers, params.id, range),
+			loadAutomations(service, request.headers)
 		]);
 		if (!linkResult.ok) {
 			if (linkResult.failure.status === 404) error(404, 'Link not found.');
@@ -37,12 +56,13 @@ export const load: PageServerLoad = async ({ parent, platform, request, params, 
 		analytics = analyticsResult.ok
 			? { status: 'ready', analytics: analyticsResult.analytics }
 			: { status: 'unavailable' };
+		automations = automationPage;
 	} catch (cause) {
 		if (cause && typeof cause === 'object' && 'status' in cause) throw cause;
 		console.error(JSON.stringify({ event: 'link_analytics_unavailable' }));
 		error(503, 'This link is not available. Try again.');
 	}
-	return { link, analytics, days };
+	return { link, analytics, automations, days };
 };
 
 export const actions: Actions = {

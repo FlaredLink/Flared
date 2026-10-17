@@ -276,6 +276,27 @@ export async function readLinkDailyClicks(
 	return links;
 }
 
+// Counted clicks of each of up to 100 links of one tenant, as the milestones count them: the
+// running total, or the retained daily totals of a link without one yet.
+export async function readLinkClickTotals(
+	db: D1Database,
+	tenantId: string,
+	linkIds: string[]
+): Promise<Map<string, number>> {
+	if (linkIds.length === 0) return new Map();
+	if (linkIds.length > 100) throw new Error('Too many links');
+	const { results } = await db
+		.prepare(
+			`SELECT j.value AS link_id, COALESCE(
+				(SELECT clicks FROM link_click_totals WHERE tenant_id = ?1 AND link_id = j.value),
+				(SELECT SUM(clicks) FROM daily_totals WHERE tenant_id = ?1 AND link_id = j.value), 0) AS clicks
+			FROM json_each(?2) j`
+		)
+		.bind(tenantId, JSON.stringify(linkIds))
+		.all<Record<string, unknown>>();
+	return new Map(results.map((row) => [text(row.link_id, 'link'), count(row.clicks, 'clicks')]));
+}
+
 // One export page of a tenant's daily totals from a day on, in primary key order. after is the
 // last row of the previous page.
 export async function readExportTotals(

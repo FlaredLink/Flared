@@ -9,6 +9,7 @@ import { deleteExpiredOAuthRecords } from '@flared/data/oauth';
 import { purgeOperations } from '@flared/data/operations';
 import { deleteExpiredApiTokens } from '@flared/data/tokens';
 import { cleanupOwnerAuthRecords } from '@flared/server/auth/attempts';
+import { cleanupAutomations, runAutomationJob } from '@flared/server/automations';
 import { cleanupDeletions, runDeletions, type DeletionDependencies } from '@flared/server/deletion';
 import { createJobLedger } from '@flared/server/jobs';
 import {
@@ -32,6 +33,7 @@ const frequentJobs = [
 	'click_notices',
 	'shard_samples',
 	'domain_checks',
+	'automations',
 	'webhook_deliveries'
 ] as const;
 const dailyJobs = [
@@ -42,7 +44,8 @@ const dailyJobs = [
 	'deletion_cleanup',
 	'operations_purge',
 	'update_check',
-	'webhook_cleanup'
+	'webhook_cleanup',
+	'automation_cleanup'
 ] as const;
 type JobName = (typeof frequentJobs)[number] | (typeof dailyJobs)[number];
 
@@ -99,23 +102,50 @@ async function sampleShards(config: JobConfig, scheduledTime: number): Promise<v
 	if (measured.some((shard) => shard.sample === null)) throw new Error('Shard sampling failed');
 }
 
-// Each check is one fetch and a few queries; the bound keeps the run inside the Free plan's
-// per-invocation limits together with the other frequent jobs.
-async function checkDomains(config: JobConfig, now: number): Promise<void> {
+// The 10-minute runs take turns, so that one run stays inside the 50 subrequests and 50 D1
+// queries that Workers Free allows for each invocation: with k = the scheduled UTC minute / 10,
+// domain checks run when k is even (:00, :20, :40) and automations when k is odd (:10, :30, :50).
+// A job outside its turn returns at once and still records a successful run. Measured worst
+// cases (tests/worker.test.ts), with a pending policy projection and 30 due deliveries:
+// - even turn, on the hour, 5 waiting domains, milestones waiting: 45 queries, 28 fetches;
+// - odd turn, 25 due automations with every action, milestones waiting: 42 queries, 25 fetches.
+function automationTurn(scheduledTime: number): boolean {
+	return Math.floor(new Date(scheduledTime).getUTCMinutes() / 10) % 2 === 1;
+}
+
+// Each check is one fetch and 3 queries; 3 checks are 11 queries with the ledger and 3 fetches.
+// 5 checks would take the even turn's worst case to 51 queries.
+async function checkDomains(config: JobConfig, scheduledTime: number, now: number): Promise<void> {
+	if (automationTurn(scheduledTime)) return;
 	const result = await checkWaitingDomains({
 		routing: config.routing,
 		provider: createWorkerDomainProvider({ routing: config.routing, now: () => now }),
-		limit: 5,
+		limit: 3,
 		now: () => now
 	});
 	if (result.failed > 0) throw new Error('Domain checks failed');
 }
 
-// Click milestones, events that a request left, and retries. 25 deliveries, 5 at once, keep
-// the frequent run inside the Free plan's 50 subrequests and 50 D1 queries together with the
-// other frequent jobs. A receiver's failure is recorded with its delivery; it does not fail
-// the job.
-async function deliverWebhooks(config: JobConfig, now: number): Promise<void> {
+// Click milestones, then 25 due applications at most: 14 queries with the ledger and no fetch.
+// The events that the runs stage go out with the webhook job in the same invocation.
+function runAutomations(config: JobConfig, now: number): Promise<void> {
+	return runAutomationJob(
+		{ identity: config.identity, routing: config.routing, analytics: config.shards },
+		{ email: false, maxApplications: 25, now: () => now }
+	).then(() => undefined);
+}
+
+// Events that a request or an automation left, and retries; in a domain-check turn, click
+// milestones too. 25 deliveries, 5 at once: 25 fetches, and 12 queries with the ledger, or 8 in
+// an automation turn. There the job waits for the automation run, so the events that it staged go
+// out in the same run, and the automation job has moved the milestones. A receiver's failure is
+// recorded with its delivery; it does not fail the job.
+async function deliverWebhooks(
+	config: JobConfig,
+	now: number,
+	automations: Promise<void> | null
+): Promise<void> {
+	if (automations) await automations.catch(() => {});
 	await runWebhookJob(
 		{ routing: config.routing, analytics: config.shards },
 		{
@@ -123,7 +153,8 @@ async function deliverWebhooks(config: JobConfig, now: number): Promise<void> {
 			reservedHostnames: reservedHostnames(config),
 			now: () => now,
 			maxDeliveries: 25,
-			concurrency: 5
+			concurrency: 5,
+			transferMilestones: automations === null
 		}
 	);
 }
@@ -167,6 +198,9 @@ export async function runScheduled(
 	const now = Date.now();
 	const run = (list: [JobName, () => Promise<void>][]) =>
 		Promise.allSettled(list.map(([job, task]) => jobs.trackJob(config.identity, job, task)));
+	// Started once, so the webhook job can wait for it; null outside the automation turn.
+	const automations =
+		cron === frequentCron && automationTurn(scheduledTime) ? runAutomations(config, now) : null;
 	const results =
 		cron === frequentCron
 			? await run([
@@ -174,8 +208,9 @@ export async function runScheduled(
 					['account_deletions', () => runAccountDeletions(config)],
 					['click_notices', () => recordClickNotices(config, now)],
 					['shard_samples', () => sampleShards(config, scheduledTime)],
-					['domain_checks', () => checkDomains(config, now)],
-					['webhook_deliveries', () => deliverWebhooks(config, now)]
+					['domain_checks', () => checkDomains(config, scheduledTime, now)],
+					['automations', async () => void (await automations)],
+					['webhook_deliveries', () => deliverWebhooks(config, now, automations)]
 				])
 			: await run([
 					['auth_cleanup', () => cleanupAuth(config, now)],
@@ -186,7 +221,8 @@ export async function runScheduled(
 					['operations_purge', () => purgeOperationRecords(config, now)],
 					// Off unless the owner turned it on; a failed fetch is recorded, not thrown.
 					['update_check', async () => void (await checkForUpdates(config.identity, feed, now))],
-					['webhook_cleanup', async () => void (await cleanupWebhooks(config.routing, now))]
+					['webhook_cleanup', async () => void (await cleanupWebhooks(config.routing, now))],
+					['automation_cleanup', async () => void (await cleanupAutomations(config.routing, now))]
 				]);
 	for (const result of results) if (result.status === 'rejected') throw result.reason;
 }

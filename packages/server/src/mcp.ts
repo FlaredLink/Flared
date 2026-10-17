@@ -15,6 +15,12 @@ import {
 	type Domain
 } from '@flared/contracts/domains';
 import {
+	automationActionTypes,
+	automationResults,
+	maxApplyLinks,
+	maxAutomationIdLength
+} from '@flared/contracts/automations';
+import {
 	blockReasons,
 	LinkInputError,
 	maxUtmLength,
@@ -98,11 +104,14 @@ const toolScopes: Record<string, TokenScope> = {
 	get_usage: 'usage:read',
 	list_domains: 'domains:read',
 	export_links: 'links:read',
+	list_automations: 'links:read',
 	create_link: 'links:write',
 	import_links: 'links:write',
 	update_link: 'links:write',
 	disable_link: 'links:write',
-	enable_link: 'links:write'
+	enable_link: 'links:write',
+	apply_automation: 'links:write',
+	remove_automation: 'links:write'
 };
 
 const deviceDestination = (os: string, extra = '') =>
@@ -219,6 +228,37 @@ function exportedLink(link: Link): ExportedLinkOutput {
 		}
 	};
 }
+
+const triggerOutput = z.looseObject({
+	type: z.string(),
+	days: z.number().optional(),
+	clicks: z.number().optional()
+});
+const automationOutput = z.looseObject({
+	id: z.string(),
+	name: z.string(),
+	enabled: z.boolean(),
+	trigger: triggerOutput,
+	actions: z.array(z.looseObject({ type: z.enum(automationActionTypes) })),
+	links: z.number()
+});
+const linkAutomationOutput = z.looseObject({
+	automationId: z.string(),
+	name: z.string(),
+	enabled: z.boolean(),
+	trigger: triggerOutput,
+	state: z.enum(['waiting', 'done', 'failed', 'skipped']),
+	endsAt: z.string().nullable(),
+	dueAt: z.string().nullable(),
+	firedAt: z.string().nullable(),
+	result: z.enum(automationResults).nullable(),
+	appliedAt: z.string()
+});
+const automationId = z
+	.string()
+	.min(1)
+	.max(maxAutomationIdLength)
+	.describe('An automation ID from list_automations.');
 
 const domainOutput = z.looseObject({
 	hostname: z.string(),
@@ -642,6 +682,43 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 	);
 
 	server.registerTool(
+		'list_automations',
+		{
+			title: 'List automations',
+			description:
+				"Lists the workspace's automation templates (a trigger, then actions) and how many links each is on. With link, lists the templates applied to that link with their state: waiting, done, failed, or skipped.",
+			inputSchema: z.object({
+				link: z.string().min(1).max(100).optional().describe('A link ID or slug.')
+			}),
+			outputSchema: z.looseObject({
+				automations: z.array(z.union([automationOutput, linkAutomationOutput])),
+				used: z.number().optional(),
+				limit: z.number().optional(),
+				link: z.looseObject({ id: z.string(), shortUrl: z.string() }).optional()
+			}),
+			annotations: {
+				title: 'List automations',
+				readOnlyHint: true,
+				destructiveHint: false,
+				openWorldHint: false
+			}
+		},
+		({ link }) =>
+			attempt(async () => {
+				if (link === undefined) {
+					const page = await client.listAutomations();
+					return { automations: page.automations, used: page.used, limit: page.limit };
+				}
+				const found = await findLink(link);
+				const page = await client.listLinkAutomations(found.id);
+				return {
+					link: { id: found.id, shortUrl: found.shortUrl },
+					automations: page.automations
+				};
+			})
+	);
+
+	server.registerTool(
 		'create_link',
 		{
 			title: 'Create a link',
@@ -802,6 +879,91 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 					return { link: linkResult(await client.updateLink(found.id, { enabled })) };
 				})
 		);
+
+	server.registerTool(
+		'apply_automation',
+		{
+			title: 'Apply an automation',
+			description:
+				'Applies an automation template to links. Each applied template runs once when its trigger is met; applying again re-arms one that already ran. A link keeps up to 5. Templates are created by the workspace owner in the Flared app.',
+			inputSchema: z.object({
+				automationId,
+				linkIds: z
+					.array(z.string().min(1).max(maxAutomationIdLength))
+					.min(1)
+					.max(maxApplyLinks)
+					.describe('Link IDs from list_links or get_link.'),
+				endsAt: z
+					.string()
+					.max(40)
+					.optional()
+					.describe(
+						'For an end date template only, and required by it: when it runs, in ISO 8601 with an offset, such as 2026-11-01T09:00:00Z.'
+					)
+			}),
+			outputSchema: z.looseObject({
+				results: z.array(
+					z.looseObject({
+						linkId: z.string(),
+						status: z.enum(['applied', 'unchanged', 'failed']),
+						error: z.looseObject({ code: z.string(), message: z.string() }).optional()
+					})
+				)
+			}),
+			annotations: {
+				title: 'Apply an automation',
+				readOnlyHint: false,
+				destructiveHint: true,
+				idempotentHint: true,
+				openWorldHint: true
+			}
+		},
+		({ automationId, linkIds, endsAt }) =>
+			attempt(async () => {
+				const { results } = await client.applyAutomation(automationId, linkIds, endsAt);
+				return {
+					results: results.map(({ linkId, status, error }) => ({
+						linkId,
+						status,
+						...(error ? { error: { code: error.code, message: error.message } } : {})
+					}))
+				};
+			})
+	);
+
+	server.registerTool(
+		'remove_automation',
+		{
+			title: 'Remove an automation',
+			description:
+				'Takes an automation template off a link, by link ID or slug, so it does not run there. The template stays in the workspace.',
+			inputSchema: z.object({
+				automationId,
+				link: z.string().min(1).max(100).describe('The link ID or slug.')
+			}),
+			outputSchema: z.looseObject({ removed: z.boolean() }),
+			annotations: {
+				title: 'Remove an automation',
+				readOnlyHint: false,
+				destructiveHint: true,
+				idempotentHint: true,
+				openWorldHint: false
+			}
+		},
+		({ automationId, link }) =>
+			attempt(async () => {
+				const found = await findLink(link);
+				try {
+					await client.removeLinkAutomation(found.id, automationId);
+					return { removed: true };
+				} catch (error) {
+					// Already off the link: the call is done either way.
+					if (error instanceof FlaredApiError && error.code === 'NOT_FOUND')
+						return { removed: false };
+					throw error;
+				}
+			})
+	);
 
 	return server;
 }

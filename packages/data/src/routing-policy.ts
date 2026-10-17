@@ -9,19 +9,21 @@ export interface RoutingPolicy {
 	activeLinkLimit: number;
 	domainLimit: number;
 	webhookEndpointLimit: number;
+	automationLimit: number;
 	// Set while the operator suspends the tenant; its links then do not redirect.
 	suspendedAt: number | null;
 	now: number;
 }
 
-// A row at the same revision is replaced only while its webhook endpoint limit is NULL: it was
-// projected before routing stored that limit, and no migration takes a new revision for it.
+// A row at the same revision is replaced only while its webhook endpoint limit or automation limit
+// is NULL: it was projected before routing stored that limit, and no migration takes a new
+// revision for it.
 export async function applyRoutingPolicy(db: D1Database, policy: RoutingPolicy): Promise<void> {
 	await db
 		.prepare(
-			`INSERT INTO tenant_policy (tenant_id, revision, analytics_shard_id, active_link_limit, domain_limit, webhook_endpoint_limit, suspended_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(tenant_id) DO UPDATE SET revision = excluded.revision, analytics_shard_id = excluded.analytics_shard_id, active_link_limit = excluded.active_link_limit, domain_limit = excluded.domain_limit, webhook_endpoint_limit = excluded.webhook_endpoint_limit, suspended_at = excluded.suspended_at, updated_at = excluded.updated_at
-			WHERE excluded.revision > tenant_policy.revision OR (excluded.revision = tenant_policy.revision AND tenant_policy.webhook_endpoint_limit IS NULL)`
+			`INSERT INTO tenant_policy (tenant_id, revision, analytics_shard_id, active_link_limit, domain_limit, webhook_endpoint_limit, automation_limit, suspended_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(tenant_id) DO UPDATE SET revision = excluded.revision, analytics_shard_id = excluded.analytics_shard_id, active_link_limit = excluded.active_link_limit, domain_limit = excluded.domain_limit, webhook_endpoint_limit = excluded.webhook_endpoint_limit, automation_limit = excluded.automation_limit, suspended_at = excluded.suspended_at, updated_at = excluded.updated_at
+			WHERE excluded.revision > tenant_policy.revision OR (excluded.revision = tenant_policy.revision AND (tenant_policy.webhook_endpoint_limit IS NULL OR tenant_policy.automation_limit IS NULL))`
 		)
 		.bind(
 			policy.tenantId,
@@ -30,22 +32,21 @@ export async function applyRoutingPolicy(db: D1Database, policy: RoutingPolicy):
 			policy.activeLinkLimit,
 			policy.domainLimit,
 			policy.webhookEndpointLimit,
+			policy.automationLimit,
 			policy.suspendedAt,
 			policy.now
 		)
 		.run();
 }
 
-// Tenants whose routing row has no webhook endpoint limit yet, for the scheduled heal.
-export async function listUnprojectedWebhookLimits(
-	db: D1Database,
-	limit: number
-): Promise<string[]> {
+// Tenants whose routing row lacks a limit that a later version added (the webhook endpoint limit
+// or the automation limit), for the scheduled heal.
+export async function listUnprojectedLimits(db: D1Database, limit: number): Promise<string[]> {
 	if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
 		throw new Error('Invalid projection batch size');
 	const { results } = await db
 		.prepare(
-			'SELECT tenant_id FROM tenant_policy WHERE webhook_endpoint_limit IS NULL ORDER BY tenant_id LIMIT ?'
+			'SELECT tenant_id FROM tenant_policy WHERE webhook_endpoint_limit IS NULL OR automation_limit IS NULL ORDER BY tenant_id LIMIT ?'
 		)
 		.bind(limit)
 		.all<{ tenant_id: unknown }>();

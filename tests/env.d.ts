@@ -76,6 +76,9 @@ declare namespace Cloudflare {
 		WEBHOOK_DELIVERY_IDENTITY: D1Database;
 		WEBHOOK_DELIVERY_ROUTING: D1Database;
 		WEBHOOK_DELIVERY_ANALYTICS: D1Database;
+		AUTOMATIONS_IDENTITY: D1Database;
+		AUTOMATIONS_ROUTING: D1Database;
+		AUTOMATIONS_ANALYTICS: D1Database;
 		IDENTITY_MIGRATIONS: import('cloudflare:test').D1Migration[];
 		ROUTING_MIGRATIONS: import('cloudflare:test').D1Migration[];
 		ANALYTICS_MIGRATIONS: import('cloudflare:test').D1Migration[];

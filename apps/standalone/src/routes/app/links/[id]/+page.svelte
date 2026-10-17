@@ -5,6 +5,7 @@
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
 	import LinkAnalytics from '@flared/ui/analytics/LinkAnalytics.svelte';
+	import LinkAutomations from '@flared/ui/automations/LinkAutomations.svelte';
 	import LinkEditForm from '@flared/ui/links/LinkEditForm.svelte';
 	import LinkHeader from '@flared/ui/links/LinkHeader.svelte';
 	import { linkErrorMessage } from '@flared/ui/links/messages';
@@ -119,4 +120,33 @@
 			<p>Refresh the page to try again. The link still redirects.</p>
 		</Callout>
 	{/if}
+
+	<section class="automations" aria-labelledby="link-automations-heading">
+		<LinkAutomations
+			linkId={data.link.id}
+			apiBase="/api/v1"
+			automations={data.automations?.automations ?? []}
+			canApply={!data.link.blocked && (data.automations?.limit ?? 0) > 0}
+			automationsHref={appRoutes.automations}
+			headingLevel={2}
+		/>
+		{#if !data.automations}
+			<p class="error" role="alert">
+				We couldn’t load the automation templates. Refresh the page to apply one.
+			</p>
+		{/if}
+	</section>
 </SplitView>
+
+<style>
+	.automations {
+		margin-top: 2rem;
+		padding-top: 1.5rem;
+		border-top: var(--rule);
+	}
+	.error {
+		margin-top: 0.75rem;
+		color: var(--color-danger);
+		font-size: 0.875rem;
+	}
+</style>

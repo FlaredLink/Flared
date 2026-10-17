@@ -278,15 +278,32 @@ export async function deleteRoutingPolicy(db: D1Database, tenantId: string): Pro
 	await db.prepare('DELETE FROM tenant_policy WHERE tenant_id = ?').bind(tenantId).run();
 }
 
-// Deletes up to limit links and the tenant's request records. Slug reservations, hostname
-// namespaces, and disabled domain rows stay, so no address can be reused. Returns the rows
-// deleted; 0 means nothing is left.
+// Deletes up to limit links, automation records, and the tenant's request records. Slug
+// reservations, hostname namespaces, and disabled domain rows stay, so no address can be reused.
+// Returns the rows deleted; 0 means nothing is left.
 export async function deleteRoutingData(
 	db: D1Database,
 	tenantId: string,
 	limit: number
 ): Promise<number> {
 	const results = await db.batch([
+		// Applications, then run records, then templates with no application left, so the
+		// template cascade deletes nothing past limit.
+		db
+			.prepare(
+				'DELETE FROM link_automations WHERE rowid IN (SELECT rowid FROM link_automations WHERE tenant_id = ? LIMIT ?)'
+			)
+			.bind(tenantId, limit),
+		db
+			.prepare(
+				'DELETE FROM automation_runs WHERE id IN (SELECT id FROM automation_runs WHERE tenant_id = ? LIMIT ?)'
+			)
+			.bind(tenantId, limit),
+		db
+			.prepare(
+				'DELETE FROM automations WHERE id IN (SELECT a.id FROM automations a WHERE a.tenant_id = ? AND NOT EXISTS (SELECT 1 FROM link_automations x WHERE x.automation_id = a.id) LIMIT ?)'
+			)
+			.bind(tenantId, limit),
 		db
 			.prepare('DELETE FROM links WHERE id IN (SELECT id FROM links WHERE tenant_id = ? LIMIT ?)')
 			.bind(tenantId, limit),

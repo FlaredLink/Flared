@@ -10,8 +10,9 @@ The owner changes the workspace limits in **Settings → Limits and usage**. A c
 | Own domains | 5 | 0 to 50 |
 | People, open invites included | 10 | 1 to 100 |
 | Webhook endpoints | 10 | 0 to 50 |
+| Automations | 25 | 0 to 100 |
 
-Members can read the limits; only the owner changes them. An installation set up before members existed starts with 2 people. A lower limit never stops existing links, domains, members, or webhook endpoints; it blocks new ones. A webhook endpoint limit of 0 turns webhooks off; see [webhooks.md](webhooks.md). A click past the monthly limit still redirects, but it is not recorded.
+Members can read the limits; only the owner changes them. An installation set up before members existed starts with 2 people. A lower limit never stops existing links, domains, members, webhook endpoints, or automations; it blocks new ones. A webhook endpoint limit of 0 turns webhooks off; see [webhooks.md](webhooks.md). An automation limit of 0 turns automations off; see [automations.md](automations.md). A click past the monthly limit still redirects, but it is not recorded.
 
 The first values fit the daily allowances of Workers Free: 50,000 recorded clicks a month is about 1,700 a day. Higher limits use more D1 rows, D1 storage, and Queue operations; on Workers Free they can reach a daily limit, and on Workers Paid Cloudflare bills past the included amounts. Settings shows the size of the analytics database. One D1 database holds up to 500 MB on Workers Free and 10 GB on Workers Paid. See [Workers Free or Workers Paid](deploy.md#workers-free-or-workers-paid).
 

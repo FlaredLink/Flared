@@ -5,7 +5,7 @@ export const errorStatus = {
 	INVALID_INPUT: 422,
 	// A bulk import request is not an object with dryRun and a non-empty items list.
 	INVALID_IMPORT: 400,
-	// A bulk import request has more items than one request takes; split it.
+	// A bulk import or bulk automation request has more items than one request takes; split it.
 	TOO_MANY_ITEMS: 400,
 	IDEMPOTENCY_KEY_REQUIRED: 422,
 	IDEMPOTENCY_KEY_REUSED: 409,
@@ -37,6 +37,10 @@ export const errorStatus = {
 	MEMBER_LIMIT_REACHED: 403,
 	// The workspace keeps as many webhook endpoints as its limit allows.
 	WEBHOOK_LIMIT_REACHED: 403,
+	// The workspace keeps as many automations as its limit allows; at 0, automations are off.
+	AUTOMATION_LIMIT_REACHED: 403,
+	// The link already has as many automations applied as one link takes.
+	LINK_AUTOMATION_LIMIT_REACHED: 403,
 	ALREADY_MEMBER: 409,
 	// The address already has an open invite to the workspace.
 	INVITE_PENDING: 409,

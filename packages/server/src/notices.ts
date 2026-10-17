@@ -127,7 +127,8 @@ export async function reconcileLimitNotices(
 	return { recorded };
 }
 
-function escape(value: string): string {
+// For text in an email's HTML part.
+export function escape(value: string): string {
 	return value
 		.replaceAll('&', '&amp;')
 		.replaceAll('<', '&lt;')

@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fail, redirect } from '@sveltejs/kit';
+import type { AutomationPage } from '@flared/contracts/automations';
 import type { Domain } from '@flared/contracts/domains';
 import type { ListedLink } from '@flared/contracts/links';
-import { createLink, fetchDomains, fetchLinks, type ApiFailure } from '@flared/server/web/api';
+import {
+	createLink,
+	fetchAutomations,
+	fetchDomains,
+	fetchLinks,
+	type ApiFailure
+} from '@flared/server/web/api';
 import { appRoutes } from '$lib/routes';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -26,6 +33,22 @@ async function loadActiveDomains(
 	} catch {
 		console.error(JSON.stringify({ event: 'domains_unavailable' }));
 		return [];
+	}
+}
+
+// The templates for the bulk action. Without them, the list offers no selection.
+async function loadAutomations(
+	platform: App.Platform | undefined,
+	headers: Headers
+): Promise<AutomationPage | null> {
+	const service = platform?.env.API_SERVICE;
+	if (!service) return null;
+	try {
+		const result = await fetchAutomations(service, headers);
+		return result.ok ? result.page : null;
+	} catch {
+		console.error(JSON.stringify({ event: 'automations_unavailable' }));
+		return null;
 	}
 }
 
@@ -54,14 +77,15 @@ export const load: PageServerLoad = async ({ parent, platform, request, url }) =
 	const { auth } = await parent();
 	if (auth.status === 'anonymous') redirect(303, appRoutes.login);
 	const ready = auth.status === 'authenticated';
-	const [links, domains] = ready
+	const [links, domains, automations] = ready
 		? await Promise.all([
 				loadLinks(platform, request.headers, url.searchParams.get('cursor')),
-				loadActiveDomains(platform, request.headers)
+				loadActiveDomains(platform, request.headers),
+				loadAutomations(platform, request.headers)
 			])
-		: [{ status: 'unavailable' } as const, []];
+		: [{ status: 'unavailable' } as const, [], null];
 	// A fresh key per page view: a double submit reuses it, a new link after success does not.
-	return { links, domains, idempotencyKey: crypto.randomUUID() };
+	return { links, domains, automations, idempotencyKey: crypto.randomUUID() };
 };
 
 export const actions: Actions = {

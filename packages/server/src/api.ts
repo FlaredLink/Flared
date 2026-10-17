@@ -119,6 +119,39 @@ import {
 	type WebhookEndpointRow
 } from '@flared/data/webhooks';
 import { deliverWebhookEvent, deliverWebhooks } from './webhooks/deliver';
+import {
+	automationEndsAt,
+	newAutomationId,
+	parseApplyAutomation,
+	parseApplyAutomationLinks,
+	parseCreateAutomation,
+	parseUpdateAutomation,
+	type ApplyAutomationLinkResult,
+	type ApplyAutomationLinksResult,
+	type ApplyLinkAutomationResult,
+	type AutomationFeatures,
+	type AutomationRunPage,
+	type LinkAutomationPage
+} from '@flared/contracts/automations';
+import {
+	createAutomation,
+	deleteAutomation,
+	listAutomationRuns,
+	listAutomations,
+	listLinkAutomations,
+	readAutomation,
+	removeLinkAutomation,
+	updateAutomation,
+	type ApplyLinkOutcome,
+	type ApplyResult
+} from '@flared/data/automations';
+import { applyToLinks } from './automations/apply';
+import {
+	automationPage,
+	automationSummary,
+	linkAutomationSummary,
+	runSummary
+} from './automations/summaries';
 import { endpointSecret, keyId } from './webhooks/signing';
 import { iconHeaders, resolveIcon, type Fetcher, type IconStore } from './icons';
 import {
@@ -210,6 +243,8 @@ export interface ApiDependencies {
 	// stored-result read of a replay), and the 7 of a webhook delivery in the background, which
 	// counts against the same invocation. Measured with 3 items over MCP: 40 created plus 7 for
 	// the delivery, 45 replayed (no delivery). On Workers Paid (1,000) a deployment can raise it.
+	// Automation applies stay far below: one link or 100 links with a clicks template take 7
+	// statements, and the MCP apply_automation call 10; an apply stages no webhook event.
 	importItemsPerRequest?: number;
 	// Links imported per workspace in each UTC hour, apart from creationsPerMinute.
 	importsPerHour?: number;
@@ -236,6 +271,10 @@ export interface ApiDependencies {
 	events?: ProductEvents;
 	// Webhooks. Without them, the webhook routes answer 404 and changes only stage events.
 	webhooks?: WebhookSettings;
+	// Automations, with what this installation offers: without email, the email action is
+	// refused; without destination checks, the destination-down trigger is. Without them, the
+	// automation routes answer 404.
+	automations?: AutomationFeatures;
 }
 
 export interface WebhookSettings {
@@ -1573,6 +1612,210 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		return respond({ status: 200, body: JSON.stringify(page) });
 	});
 
+	function automationFeatures(): AutomationFeatures {
+		if (!dependencies.automations) throw new ApiError('NOT_FOUND', 'Route not found.');
+		return dependencies.automations;
+	}
+
+	// Before the scope check, so an installation without automations answers 404 to every caller.
+	const automationsOn: MiddlewareHandler<{ Variables: Variables }> = async (_context, next) => {
+		automationFeatures();
+		await next();
+	};
+
+	const automationLimitError = (limit: number) =>
+		new ApiError(
+			'AUTOMATION_LIMIT_REACHED',
+			limit === 0
+				? 'Automations are not available for this workspace.'
+				: `This workspace has room for ${limit} automations. Delete an automation first.`
+		);
+
+	// The template is read first, so the end date is checked against its trigger.
+	async function apply(
+		context: ApiContext,
+		automationId: string,
+		linkIds: string[],
+		input: { endsAt?: string },
+		time: number
+	): Promise<Extract<ApplyResult, { status: 'done' }>> {
+		const { tenantId, requestId } = context.var;
+		const automation = await readAutomation(routing, tenantId, automationId);
+		if (!automation) throw new ApiError('NOT_FOUND', 'Automation not found.');
+		const endsAt = automationEndsAt(automation.trigger.type, input);
+		const result = await applyToLinks(
+			{ identity, routing, analytics: dependencies.analytics },
+			{ tenantId, automationId, linkIds, endsAt, now: time },
+			automation.trigger.type
+		);
+		if (result.status === 'not_found') throw new ApiError('NOT_FOUND', 'Automation not found.');
+		if (result.status === 'off') throw automationLimitError(0);
+		console.log(
+			JSON.stringify({
+				event: 'automation_applied',
+				requestId,
+				automationId,
+				applied: result.links.filter((link) => link.outcome === 'applied').length
+			})
+		);
+		return result;
+	}
+
+	// The workspace's templates. Any principal with links:read may list them, to apply one.
+	app.get('/automations', automationsOn, requireScope('links:read'), async (context) => {
+		const listed = await listAutomations(routing, context.var.tenantId);
+		if (!listed) throw new ApiError('NOT_FOUND', 'Workspace not found.');
+		return respond({
+			status: 200,
+			body: JSON.stringify(automationPage(listed, automationFeatures()))
+		});
+	});
+
+	// Only the owner creates, edits, and deletes templates, from the dashboard.
+	app.post('/automations', automationsOn, async (context) => {
+		sessionOnly(context, 'Manage automations in the Flared app.');
+		ownerOnly(context, 'Only the workspace owner can manage automations.');
+		const { tenantId, requestId } = context.var;
+		const input = parseCreateAutomation(await readJson(context.req.raw), automationFeatures());
+		const id = newAutomationId();
+		const result = await createAutomation(routing, { id, tenantId, ...input, now: now() });
+		if (result.status === 'no_workspace') throw new ApiError('NOT_FOUND', 'Workspace not found.');
+		if (result.status === 'limit') throw automationLimitError(result.limit);
+		if (result.status === 'endpoint_missing')
+			throw new LinkInputError('endpointId', 'Choose a webhook endpoint of this workspace.');
+		console.log(JSON.stringify({ event: 'automation_created', requestId, automationId: id }));
+		return respond({
+			status: 201,
+			body: JSON.stringify({ automation: automationSummary(result.automation) })
+		});
+	});
+
+	app.patch('/automations/:id', automationsOn, async (context) => {
+		sessionOnly(context, 'Manage automations in the Flared app.');
+		ownerOnly(context, 'Only the workspace owner can manage automations.');
+		const change = parseUpdateAutomation(await readJson(context.req.raw), automationFeatures());
+		const result = await updateAutomation(routing, context.var.tenantId, context.req.param('id'), {
+			...change,
+			now: now()
+		});
+		if (result.status === 'not_found') throw new ApiError('NOT_FOUND', 'Automation not found.');
+		if (result.status === 'trigger_type')
+			throw new LinkInputError(
+				'trigger',
+				'The trigger type of an automation cannot change. Create another automation.'
+			);
+		if (result.status === 'endpoint_missing')
+			throw new LinkInputError('endpointId', 'Choose a webhook endpoint of this workspace.');
+		return respond({
+			status: 200,
+			body: JSON.stringify({ automation: automationSummary(result.automation) })
+		});
+	});
+
+	// Removes the template, its applications, and its runs. Allowed while the workspace is
+	// suspended.
+	app.delete('/automations/:id', automationsOn, async (context) => {
+		sessionOnly(context, 'Manage automations in the Flared app.');
+		ownerOnly(context, 'Only the workspace owner can manage automations.');
+		const automationId = context.req.param('id');
+		if (!(await deleteAutomation(routing, context.var.tenantId, automationId)))
+			throw new ApiError('NOT_FOUND', 'Automation not found.');
+		console.log(
+			JSON.stringify({
+				event: 'automation_deleted',
+				requestId: context.var.requestId,
+				automationId
+			})
+		);
+		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
+	});
+
+	// The template's 100 newest runs, newest first, for every member in the dashboard.
+	app.get('/automations/:id/runs', automationsOn, async (context) => {
+		sessionOnly(context, 'See automation runs in the Flared app.');
+		const runs = await listAutomationRuns(routing, context.var.tenantId, context.req.param('id'));
+		if (!runs) throw new ApiError('NOT_FOUND', 'Automation not found.');
+		const page: AutomationRunPage = { runs: runs.map(runSummary) };
+		return respond({ status: 200, body: JSON.stringify(page) });
+	});
+
+	// Applies the template to up to 100 links; each link is applied or fails on its own.
+	app.post(
+		'/automations/:id/links',
+		automationsOn,
+		requireScope('links:write'),
+		async (context) => {
+			const time = now();
+			let input;
+			try {
+				input = parseApplyAutomationLinks(await readJson(context.req.raw), time);
+			} catch (error) {
+				if (error instanceof ImportRequestError)
+					return failure(error.code, error.message, context.var.requestId, {}, error.field);
+				throw error;
+			}
+			const result = await apply(context, context.req.param('id'), input.linkIds, input, time);
+			const body: ApplyAutomationLinksResult = { results: result.links.map(applyLinkResult) };
+			return respond({ status: 200, body: JSON.stringify(body) });
+		}
+	);
+
+	app.get('/links/:id/automations', automationsOn, requireScope('links:read'), async (context) => {
+		const { tenantId } = context.var;
+		const link = await getLink(routing, tenantId, context.req.param('id'));
+		const page: LinkAutomationPage = {
+			linkId: link.id,
+			automations: (await listLinkAutomations(routing, tenantId, link.id)).map(
+				linkAutomationSummary
+			)
+		};
+		return respond({ status: 200, body: JSON.stringify(page) });
+	});
+
+	// Applies one template to one link. A template that waits with the same end date is left as
+	// it is; one that already ran is armed again.
+	app.put(
+		'/links/:id/automations/:automationId',
+		automationsOn,
+		requireScope('links:write'),
+		async (context) => {
+			const time = now();
+			const input = parseApplyAutomation(await readOptionalJson(context.req.raw), time);
+			const linkId = context.req.param('id');
+			const result = await apply(context, context.req.param('automationId'), [linkId], input, time);
+			const outcome = result.links[0]?.outcome ?? 'not_found';
+			if (outcome !== 'applied' && outcome !== 'unchanged') {
+				const refused = applyLinkResult({ linkId, outcome }).error;
+				if (refused) throw new ApiError(refused.code, refused.message);
+			}
+			const body: ApplyLinkAutomationResult = {
+				linkId,
+				status: outcome === 'unchanged' ? 'unchanged' : 'applied',
+				automations: (await listLinkAutomations(routing, context.var.tenantId, linkId)).map(
+					linkAutomationSummary
+				)
+			};
+			return respond({ status: 200, body: JSON.stringify(body) });
+		}
+	);
+
+	// The template stays in the workspace. Allowed while the workspace is suspended.
+	app.delete(
+		'/links/:id/automations/:automationId',
+		automationsOn,
+		requireScope('links:write'),
+		async (context) => {
+			const removed = await removeLinkAutomation(
+				routing,
+				context.var.tenantId,
+				context.req.param('id'),
+				context.req.param('automationId')
+			);
+			if (!removed) throw new ApiError('NOT_FOUND', 'This automation is not on the link.');
+			return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
+		}
+	);
+
 	function inviteSettings(): InviteSettings {
 		if (!dependencies.invites) throw new ApiError('NOT_FOUND', 'Route not found.');
 		return dependencies.invites;
@@ -1706,20 +1949,29 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	app.all('/webhooks/:id/secret', (context) => methodNotAllowed(context, 'POST'));
 	app.all('/webhooks/:id/test', (context) => methodNotAllowed(context, 'POST'));
 	app.all('/webhooks/:id/deliveries', (context) => methodNotAllowed(context, 'GET'));
+	app.all('/automations', (context) => methodNotAllowed(context, 'GET, POST'));
+	app.all('/automations/:id', (context) => methodNotAllowed(context, 'PATCH, DELETE'));
+	app.all('/automations/:id/links', (context) => methodNotAllowed(context, 'POST'));
+	app.all('/automations/:id/runs', (context) => methodNotAllowed(context, 'GET'));
+	app.all('/links/:id/automations', (context) => methodNotAllowed(context, 'GET'));
+	app.all('/links/:id/automations/:automationId', (context) =>
+		methodNotAllowed(context, 'PUT, DELETE')
+	);
 	return app;
 }
 
 // A suspended workspace keeps what takes nothing new: the dashboard reads its data, a person
-// may end a token or connected app, the owner may remove a member or a webhook endpoint, and a
-// member may leave. A
-// token or connected app may only export.
+// may end a token or connected app, the owner may remove a member, a webhook endpoint, or an
+// automation, a member may take an automation off a link, and a member may leave. A token or
+// connected app may only export.
 function allowedWhileSuspended(principal: ApiPrincipal, method: string, path: string): boolean {
 	const read = method === 'GET' || method === 'HEAD';
 	if (principal.kind === 'session')
 		return (
 			read ||
 			(method === 'DELETE' &&
-				/^\/v1\/(?:tokens|connected-apps|members|webhooks)\/[^/]+$/.test(path)) ||
+				(/^\/v1\/(?:tokens|connected-apps|members|webhooks|automations)\/[^/]+$/.test(path) ||
+					/^\/v1\/links\/[^/]+\/automations\/[^/]+$/.test(path))) ||
 			(method === 'POST' && path === '/v1/workspace/leave')
 		);
 	return read && (path.startsWith('/v1/export/') || path === '/v1/me');
@@ -1831,6 +2083,38 @@ function deliverySummary(row: WebhookDeliveryRow): WebhookDelivery {
 		lastAttemptAt: isoOrNull(row.lastAttemptAt),
 		completedAt: isoOrNull(row.completedAt)
 	};
+}
+
+const applyRefusals: Record<
+	Exclude<ApplyLinkOutcome, 'applied' | 'unchanged'>,
+	NonNullable<ApplyAutomationLinkResult['error']>
+> = {
+	not_found: { code: 'NOT_FOUND', message: 'Link not found.' },
+	blocked: {
+		code: 'LINK_BLOCKED',
+		message: 'Flared blocked this link for abuse. It takes no automations.'
+	},
+	link_limit: {
+		code: 'LINK_AUTOMATION_LIMIT_REACHED',
+		message: 'This link has 5 automations. Remove one from the link first.'
+	}
+};
+
+function applyLinkResult(link: {
+	linkId: string;
+	outcome: ApplyLinkOutcome;
+}): ApplyAutomationLinkResult {
+	if (link.outcome === 'applied' || link.outcome === 'unchanged')
+		return { linkId: link.linkId, status: link.outcome };
+	return { linkId: link.linkId, status: 'failed', error: { ...applyRefusals[link.outcome] } };
+}
+
+// A body that may be left out: no content type and no bytes is no body.
+async function readOptionalJson(request: Request): Promise<unknown> {
+	if (request.headers.get('content-type') !== null) return readJson(request);
+	if ((await request.arrayBuffer()).byteLength > 0)
+		throw new ApiError('UNSUPPORTED_MEDIA_TYPE', 'Send the body as application/json.');
+	return undefined;
 }
 
 function methodNotAllowed(context: ApiContext, allow: string): Response {

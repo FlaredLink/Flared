@@ -63,6 +63,12 @@
 			current: path === appRoutes.domains
 		},
 		{
+			label: 'Automations',
+			href: appRoutes.automations,
+			icon: 'lightning',
+			current: path === appRoutes.automations
+		},
+		{
 			label: 'Settings',
 			href: appRoutes.settings,
 			icon: 'settings',

@@ -17,6 +17,7 @@
 		"./workspace": "./src/workspace.ts",
 		"./members": "./src/members.ts",
 		"./icons": "./src/icons.ts",
-		"./webhooks": "./src/webhooks.ts"
+		"./webhooks": "./src/webhooks.ts",
+		"./automations": "./src/automations.ts"
 	}
 }

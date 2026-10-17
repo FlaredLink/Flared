@@ -9,6 +9,7 @@ export interface Limits {
 	domainLimit: number;
 	memberLimit: number;
 	webhookEndpointLimit: number;
+	automationLimit: number;
 }
 
 export interface LimitsView {
@@ -25,7 +26,8 @@ export const limitFields: { key: keyof Limits; label: string; unit: string }[] =
 	{ key: 'retentionDays', label: 'Days of click history', unit: 'days' },
 	{ key: 'domainLimit', label: 'Own domains', unit: 'domains' },
 	{ key: 'memberLimit', label: 'People, open invites included', unit: 'people' },
-	{ key: 'webhookEndpointLimit', label: 'Webhook endpoints', unit: 'endpoints' }
+	{ key: 'webhookEndpointLimit', label: 'Webhook endpoints', unit: 'endpoints' },
+	{ key: 'automationLimit', label: 'Automations', unit: 'automations' }
 ];
 
 function count(value: unknown): value is number {
@@ -53,7 +55,8 @@ export function toLimitsView(value: unknown): LimitsView | null {
 		retentionDays,
 		domainLimit,
 		memberLimit,
-		webhookEndpointLimit
+		webhookEndpointLimit,
+		automationLimit
 	} = limits;
 	const ranges = {
 		activeLinkLimit: range(bounds.activeLinkLimit),
@@ -61,7 +64,8 @@ export function toLimitsView(value: unknown): LimitsView | null {
 		retentionDays: range(bounds.retentionDays),
 		domainLimit: range(bounds.domainLimit),
 		memberLimit: range(bounds.memberLimit),
-		webhookEndpointLimit: range(bounds.webhookEndpointLimit)
+		webhookEndpointLimit: range(bounds.webhookEndpointLimit),
+		automationLimit: range(bounds.automationLimit)
 	};
 	if (
 		typeof body.pending !== 'boolean' ||
@@ -71,12 +75,14 @@ export function toLimitsView(value: unknown): LimitsView | null {
 		!count(domainLimit) ||
 		!count(memberLimit) ||
 		!count(webhookEndpointLimit) ||
+		!count(automationLimit) ||
 		!ranges.activeLinkLimit ||
 		!ranges.monthlyClickLimit ||
 		!ranges.retentionDays ||
 		!ranges.domainLimit ||
 		!ranges.memberLimit ||
-		!ranges.webhookEndpointLimit
+		!ranges.webhookEndpointLimit ||
+		!ranges.automationLimit
 	)
 		return null;
 	return {
@@ -86,7 +92,8 @@ export function toLimitsView(value: unknown): LimitsView | null {
 			retentionDays,
 			domainLimit,
 			memberLimit,
-			webhookEndpointLimit
+			webhookEndpointLimit,
+			automationLimit
 		},
 		pending: body.pending,
 		analyticsBytes: count(body.analyticsBytes) ? body.analyticsBytes : null,
@@ -96,7 +103,8 @@ export function toLimitsView(value: unknown): LimitsView | null {
 			retentionDays: ranges.retentionDays,
 			domainLimit: ranges.domainLimit,
 			memberLimit: ranges.memberLimit,
-			webhookEndpointLimit: ranges.webhookEndpointLimit
+			webhookEndpointLimit: ranges.webhookEndpointLimit,
+			automationLimit: ranges.automationLimit
 		}
 	};
 }

@@ -56,6 +56,7 @@ function api() {
 			},
 			reservedHostnames: ['brand.dev']
 		},
+		automations: { email: false, destinationChecks: false },
 		authenticate: async (request) => {
 			if (request.headers.has('authorization'))
 				return authenticateBearer(auth, identity(), request);
@@ -103,7 +104,11 @@ const sessionOnly = [
 	'DELETE /webhooks/{id}',
 	'POST /webhooks/{id}/secret',
 	'POST /webhooks/{id}/test',
-	'GET /webhooks/{id}/deliveries'
+	'GET /webhooks/{id}/deliveries',
+	'POST /automations',
+	'PATCH /automations/{id}',
+	'DELETE /automations/{id}',
+	'GET /automations/{id}/runs'
 ];
 const document = openApiDocument(baseUrl);
 type Operation = { responses: Record<string, { content?: Record<string, { schema: unknown }> }> };
@@ -191,7 +196,13 @@ beforeAll(async () => {
 		name: 'Workspace',
 		ownerUserId: 'user-1',
 		analyticsShardId: 'analytics-1',
-		limits: { activeLinkLimit: 100, monthlyClickLimit: 5000, retentionDays: 30, domainLimit: 1 },
+		limits: {
+			activeLinkLimit: 100,
+			monthlyClickLimit: 5000,
+			retentionDays: 30,
+			domainLimit: 1,
+			automationLimit: 5
+		},
 		now: 1
 	});
 	await projectPolicy(
@@ -280,6 +291,58 @@ describe('API client', () => {
 		expect(again).toEqual(run);
 		const refused = await failureOf(client(readOnly).importLinks({ dryRun: true, items }));
 		expect(refused.code).toBe('INSUFFICIENT_SCOPE');
+	});
+
+	it('lists automations, applies one to links, and takes it off again', async () => {
+		// Templates are made in the dashboard: a session-only route outside the public API.
+		const created = await api().fetch(
+			new Request(`${baseUrl}/automations`, {
+				method: 'POST',
+				headers: { 'x-test-user': 'user-1', origin, 'content-type': 'application/json' },
+				body: JSON.stringify({
+					name: 'Retire',
+					trigger: { type: 'link_age', days: 30 },
+					actions: [{ type: 'disable_link' }]
+				})
+			})
+		);
+		expect(created.status).toBe(201);
+		const { automation } = (await created.json()) as { automation: { id: string } };
+		const page = await client().listAutomations();
+		expect(page).toMatchObject({ used: 1, limit: 5, perLinkLimit: 5 });
+		expect(page.actionTypes).not.toContain('email_owner');
+		expect(page.triggerTypes).not.toContain('destination_down');
+		const { link } = await client().createLink({ destination: 'https://example.com/auto' });
+		const applied = await client().applyAutomation(automation.id, [link.id, 'lnk_missing']);
+		expect(applied.results).toEqual([
+			{ linkId: link.id, status: 'applied' },
+			{
+				linkId: 'lnk_missing',
+				status: 'failed',
+				error: { code: 'NOT_FOUND', message: 'Link not found.' }
+			}
+		]);
+		const listed = await client().listLinkAutomations(link.id);
+		expect(listed.automations).toMatchObject([
+			{ automationId: automation.id, state: 'waiting', result: null, check: null }
+		]);
+		const path = `${baseUrl}/links/${link.id}/automations/${automation.id}`;
+		const authorization = `Bearer ${full}`;
+		const again = await inProcess(path, { method: 'PUT', headers: { authorization } });
+		expect(again.status).toBe(200);
+		expect(await again.json()).toMatchObject({ linkId: link.id, status: 'unchanged' });
+		const dated = await inProcess(path, {
+			method: 'PUT',
+			headers: { authorization, 'content-type': 'application/json' },
+			body: JSON.stringify({ endsAt: '2026-11-01T09:00:00Z' })
+		});
+		expect(dated.status).toBe(422);
+		const refused = await failureOf(client(readOnly).applyAutomation(automation.id, [link.id]));
+		expect(refused.code).toBe('INSUFFICIENT_SCOPE');
+		await client().removeLinkAutomation(link.id, automation.id);
+		expect((await client().listLinkAutomations(link.id)).automations).toEqual([]);
+		const gone = await failureOf(client().removeLinkAutomation(link.id, automation.id));
+		expect(gone.code).toBe('NOT_FOUND');
 	});
 
 	it('writes the export pages into one JSON document', async () => {

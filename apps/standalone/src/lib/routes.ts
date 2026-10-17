@@ -4,6 +4,7 @@ export const appRoutes = {
 	login: '/app/login',
 	app: '/app',
 	domains: '/app/domains',
+	automations: '/app/automations',
 	settings: '/app/settings',
 	consent: '/app/oauth/consent',
 	invite: '/app/invite',

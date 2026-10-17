@@ -7,6 +7,14 @@ import {
 	type LinkAnalytics,
 	type Usage
 } from '@flared/contracts/analytics';
+import {
+	isApplyAutomationLinksResult,
+	isAutomationPage,
+	isLinkAutomationPage,
+	type ApplyAutomationLinksResult,
+	type AutomationPage,
+	type LinkAutomationPage
+} from '@flared/contracts/automations';
 import { isDomain, isDomainPage, type Domain, type DomainPage } from '@flared/contracts/domains';
 import { isErrorCode, type ErrorCode } from '@flared/contracts/errors';
 import {
@@ -111,6 +119,17 @@ export interface FlaredClient {
 	exportLinks(cursor?: string, limit?: number): Promise<ExportLinkPage>;
 	exportDailyTotals(cursor?: string): Promise<ExportTotalsPage>;
 	exportDailyDimensions(cursor?: string): Promise<ExportDimensionsPage>;
+	listAutomations(): Promise<AutomationPage>;
+	listLinkAutomations(linkId: string): Promise<LinkAutomationPage>;
+	// Applies a template to up to 100 links; each link is applied or fails on its own. Applying
+	// again re-arms a template that already ran. endsAt (ISO 8601 with an offset) is for an end
+	// date template only.
+	applyAutomation(
+		automationId: string,
+		linkIds: string[],
+		endsAt?: string
+	): Promise<ApplyAutomationLinksResult>;
+	removeLinkAutomation(linkId: string, automationId: string): Promise<void>;
 }
 
 const maxRetryWaitSeconds = 30;
@@ -318,6 +337,26 @@ export function createClient(options: ClientOptions): FlaredClient {
 		},
 		exportDailyDimensions(cursor) {
 			return page(`/export/daily-dimensions${after(cursor)}`, isExportDimensionsPage);
+		},
+		listAutomations() {
+			return page('/automations', isAutomationPage);
+		},
+		listLinkAutomations(linkId) {
+			return page(`/links/${id(linkId)}/automations`, isLinkAutomationPage);
+		},
+		// A repeat leaves a waiting application as it is, so a retry is safe.
+		async applyAutomation(automationId, linkIds, endsAt) {
+			const { status, body } = await request('POST', `/automations/${id(automationId)}/links`, {
+				body: endsAt === undefined ? { linkIds } : { linkIds, endsAt },
+				retry: true
+			});
+			if (!isApplyAutomationLinksResult(body)) throw invalid(status);
+			return body;
+		},
+		async removeLinkAutomation(linkId, automationId) {
+			await request('DELETE', `/links/${id(linkId)}/automations/${id(automationId)}`, {
+				retry: false
+			});
 		}
 	};
 }

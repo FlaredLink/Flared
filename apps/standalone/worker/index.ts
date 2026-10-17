@@ -59,7 +59,8 @@ const initialLimits = {
 	retentionDays: 30,
 	domainLimit: 5,
 	memberLimit: 10,
-	webhookEndpointLimit: 10
+	webhookEndpointLimit: 10,
+	automationLimit: 25
 };
 
 const deadLetterQueue = 'flared-clicks-dlq';
@@ -189,7 +190,9 @@ class Installation {
 			webhooks: {
 				secret: config.secret,
 				background: (task) => ctx.waitUntil(task)
-			}
+			},
+			// No email in this edition, so templates cannot email the owner.
+			automations: { email: false, destinationChecks: false }
 		});
 	}
 

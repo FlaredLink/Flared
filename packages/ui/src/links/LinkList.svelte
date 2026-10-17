@@ -1,10 +1,11 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { untrack, type Snippet } from 'svelte';
 	import EmptyState from '../empty/EmptyState.svelte';
 	import Glyph from '../icons/Glyph.svelte';
 	import SiteIcon from '../icons/SiteIcon.svelte';
 	import IconButton from '../atoms/IconButton.svelte';
+	import Checkbox from '../atoms/Checkbox.svelte';
 	import Badge from '../atoms/Badge.svelte';
 	import Menu, { type MenuItem } from '../molecules/Menu.svelte';
 	import { iconHostnameOfUrl } from '@flared/contracts/icons';
@@ -31,6 +32,11 @@
 		onselect?: (link: ListedLink) => void;
 		// The search field, for a shortcut that focuses it.
 		searchInput?: HTMLInputElement;
+		// Rows get checkboxes for an action on several links. selectedIds holds the chosen link
+		// IDs on this page; bulkBar shows above the list while one link or more is chosen.
+		selectable?: boolean;
+		selectedIds?: string[];
+		bulkBar?: Snippet<[string[]]>;
 	}
 
 	let {
@@ -43,8 +49,31 @@
 		filters,
 		selectedId = null,
 		onselect,
-		searchInput = $bindable()
+		searchInput = $bindable(),
+		selectable = false,
+		selectedIds = $bindable([]),
+		bulkBar
 	}: Props = $props();
+
+	// A new page of links keeps only the chosen links it still shows.
+	$effect(() => {
+		const shown = new Set(links.map((link) => link.id));
+		const kept = untrack(() => selectedIds).filter((id) => shown.has(id));
+		if (kept.length !== untrack(() => selectedIds).length) selectedIds = kept;
+	});
+	const allSelected = $derived(
+		links.length > 0 && links.every((link) => selectedIds.includes(link.id))
+	);
+
+	function choose(id: string, checked: boolean) {
+		selectedIds = links
+			.map((link) => link.id)
+			.filter((item) => (item === id ? checked : selectedIds.includes(item)));
+	}
+
+	function chooseAll(checked: boolean) {
+		selectedIds = checked ? links.map((link) => link.id) : [];
+	}
 	const filtered = $derived(Boolean(filters && (filters.search || filters.domainId)));
 
 	// The search runs as the person types. The field keeps its own text, so a response for an
@@ -114,7 +143,7 @@
 	// A click anywhere on a row opens its details, except on the row's own controls.
 	function rowClick(event: MouseEvent, link: ListedLink) {
 		if (!onselect) return;
-		if ((event.target as HTMLElement).closest('a, button, [popover]')) return;
+		if ((event.target as HTMLElement).closest('a, button, input, label, [popover]')) return;
 		onselect(link);
 	}
 </script>
@@ -176,7 +205,18 @@
 			>
 		{/if}
 	{:else}
-		<div class="columns" aria-hidden="true">
+		{#if selectable}
+			<div class="selection">
+				<Checkbox checked={allSelected} onchange={(event) => chooseAll(event.currentTarget.checked)}
+					>Select all on this page</Checkbox
+				>
+				{#if selectedIds.length > 0}
+					<span class="chosen-count">{numbers.format(selectedIds.length)} selected</span>
+					{#if bulkBar}<div class="bulk">{@render bulkBar(selectedIds)}</div>{/if}
+				{/if}
+			</div>
+		{/if}
+		<div class="columns" class:selectable aria-hidden="true">
 			<span>Link</span><span class="clicks-head">Clicks · 30 days</span>
 		</div>
 		<ul class="rows">
@@ -186,11 +226,22 @@
 				<!-- The title button is the keyboard path; the row click is a larger target. -->
 				<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
 				<li
+					class:selectable
+					class:chosen={selectable && selectedIds.includes(link.id)}
 					class:selected={link.id === selectedId}
 					class:highlight={link.id === highlightId && link.id !== selectedId}
 					class:clickable={onselect}
 					onclick={(event) => rowClick(event, link)}
 				>
+					{#if selectable}
+						<span class="select-cell">
+							<Checkbox
+								checked={selectedIds.includes(link.id)}
+								onchange={(event) => choose(link.id, event.currentTarget.checked)}
+								><span class="visually-hidden">Select {name}</span></Checkbox
+							>
+						</span>
+					{/if}
 					<SiteIcon
 						hostname={site ?? display(link.destination)}
 						src={site && iconHref ? iconHref(site) : null}
@@ -369,6 +420,40 @@
 	}
 	.columns span:first-child {
 		grid-column: 1 / 3;
+	}
+	/* Selectable lists put a checkbox column before the site icon. */
+	.columns.selectable,
+	li.selectable {
+		grid-template-columns: auto 2.5rem minmax(0, 1fr) 9rem auto;
+	}
+	.columns.selectable span:first-child {
+		grid-column: 1 / 4;
+	}
+	.select-cell {
+		display: flex;
+		align-items: center;
+	}
+	li.chosen {
+		background: var(--color-selected);
+	}
+	.selection {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem 1rem;
+		min-height: 2.75rem;
+		padding: 0 0.25rem;
+	}
+	.chosen-count {
+		color: var(--color-strong);
+		font-size: 0.9375rem;
+		font-weight: 600;
+	}
+	.bulk {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem;
 	}
 	.clicks-head {
 		text-align: right;
@@ -582,8 +667,18 @@
 			display: inline;
 		}
 		li > :global(.trigger) {
-			grid-column: 3;
+			grid-column: var(--trigger-column, 3);
 			grid-row: 1 / 3;
+		}
+		li.selectable {
+			--trigger-column: 4;
+			grid-template-columns: auto 2.25rem minmax(0, 1fr) auto;
+		}
+		li.selectable .select-cell {
+			grid-row: 1 / 3;
+		}
+		li.selectable .clicks {
+			grid-column: 3;
 		}
 	}
 </style>

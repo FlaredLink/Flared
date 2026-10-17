@@ -14,6 +14,8 @@ A webhook sends a signed HTTPS POST request to your endpoint when a link changes
 
 **Send test** sends a `webhook.test` event to one endpoint, also to an endpoint that is off. A workspace can send 10 test events an hour.
 
+An automation with a **Send webhook** action sends an `automation.triggered` event to the one endpoint it names; no endpoint subscribes to this event, and an endpoint that is off does not get it. `data.automation` has the template's ID, name, and trigger, `data.link` has the link after the run's changes, and `data.actions` lists the actions that ran. See [automations.md](automations.md).
+
 ## Manage endpoints
 
 The owner adds and changes endpoints in **Settings → Webhooks**. Members cannot see them. To add an endpoint or to get a new secret, the owner needs a sign-in from the last 10 minutes. The app shows each secret once.

@@ -257,7 +257,8 @@ describe('the app host after setup', () => {
 				retentionDays: 30,
 				domainLimit: 5,
 				memberLimit: 10,
-				webhookEndpointLimit: 10
+				webhookEndpointLimit: 10,
+				automationLimit: 25
 			},
 			pending: false
 		});
@@ -300,6 +301,41 @@ describe('the app host after setup', () => {
 		expect(
 			await count("SELECT COUNT(*) AS n FROM owner_audit WHERE action = 'limits_changed'")
 		).toBe(3);
+	});
+
+	it('takes an automation limit from 0 to 100 and keeps it when a page leaves it out', async () => {
+		const limits = {
+			activeLinkLimit: 500,
+			monthlyClickLimit: 9000,
+			retentionDays: 60,
+			domainLimit: 2,
+			memberLimit: 3,
+			webhookEndpointLimit: 50
+		};
+		const change = (body: unknown) =>
+			call(`${origin}/api/settings/limits`, {
+				method: 'POST',
+				headers: { cookie: owner, origin, 'content-type': 'application/json' },
+				body: JSON.stringify(body)
+			});
+		for (const automationLimit of [101, -1, 2.5, '25'])
+			expect(
+				await code(await change({ ...limits, automationLimit })),
+				String(automationLimit)
+			).toBe('VALIDATION_FAILED');
+		for (const automationLimit of [0, 100])
+			expect(await (await change({ ...limits, automationLimit })).json()).toMatchObject({
+				limits: { ...limits, automationLimit },
+				pending: false
+			});
+		expect(await (await change(limits)).json()).toMatchObject({
+			limits: { ...limits, automationLimit: 100 },
+			pending: false
+		});
+		expect(await (await change({ ...limits, automationLimit: 25 })).json()).toMatchObject({
+			limits: { automationLimit: 25 },
+			bounds: { automationLimit: { min: 0, max: 100 } }
+		});
 	});
 
 	it('adds a member by invite link, who reads but cannot change the limits', async () => {
@@ -414,6 +450,254 @@ describe('webhooks', () => {
 			headers: browser(owner)
 		});
 		expect(removed.status).toBe(204);
+	});
+});
+
+// The 10-minute runs take turns: domain checks when the scheduled minute / 10 is even, automations
+// when it is odd. Each turn's worst case stays inside the 50 subrequests and 50 D1 queries of one
+// Workers Free invocation.
+describe('the frequent run budget', () => {
+	const challengePath = '/.well-known/flared-domain-challenge';
+	const hostnames = [1, 2, 3, 4, 5].map((n) => `go${n}.budget.example.com`);
+	// A fresh hour after the one the webhook test sampled: on the hour, k = 0.
+	const hour = Math.ceil((Date.now() + 1) / 3_600_000) * 3_600_000 + 3_600_000;
+	let tenantId = '';
+	let endpointId = '';
+	const domainIds: string[] = [];
+	const linkIds: string[] = [];
+
+	async function stageWork(round: string): Promise<void> {
+		// A policy revision that the stores have not acknowledged.
+		await env.IDENTITY.prepare(
+			'UPDATE tenant_policy SET revision = revision + 1, updated_at = ? WHERE tenant_id = ?'
+		)
+			.bind(Date.now(), tenantId)
+			.run();
+		const staged = Date.now();
+		await env.ROUTING.batch(
+			Array.from({ length: 30 }, (_, index) =>
+				env.ROUTING.prepare(
+					"INSERT INTO webhook_events (id, tenant_id, type, payload, created_at) VALUES (?, ?, 'link.created', ?, ?)"
+				).bind(`evt_${round}_${index}`, tenantId, JSON.stringify({ index }), staged)
+			)
+		);
+		// 50 milestones: one transfer batch.
+		await env.ANALYTICS_1.batch(
+			linkIds.flatMap((id) =>
+				[100, 200].map((clicks) =>
+					env.ANALYTICS_1.prepare(
+						'INSERT INTO click_milestones (id, tenant_id, link_id, clicks, created_at) VALUES (?, ?, ?, ?, ?)'
+					).bind(`link.click_milestone:${id}:${round}${clicks}`, tenantId, id, clicks, staged)
+				)
+			)
+		);
+	}
+
+	async function scheduledRun(
+		scheduledTime: number
+	): Promise<{ queries: number; fetched: string[] }> {
+		const counter = { queries: 0 };
+		const fetched: string[] = [];
+		const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+			fetched.push(input instanceof Request ? input.url : String(input));
+			return new Response('ok');
+		});
+		try {
+			await worker.scheduled(
+				createScheduledController({ cron: '*/10 * * * *', scheduledTime }),
+				baseEnv({
+					IDENTITY: counting(env.IDENTITY, counter),
+					ROUTING: counting(env.ROUTING, counter),
+					ANALYTICS_1: counting(env.ANALYTICS_1, counter)
+				})
+			);
+		} finally {
+			spy.mockRestore();
+		}
+		return { queries: counter.queries, fetched };
+	}
+
+	async function applicationStates(): Promise<Record<string, number>> {
+		const { results } = await env.ROUTING.prepare(
+			'SELECT state, COUNT(*) AS n FROM link_automations WHERE tenant_id = ? GROUP BY state'
+		)
+			.bind(tenantId)
+			.all<{ state: string; n: number }>();
+		return Object.fromEntries(results.map((row) => [row.state, row.n]));
+	}
+
+	async function jobOutcome(job: string, after: number): Promise<string | null> {
+		const row = await env.IDENTITY.prepare(
+			'SELECT last_outcome FROM job_runs WHERE job = ? AND last_finished_at >= ?'
+		)
+			.bind(job, after)
+			.first<{ last_outcome: string }>();
+		return row?.last_outcome ?? null;
+	}
+
+	it('stages 5 waiting domains, a webhook endpoint, and 25 due automation applications', async () => {
+		const tenant = await env.IDENTITY.prepare(
+			'SELECT fixed_tenant_id AS id FROM installation WHERE id = 1'
+		).first<{ id: string }>();
+		tenantId = tenant?.id ?? '';
+		const raised = await call(`${origin}/api/settings/limits`, {
+			method: 'POST',
+			headers: browser(owner),
+			body: JSON.stringify({
+				activeLinkLimit: 500,
+				monthlyClickLimit: 9000,
+				retentionDays: 60,
+				domainLimit: 10,
+				memberLimit: 3
+			})
+		});
+		expect(raised.status).toBe(200);
+		for (const hostname of hostnames) {
+			const added = await call(`${origin}/api/v1/domains`, {
+				method: 'POST',
+				headers: browser(owner),
+				body: JSON.stringify({ hostname })
+			});
+			expect(added.status, hostname).toBe(201);
+			domainIds.push(((await added.json()) as { domain: { id: string } }).domain.id);
+		}
+		for (let index = 0; index < 25; index += 1) {
+			const link = await call(`${origin}/api/v1/links`, {
+				method: 'POST',
+				headers: browser(owner, { 'idempotency-key': crypto.randomUUID() }),
+				body: JSON.stringify({
+					destination: `https://example.com/sale/${index}`,
+					slug: `budget-${index}`
+				})
+			});
+			expect(link.status).toBe(201);
+			linkIds.push(((await link.json()) as { link: { id: string } }).link.id);
+		}
+		// After the links, so their link.created events reach no endpoint.
+		const created = await call(`${origin}/api/v1/webhooks`, {
+			method: 'POST',
+			headers: browser(owner),
+			body: JSON.stringify({
+				url: 'https://hooks.example.net/budget',
+				events: ['link.created', 'link.updated', 'link.disabled', 'link.click_milestone'],
+				milestoneInterval: 100
+			})
+		});
+		expect(created.status).toBe(201);
+		endpointId = ((await created.json()) as { endpoint: { id: string } }).endpoint.id;
+		// Every action this edition offers.
+		const template = await call(`${origin}/api/v1/automations`, {
+			method: 'POST',
+			headers: browser(owner),
+			body: JSON.stringify({
+				name: 'Sale ends',
+				trigger: { type: 'end_date' },
+				actions: [
+					{ type: 'change_destination', destination: 'https://example.com/sale-over' },
+					{ type: 'disable_link' },
+					{ type: 'send_webhook', endpointId }
+				]
+			})
+		});
+		expect(template.status).toBe(201);
+		const { automation } = (await template.json()) as { automation: { id: string } };
+		// An end date in the past: due at the next automation turn.
+		const applied = await call(`${origin}/api/v1/automations/${automation.id}/links`, {
+			method: 'POST',
+			headers: browser(owner),
+			body: JSON.stringify({ linkIds, endsAt: new Date(Date.now() - 60_000).toISOString() })
+		});
+		expect(applied.status).toBe(200);
+		const { results } = (await applied.json()) as { results: { status: string }[] };
+		expect(results.filter((result) => result.status === 'applied')).toHaveLength(25);
+		// The email action is not offered without email.
+		const email = await call(`${origin}/api/v1/automations`, {
+			method: 'POST',
+			headers: browser(owner),
+			body: JSON.stringify({
+				name: 'Email',
+				trigger: { type: 'end_date' },
+				actions: [{ type: 'email_owner' }]
+			})
+		});
+		expect(await code(email)).toBe('INVALID_INPUT');
+	});
+
+	it('checks domains and leaves automations in an even turn, within the budget', async () => {
+		await stageWork('even');
+		const before = Date.now();
+		const { queries, fetched } = await scheduledRun(hour);
+		console.log(JSON.stringify({ turn: 'even', queries, fetches: fetched.length }));
+		expect(queries).toBeLessThan(50);
+		expect(fetched.length).toBeLessThanOrEqual(45);
+		// 3 of the 5 waiting domains, least recently fetched first.
+		expect(fetched.filter((url) => url.endsWith(challengePath))).toHaveLength(3);
+		expect(fetched.filter((url) => url === 'https://hooks.example.net/budget')).toHaveLength(25);
+		expect(await applicationStates()).toEqual({ waiting: 25 });
+		// The webhook job moved the milestones in this turn.
+		expect(
+			(
+				await env.ANALYTICS_1.prepare('SELECT COUNT(*) AS n FROM click_milestones').first<{
+					n: number;
+				}>()
+			)?.n
+		).toBe(0);
+		for (const job of ['policy_projections', 'domain_checks', 'automations', 'webhook_deliveries'])
+			expect(await jobOutcome(job, before), job).toBe('succeeded');
+	});
+
+	it('runs automations and leaves domains in an odd turn, within the budget', async () => {
+		await stageWork('odd');
+		const before = Date.now();
+		const { queries, fetched } = await scheduledRun(hour + 10 * 60_000);
+		console.log(JSON.stringify({ turn: 'odd', queries, fetches: fetched.length }));
+		expect(queries).toBeLessThan(50);
+		expect(fetched.length).toBeLessThanOrEqual(45);
+		expect(fetched.filter((url) => url.endsWith(challengePath))).toEqual([]);
+		expect(fetched.filter((url) => url === 'https://hooks.example.net/budget')).toHaveLength(25);
+		expect(await applicationStates()).toEqual({ done: 25 });
+		const changed = await env.ROUTING.prepare(
+			"SELECT COUNT(*) AS n FROM links WHERE tenant_id = ? AND status = 'disabled' AND destination = 'https://example.com/sale-over'"
+		)
+			.bind(tenantId)
+			.first<{ n: number }>();
+		expect(changed?.n).toBe(25);
+		// The automation job moved the milestones, and its webhook events wait for delivery.
+		expect(
+			(
+				await env.ANALYTICS_1.prepare('SELECT COUNT(*) AS n FROM click_milestones').first<{
+					n: number;
+				}>()
+			)?.n
+		).toBe(0);
+		const triggered = await env.ROUTING.prepare(
+			"SELECT COUNT(*) AS n FROM webhook_events WHERE tenant_id = ? AND type = 'automation.triggered' AND target_endpoint_id = ?"
+		)
+			.bind(tenantId, endpointId)
+			.first<{ n: number }>();
+		expect(triggered?.n).toBe(25);
+		for (const job of ['policy_projections', 'domain_checks', 'automations', 'webhook_deliveries'])
+			expect(await jobOutcome(job, before), job).toBe('succeeded');
+	});
+
+	it('removes the staged domains and endpoint, so no later job fetches them', async () => {
+		for (const id of domainIds)
+			expect(
+				(
+					await call(`${origin}/api/v1/domains/${id}`, {
+						method: 'DELETE',
+						headers: browser(owner)
+					})
+				).status
+			).toBe(204);
+		expect(
+			(
+				await call(`${origin}/api/v1/webhooks/${endpointId}`, {
+					method: 'DELETE',
+					headers: browser(owner)
+				})
+			).status
+		).toBe(204);
 	});
 });
 
@@ -543,12 +827,12 @@ describe('jobs, the click Queue, and deletion', () => {
 		});
 		await worker.scheduled(controller, baseEnv(moved));
 		expect(await count("SELECT COUNT(*) AS n FROM job_runs WHERE last_outcome = 'succeeded'")).toBe(
-			6
+			7
 		);
 		const daily = createScheduledController({ cron: '17 3 * * *', scheduledTime: Date.now() });
 		await worker.scheduled(daily, baseEnv(moved));
 		expect(await count("SELECT COUNT(*) AS n FROM job_runs WHERE last_outcome = 'succeeded'")).toBe(
-			14
+			16
 		);
 		const recorded = await env.IDENTITY.prepare(
 			"SELECT job FROM job_runs WHERE job IN ('webhook_deliveries', 'webhook_cleanup') ORDER BY job"

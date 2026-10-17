@@ -67,6 +67,28 @@ export async function recordNotice(db: D1Database, notice: NewNotice): Promise<b
 	return (result.meta.changes ?? 0) > 0;
 }
 
+// The bulk form of recordNotice, in one statement. Returns the notices this call recorded.
+// Notices of the automation_ran kind may hold the automation's name and the short URL of the link
+// it ran on (owner ruling 2026-10-17); every other kind keeps to counts and dates, as the notices
+// table says. Never a destination or visitor data.
+export async function recordNotices(db: D1Database, notices: NewNotice[]): Promise<number> {
+	if (notices.length === 0) return 0;
+	if (notices.length > 100) throw new Error('Invalid notice batch size');
+	const result = await db
+		.prepare(
+			`INSERT INTO notices (id, tenant_id, kind, dedupe_key, params, created_at)
+			SELECT n.id, n.tenant_id, n.kind, n.dedupe_key, n.params, n.created_at
+			FROM (SELECT json_extract(value, '$.id') AS id, json_extract(value, '$.tenantId') AS tenant_id, json_extract(value, '$.kind') AS kind,
+				json_extract(value, '$.dedupeKey') AS dedupe_key, json(json_extract(value, '$.params')) AS params,
+				json_extract(value, '$.now') AS created_at FROM json_each(?1)) AS n
+			WHERE EXISTS (SELECT 1 FROM tenants WHERE id = n.tenant_id)
+			ON CONFLICT(dedupe_key) DO NOTHING`
+		)
+		.bind(JSON.stringify(notices.map((notice) => ({ ...notice, id: crypto.randomUUID() }))))
+		.run();
+	return result.meta.changes ?? 0;
+}
+
 // One statement claims the oldest pending notices, so concurrent dispatchers never share one.
 export async function claimNotices(
 	db: D1Database,

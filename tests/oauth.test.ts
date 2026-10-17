@@ -7,6 +7,7 @@ import { makeSignature } from 'better-auth/crypto';
 import { createTenant, setActiveWorkspace } from '../packages/data/src/tenancy';
 import { setLinkBlock } from '../packages/data/src/links';
 import { createWebhookEndpoint } from '../packages/data/src/webhooks';
+import { createAutomation } from '../packages/data/src/automations';
 import { keyId } from '../packages/server/src/webhooks/signing';
 import { deleteGrant, deleteExpiredOAuthRecords } from '../packages/data/src/oauth';
 import { projectPolicy } from '../packages/server/src/tenancy';
@@ -100,6 +101,7 @@ function api(principal: ApiPrincipal) {
 		analytics: { 'analytics-1': env.OAUTH_ANALYTICS },
 		appOrigin: origin,
 		domains: { provider: domainProvider, reservedHostnames: ['short.example'] },
+		automations: { email: true, destinationChecks: false },
 		authenticate: async () => principal
 	});
 }
@@ -925,12 +927,17 @@ describe('MCP endpoint', () => {
 			'get_usage',
 			'list_domains',
 			'export_links',
+			'list_automations',
 			'create_link',
 			'import_links',
 			'update_link',
 			'disable_link',
-			'enable_link'
+			'enable_link',
+			'apply_automation',
+			'remove_automation'
 		]);
+		// Eight tools only read; seven change links.
+		expect(listed.result.tools.filter((tool) => tool.annotations.readOnlyHint)).toHaveLength(8);
 		for (const tool of listed.result.tools) {
 			expect(tool.title).toEqual(expect.any(String));
 			expect(tool.outputSchema).toEqual(expect.any(Object));
@@ -1590,6 +1597,177 @@ describe('MCP endpoint', () => {
 		});
 		expect(created.body.result?.isError).toBe(true);
 		expect(created.body.result?.content[0].text).toContain('INSUFFICIENT_SCOPE');
+	});
+
+	it('lists automations, applies one to links, and takes it off a link', async () => {
+		await addTenant('user-30', 'tenant-30');
+		await routing()
+			.prepare("UPDATE tenant_policy SET automation_limit = 5 WHERE tenant_id = 'tenant-30'")
+			.run();
+		const template = async (
+			id: string,
+			trigger: { type: 'end_date' } | { type: 'clicks'; clicks: number }
+		) => {
+			const result = await createAutomation(routing(), {
+				id,
+				tenantId: 'tenant-30',
+				name: id,
+				trigger,
+				actions: [{ type: 'disable_link' }],
+				now: 1
+			});
+			expect(result.status).toBe('created');
+		};
+		await template('aut_mcp_date', { type: 'end_date' });
+		await template('aut_mcp_clicks', { type: 'clicks', clicks: 1000 });
+		const { tokens } = await connect('user-30');
+		const token = tokens.access_token;
+		const created = await call(token, 'create_link', {
+			destination: 'https://example.com/auto',
+			slug: 'mcp-auto'
+		});
+		const linkId = String((created.body.result?.structuredContent?.link as { id: string }).id);
+
+		const listed = await call(token, 'list_automations');
+		expect(listed.body.result?.structuredContent).toMatchObject({
+			used: 2,
+			limit: 5,
+			automations: [{ id: 'aut_mcp_clicks', links: 0 }, { id: 'aut_mcp_date' }]
+		});
+		const applied = await call(token, 'apply_automation', {
+			automationId: 'aut_mcp_clicks',
+			linkIds: [linkId, 'lnk_elsewhere']
+		});
+		expect(applied.body.result?.structuredContent).toEqual({
+			results: [
+				{ linkId, status: 'applied' },
+				{
+					linkId: 'lnk_elsewhere',
+					status: 'failed',
+					error: { code: 'NOT_FOUND', message: 'Link not found.' }
+				}
+			]
+		});
+		const undated = await call(token, 'apply_automation', {
+			automationId: 'aut_mcp_date',
+			linkIds: [linkId]
+		});
+		expect(undated.body.result?.isError).toBe(true);
+		expect(JSON.parse(undated.body.result?.content[0].text ?? '{}')).toMatchObject({
+			error: { code: 'INVALID_INPUT', field: 'endsAt' }
+		});
+		const dated = await call(token, 'apply_automation', {
+			automationId: 'aut_mcp_date',
+			linkIds: [linkId],
+			endsAt: '2026-11-01T09:00:00+09:00'
+		});
+		expect(dated.body.result?.structuredContent).toEqual({
+			results: [{ linkId, status: 'applied' }]
+		});
+		const onLink = await call(token, 'list_automations', { link: 'mcp-auto' });
+		expect(onLink.body.result?.structuredContent).toMatchObject({
+			link: { id: linkId, shortUrl: 'https://short.example/mcp-auto' },
+			automations: [
+				{ automationId: 'aut_mcp_clicks', state: 'waiting' },
+				{ automationId: 'aut_mcp_date', state: 'waiting', endsAt: '2026-11-01T00:00:00.000Z' }
+			]
+		});
+		const removed = await call(token, 'remove_automation', {
+			automationId: 'aut_mcp_date',
+			link: 'mcp-auto'
+		});
+		expect(removed.body.result?.structuredContent).toEqual({ removed: true });
+		const again = await call(token, 'remove_automation', {
+			automationId: 'aut_mcp_date',
+			link: 'mcp-auto'
+		});
+		expect(again.body.result?.structuredContent).toEqual({ removed: false });
+
+		const reader = await connect('user-30', 'links:read offline_access');
+		expect((await call(reader.tokens.access_token, 'list_automations')).status).toBe(200);
+		const write = await call(reader.tokens.access_token, 'apply_automation', {
+			automationId: 'aut_mcp_clicks',
+			linkIds: [linkId]
+		});
+		expect(write.status).toBe(403);
+		expect(write.headers.get('www-authenticate')).toContain('scope="links:read links:write"');
+	});
+
+	it('applies an automation within 20 D1 statements', async () => {
+		await addTenant('user-31', 'tenant-31');
+		await routing()
+			.prepare("UPDATE tenant_policy SET automation_limit = 5 WHERE tenant_id = 'tenant-31'")
+			.run();
+		expect(
+			(
+				await createAutomation(routing(), {
+					id: 'aut_mcp_budget',
+					tenantId: 'tenant-31',
+					name: 'Budget',
+					trigger: { type: 'clicks', clicks: 100 },
+					actions: [{ type: 'disable_link' }],
+					now: 1
+				})
+			).status
+		).toBe('created');
+		const { tokens } = await connect('user-31');
+		const linkIds: string[] = [];
+		for (let index = 0; index < 3; index += 1) {
+			const created = await call(tokens.access_token, 'create_link', {
+				destination: `https://example.com/budget-auto/${index}`
+			});
+			linkIds.push(String((created.body.result?.structuredContent?.link as { id: string }).id));
+		}
+		const counter = { queries: 0 };
+		const countedIdentity = counting(identity(), counter);
+		const countedRouting = counting(routing(), counter);
+		const countedShard = counting(env.OAUTH_ANALYTICS, counter);
+		const counted = createMcpEndpoint({
+			identity: countedIdentity,
+			resource,
+			issuer: origin,
+			allowedOrigins: [origin],
+			api: (principal) =>
+				createApi({
+					identity: countedIdentity,
+					routing: countedRouting,
+					analytics: { 'analytics-1': countedShard },
+					appOrigin: origin,
+					automations: { email: true, destinationChecks: false },
+					authenticate: async () => principal
+				})
+		});
+		await env.OAUTH_ANALYTICS.prepare(
+			"INSERT INTO link_click_totals (tenant_id, link_id, clicks, last_event_id, updated_at) VALUES ('tenant-31', ?, 150, 'e-1', 0)"
+		)
+			.bind(linkIds[0])
+			.run();
+		const response = await counted(
+			rpc(tokens.access_token, 'tools/call', {
+				name: 'apply_automation',
+				arguments: { automationId: 'aut_mcp_budget', linkIds: [...linkIds, 'lnk_none'] }
+			})
+		);
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as { result: { structuredContent: unknown } };
+		expect(body.result.structuredContent).toMatchObject({
+			results: [
+				{ status: 'applied' },
+				{ status: 'applied' },
+				{ status: 'applied' },
+				{ status: 'failed' }
+			]
+		});
+		const due = await routing()
+			.prepare(
+				"SELECT COUNT(*) AS n FROM link_automations WHERE tenant_id = 'tenant-31' AND due_at IS NOT NULL"
+			)
+			.first('n');
+		expect(due).toBe(1);
+		// Token, workspace, call count, then the API: workspace, template, apply and the reason
+		// read, shard, totals, and the click record.
+		expect(counter.queries).toBe(10);
+		expect(counter.queries).toBeLessThan(20);
 	});
 
 	it('answers a write without the scope with 403 insufficient_scope naming the scopes it needs', async () => {

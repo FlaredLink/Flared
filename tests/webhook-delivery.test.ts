@@ -884,8 +884,9 @@ describe('scheduled job', () => {
 		expect(run).toMatchObject({ milestones: 1, events: 31, sent: 25, succeeded: 25 });
 		expect(received).toHaveLength(25);
 		expect(most).toBe(5);
-		// Transfer 3, fan-out 3, claim 1, read 1, results 2.
-		expect(counter.queries).toBe(10);
+		// Transfer 4 (read, the batch of events and automation marks, delete), fan-out 3, claim 1,
+		// read 1, results 2.
+		expect(counter.queries).toBe(11);
 		expect(await shard().prepare('SELECT COUNT(*) AS n FROM click_milestones').first('n')).toBe(0);
 		const rest = await runWebhookJob(stores(), {
 			secret: rootSecret,
@@ -901,6 +902,77 @@ describe('scheduled job', () => {
 		counter.queries = 0;
 		await cleanupWebhooks(counting(routing(), counter), clock);
 		expect(counter.queries).toBe(3);
+	});
+
+	it('leaves click milestones on the shards when the automation job moves them', async () => {
+		await addTenant('u-keep', 't-keep');
+		const linkId = (JSON.parse((await postLink('u-keep')).text) as { link: { id: string } }).link
+			.id;
+		await runBackground();
+		received = [];
+		await shard()
+			.prepare(
+				"INSERT INTO click_milestones (id, tenant_id, link_id, clicks, created_at) VALUES (?, 't-keep', ?, 100, ?)"
+			)
+			.bind(`link.click_milestone:${linkId}:100`, linkId, clock)
+			.run();
+		const counter = { queries: 0 };
+		const run = await runWebhookJob(
+			{ routing: routing(), analytics: { 'analytics-1': counting(shard(), counter) } },
+			{
+				secret: rootSecret,
+				reservedHostnames: [],
+				fetch: receiver,
+				now: () => clock,
+				transferMilestones: false
+			}
+		);
+		expect(run.milestones).toBe(0);
+		expect(counter.queries).toBe(0);
+		expect(
+			await shard()
+				.prepare("SELECT COUNT(*) AS n FROM click_milestones WHERE tenant_id = 't-keep'")
+				.first('n')
+		).toBe(1);
+		await shard().prepare("DELETE FROM click_milestones WHERE tenant_id = 't-keep'").run();
+	});
+
+	it('sends an automation event only while its endpoint is on; a test reaches it off', async () => {
+		await addTenant('u-target', 't-target');
+		const { endpoint } = await addEndpoint('u-target');
+		const stage = (id: string) =>
+			routing()
+				.prepare(
+					"INSERT INTO webhook_events (id, tenant_id, type, subject_id, target_endpoint_id, payload, created_at) VALUES (?, 't-target', 'automation.triggered', NULL, ?, '{}', ?)"
+				)
+				.bind(id, endpoint.id, clock)
+				.run();
+		// Fanned out while the endpoint is on, then turned off before the send.
+		await stage('evt_target_1');
+		await fanOutWebhookEvents(routing(), { now: clock, limit: 100, tenantId: 't-target' });
+		const off = await call('u-target', 'PATCH', `/webhooks/${endpoint.id}`, { enabled: false });
+		expect(off.status).toBe(200);
+		// Staged while it is off: no delivery at all.
+		await stage('evt_target_2');
+		await runWebhookJob(stores(), {
+			secret: rootSecret,
+			reservedHostnames: [],
+			fetch: receiver,
+			now: () => clock,
+			transferMilestones: false
+		});
+		expect(received).toEqual([]);
+		expect(await deliveries('u-target', endpoint.id)).toMatchObject([
+			{
+				eventId: 'evt_target_1',
+				eventType: 'automation.triggered',
+				state: 'skipped',
+				errorCode: 'disabled'
+			}
+		]);
+		const test = await call('u-target', 'POST', `/webhooks/${endpoint.id}/test`);
+		expect(test.status).toBe(200);
+		expect(received.map((request) => JSON.parse(request.body).type)).toEqual(['webhook.test']);
 	});
 
 	it('refuses a URL that a later check no longer accepts, without a request', async () => {

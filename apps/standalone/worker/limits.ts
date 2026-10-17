@@ -17,12 +17,13 @@ export const limitBounds: Record<keyof PolicyLimits, { min: number; max: number 
 	retentionDays: { min: 1, max: 3650 },
 	domainLimit: { min: 0, max: 50 },
 	memberLimit: { min: 1, max: 100 },
-	webhookEndpointLimit: { min: 0, max: 50 }
+	webhookEndpointLimit: { min: 0, max: 50 },
+	automationLimit: { min: 0, max: 100 }
 };
 
-// A page loaded before the webhook endpoint limit existed sends the other limits only; the
-// update then keeps the stored value.
-const optionalLimits: readonly string[] = ['webhookEndpointLimit'];
+// A page loaded before the webhook endpoint limit or the automation limit existed sends the other
+// limits only; the update then keeps the stored value.
+const optionalLimits: readonly string[] = ['webhookEndpointLimit', 'automationLimit'];
 
 function failure(code: string, status: number, message: string): Response {
 	return Response.json(
@@ -57,7 +58,8 @@ function parseLimits(value: unknown): PolicyLimits | null {
 		memberLimit: limits.memberLimit,
 		...('webhookEndpointLimit' in limits
 			? { webhookEndpointLimit: limits.webhookEndpointLimit }
-			: {})
+			: {}),
+		...('automationLimit' in limits ? { automationLimit: limits.automationLimit } : {})
 	};
 }
 
@@ -78,7 +80,8 @@ async function view(config: StandaloneConfig, tenantId: string): Promise<Respons
 				retentionDays: policy.retentionDays,
 				domainLimit: policy.domainLimit,
 				memberLimit: policy.memberLimit,
-				webhookEndpointLimit: policy.webhookEndpointLimit
+				webhookEndpointLimit: policy.webhookEndpointLimit,
+				automationLimit: policy.automationLimit
 			},
 			pending:
 				policy.routingRevision < policy.revision || policy.analyticsRevision < policy.revision,

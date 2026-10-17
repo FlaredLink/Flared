@@ -15,6 +15,9 @@ export interface PolicyLimits {
 	// Webhook endpoints; 0 turns webhooks off. Without it, a new tenant gets 0 and an update
 	// keeps the limit.
 	webhookEndpointLimit?: number;
+	// Automation templates; 0 turns automations off. Without it, a new tenant gets 0 and an
+	// update keeps the limit.
+	automationLimit?: number;
 }
 
 export interface NewTenant {
@@ -50,6 +53,7 @@ export interface PolicyProjection {
 	retentionDays: number;
 	memberLimit: number;
 	webhookEndpointLimit: number;
+	automationLimit: number;
 	suspendedAt: number | null;
 }
 
@@ -238,7 +242,7 @@ export function tenantStatements(
 			.bind(tenant.id, tenant.ownerUserId, now),
 		db
 			.prepare(
-				`INSERT INTO tenant_policy (tenant_id, revision, active_link_limit, monthly_click_limit, retention_days, domain_limit, member_limit, webhook_endpoint_limit, updated_at) SELECT ?1, 1, ?2, ?3, ?4, ?5, ?7, ?8, ?6 ${inserted}`
+				`INSERT INTO tenant_policy (tenant_id, revision, active_link_limit, monthly_click_limit, retention_days, domain_limit, member_limit, webhook_endpoint_limit, automation_limit, updated_at) SELECT ?1, 1, ?2, ?3, ?4, ?5, ?7, ?8, ?9, ?6 ${inserted}`
 			)
 			.bind(
 				tenant.id,
@@ -248,7 +252,8 @@ export function tenantStatements(
 				limits.domainLimit,
 				now,
 				limits.memberLimit ?? 2,
-				limits.webhookEndpointLimit ?? 0
+				limits.webhookEndpointLimit ?? 0,
+				limits.automationLimit ?? 0
 			)
 	];
 }
@@ -265,7 +270,7 @@ export async function updateTenantPolicy(
 	checkLimits(limits);
 	const row = await db
 		.prepare(
-			'UPDATE tenant_policy SET revision = revision + 1, active_link_limit = ?, monthly_click_limit = ?, retention_days = ?, domain_limit = ?, updated_at = ?, member_limit = COALESCE(?7, member_limit), webhook_endpoint_limit = COALESCE(?8, webhook_endpoint_limit) WHERE tenant_id = ?6 AND NOT EXISTS (SELECT 1 FROM tenant_deletions WHERE tenant_id = ?6) RETURNING revision'
+			'UPDATE tenant_policy SET revision = revision + 1, active_link_limit = ?, monthly_click_limit = ?, retention_days = ?, domain_limit = ?, updated_at = ?, member_limit = COALESCE(?7, member_limit), webhook_endpoint_limit = COALESCE(?8, webhook_endpoint_limit), automation_limit = COALESCE(?9, automation_limit) WHERE tenant_id = ?6 AND NOT EXISTS (SELECT 1 FROM tenant_deletions WHERE tenant_id = ?6) RETURNING revision'
 		)
 		.bind(
 			limits.activeLinkLimit,
@@ -275,7 +280,8 @@ export async function updateTenantPolicy(
 			now,
 			tenantId,
 			limits.memberLimit ?? null,
-			limits.webhookEndpointLimit ?? null
+			limits.webhookEndpointLimit ?? null,
+			limits.automationLimit ?? null
 		)
 		.first<{ revision: unknown }>();
 	return row ? count(row.revision, 'revision') : null;
@@ -317,7 +323,7 @@ export async function readPolicyProjection(
 ): Promise<PolicyProjection | null> {
 	const row = await db
 		.prepare(
-			'SELECT p.revision, p.routing_revision, p.analytics_revision, t.analytics_shard_id, p.active_link_limit, p.domain_limit, p.monthly_click_limit, p.retention_days, p.member_limit, p.webhook_endpoint_limit, p.suspended_at FROM tenant_policy p JOIN tenants t ON t.id = p.tenant_id WHERE p.tenant_id = ? AND NOT EXISTS (SELECT 1 FROM tenant_deletions d WHERE d.tenant_id = p.tenant_id)'
+			'SELECT p.revision, p.routing_revision, p.analytics_revision, t.analytics_shard_id, p.active_link_limit, p.domain_limit, p.monthly_click_limit, p.retention_days, p.member_limit, p.webhook_endpoint_limit, p.automation_limit, p.suspended_at FROM tenant_policy p JOIN tenants t ON t.id = p.tenant_id WHERE p.tenant_id = ? AND NOT EXISTS (SELECT 1 FROM tenant_deletions d WHERE d.tenant_id = p.tenant_id)'
 		)
 		.bind(tenantId)
 		.first<Record<string, unknown>>();
@@ -334,6 +340,7 @@ export async function readPolicyProjection(
 		retentionDays: count(row.retention_days, 'retention'),
 		memberLimit: count(row.member_limit, 'member limit'),
 		webhookEndpointLimit: count(row.webhook_endpoint_limit, 'webhook endpoint limit'),
+		automationLimit: count(row.automation_limit, 'automation limit'),
 		suspendedAt: row.suspended_at === null ? null : count(row.suspended_at, 'suspension time')
 	};
 }

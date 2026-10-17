@@ -20,7 +20,8 @@
 		"./members": "./src/members.ts",
 		"./deletions": "./src/deletions.ts",
 		"./operations": "./src/operations.ts",
-		"./webhooks": "./src/webhooks.ts"
+		"./webhooks": "./src/webhooks.ts",
+		"./automations": "./src/automations.ts"
 	},
 	"dependencies": {
 		"@flared/contracts": "workspace:*",

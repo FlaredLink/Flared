@@ -44,6 +44,8 @@ export function exitCodeFor(code: ClientErrorCode): number {
 		case 'TOKEN_LIMIT_REACHED':
 		case 'DOMAIN_LIMIT_REACHED':
 		case 'WEBHOOK_LIMIT_REACHED':
+		case 'AUTOMATION_LIMIT_REACHED':
+		case 'LINK_AUTOMATION_LIMIT_REACHED':
 			return exitCodes.planLimit;
 		case 'RATE_LIMITED':
 		case 'DOMAIN_CHECK_TOO_SOON':

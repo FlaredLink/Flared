@@ -3,9 +3,9 @@
 // its API base path, and the browser sends the session cookie and its Origin with each change.
 // Each response is checked at run time: a body of the wrong shape counts as a failed request.
 import {
-	isSubscribableWebhookEvent,
 	isWebhookEndpoint,
 	isWebhookEndpointPage,
+	isWebhookEventType,
 	webhookDeliveryErrors,
 	type CreateWebhookInput,
 	type CreatedWebhookEndpoint,
@@ -48,7 +48,7 @@ export function isWebhookDelivery(value: unknown): value is WebhookDelivery {
 		record(value) &&
 		isString(value.id) &&
 		isString(value.eventId) &&
-		(isSubscribableWebhookEvent(value.eventType) || value.eventType === 'webhook.test') &&
+		isWebhookEventType(value.eventType) &&
 		isString(value.state) &&
 		deliveryStates.includes(value.state) &&
 		isCount(value.attempts) &&

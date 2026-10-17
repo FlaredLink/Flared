@@ -382,6 +382,21 @@
 			"binding": "WEBHOOK_DELIVERY_ANALYTICS",
 			"database_name": "webhook-delivery-analytics",
 			"database_id": "00000000-0000-0000-0000-000000000099"
+		},
+		{
+			"binding": "AUTOMATIONS_IDENTITY",
+			"database_name": "automations-identity",
+			"database_id": "00000000-0000-0000-0000-000000000100"
+		},
+		{
+			"binding": "AUTOMATIONS_ROUTING",
+			"database_name": "automations-routing",
+			"database_id": "00000000-0000-0000-0000-000000000101"
+		},
+		{
+			"binding": "AUTOMATIONS_ANALYTICS",
+			"database_name": "automations-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000102"
 		}
 	]
 }

@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import type { ListedLink } from '@flared/contracts/links';
 	import Glyph from '../icons/Glyph.svelte';
 	import Button from '../atoms/Button.svelte';
@@ -16,8 +17,10 @@
 		analyticsHref?: string;
 		// Where the destination and title are edited.
 		editHref?: string;
+		// The link's automations, shown after Performance.
+		automations?: Snippet;
 	}
-	let { link, apiBase, analyticsHref, editHref }: Props = $props();
+	let { link, apiBase, analyticsHref, editHref, automations }: Props = $props();
 
 	const numbers = new Intl.NumberFormat();
 	const dayFormat = new Intl.DateTimeFormat(undefined, {
@@ -149,6 +152,10 @@
 			<p class="note">Clicks are not available right now.</p>
 		{/if}
 	</div>
+
+	{#if automations}
+		<div class="block">{@render automations()}</div>
+	{/if}
 
 	<div class="block qr">
 		<img

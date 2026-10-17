@@ -3,6 +3,7 @@
 	import LinkSimple from 'phosphor-svelte/lib/LinkSimple';
 	import Globe from 'phosphor-svelte/lib/Globe';
 	import GearSix from 'phosphor-svelte/lib/GearSix';
+	import Lightning from 'phosphor-svelte/lib/Lightning';
 	import SignOut from 'phosphor-svelte/lib/SignOut';
 	import List from 'phosphor-svelte/lib/List';
 	import X from 'phosphor-svelte/lib/X';
@@ -11,6 +12,7 @@
 	const icons = {
 		link: LinkSimple,
 		globe: Globe,
+		lightning: Lightning,
 		settings: GearSix,
 		signOut: SignOut,
 		menu: List,

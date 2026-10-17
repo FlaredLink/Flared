@@ -4,7 +4,7 @@ import type { BlockReason } from '@flared/contracts/links';
 import { applyAnalyticsPolicy } from '@flared/data/analytics';
 import {
 	applyRoutingPolicy,
-	listUnprojectedWebhookLimits,
+	listUnprojectedLimits,
 	type RoutingPolicy
 } from '@flared/data/routing-policy';
 import {
@@ -62,6 +62,7 @@ function routingPolicyOf(policy: PolicyProjection, now: number): RoutingPolicy {
 		activeLinkLimit: policy.activeLinkLimit,
 		domainLimit: policy.domainLimit,
 		webhookEndpointLimit: policy.webhookEndpointLimit,
+		automationLimit: policy.automationLimit,
 		suspendedAt: policy.suspendedAt,
 		now
 	};
@@ -159,9 +160,10 @@ export async function retryProjections(
 				console.error(JSON.stringify({ event: 'policy_projection_failed', store, tenantId }));
 			}
 		}
-	// A routing row projected before routing stored the webhook endpoint limit gets it at the
-	// same revision. A tenant whose deletion has started has no policy to copy.
-	for (const tenantId of await listUnprojectedWebhookLimits(stores.routing, limit)) {
+	// A routing row projected before routing stored the webhook endpoint limit or the automation
+	// limit gets them at the same revision. A tenant whose deletion has started has no policy to
+	// copy.
+	for (const tenantId of await listUnprojectedLimits(stores.routing, limit)) {
 		try {
 			const policy = await readPolicyProjection(identity, tenantId);
 			if (!policy) continue;

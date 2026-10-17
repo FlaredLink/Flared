@@ -5,16 +5,23 @@
 	import { invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import Button from '@flared/ui/atoms/Button.svelte';
+	import ApplyAutomationDialog from '@flared/ui/automations/ApplyAutomationDialog.svelte';
 	import ImportDialog from '@flared/ui/links/ImportDialog.svelte';
 	import LinkCreateForm from '@flared/ui/links/LinkCreateForm.svelte';
 	import LinkList from '@flared/ui/links/LinkList.svelte';
 	import { linkErrorMessage } from '@flared/ui/links/messages';
-	import { linkRoute } from '$lib/routes';
+	import { appRoutes, linkRoute } from '$lib/routes';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	let pending = $state(false);
 	let importing = $state(false);
+	let selectedIds = $state<string[]>([]);
+	let applying = $state(false);
+	// The templates of the bulk action: none when they failed to load or automations are off.
+	const automations = $derived(
+		data.automations && data.automations.limit > 0 ? data.automations.automations : []
+	);
 
 	const createError = $derived(
 		form && 'error' in form && form.error
@@ -31,6 +38,13 @@
 		data.domains.find((domain) => domain.isDefault)?.hostname ?? page.url.host
 	);
 	const numbers = new Intl.NumberFormat();
+
+	// The failure list of the bulk action names each link as the list does.
+	function linkName(id: string): string {
+		const link =
+			data.links.status === 'ready' ? data.links.links.find((item) => item.id === id) : undefined;
+		return link ? (link.title ?? `${link.hostname}/${link.slug}`) : id;
+	}
 
 	const enhanceCreate: Action<HTMLFormElement> = (node) =>
 		enhance(node, () => {
@@ -80,7 +94,24 @@
 		nextHref={data.links.nextCursor ? `?cursor=${encodeURIComponent(data.links.nextCursor)}` : null}
 		highlightId={createdId}
 		iconHref={(hostname) => `/api/v1/icons/${hostname}`}
-	/>
+		selectable={automations.length > 0}
+		bind:selectedIds
+	>
+		{#snippet bulkBar()}
+			<Button size="sm" icon="lightning" onclick={() => (applying = true)}>Apply automation</Button>
+		{/snippet}
+	</LinkList>
+	{#if automations.length > 0}
+		<ApplyAutomationDialog
+			bind:open={applying}
+			linkIds={selectedIds}
+			{automations}
+			apiBase="/api/v1"
+			{linkName}
+			automationsHref={appRoutes.automations}
+			onapplied={() => void invalidateAll()}
+		/>
+	{/if}
 	<ImportDialog
 		bind:open={importing}
 		apiBase="/api/v1"

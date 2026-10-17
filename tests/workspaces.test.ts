@@ -92,6 +92,7 @@ function api(extra: Pick<ApiDependencies, 'createWorkspace'> = {}) {
 		analytics: { 'analytics-1': env.WORKSPACES_ANALYTICS },
 		appOrigin: origin,
 		tokenAuth,
+		automations: { email: false, destinationChecks: false },
 		authenticate: async (request) => {
 			if (request.headers.has('authorization'))
 				return authenticateBearer(tokenAuth, identity(), request);
@@ -578,7 +579,16 @@ describe('roles', () => {
 		['DELETE', '/webhooks/:id', 'owner'],
 		['POST', '/webhooks/:id/secret', 'owner'],
 		['POST', '/webhooks/:id/test', 'owner'],
-		['GET', '/webhooks/:id/deliveries', 'owner']
+		['GET', '/webhooks/:id/deliveries', 'owner'],
+		['GET', '/automations', 'member'],
+		['POST', '/automations', 'owner'],
+		['PATCH', '/automations/:id', 'owner'],
+		['DELETE', '/automations/:id', 'owner'],
+		['GET', '/automations/:id/runs', 'member'],
+		['POST', '/automations/:id/links', 'member'],
+		['GET', '/links/:id/automations', 'member'],
+		['PUT', '/links/:id/automations/:automationId', 'member'],
+		['DELETE', '/links/:id/automations/:automationId', 'member']
 	];
 
 	beforeAll(async () => {

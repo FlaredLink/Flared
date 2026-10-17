@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Webhooks: event types, the endpoint and delivery shapes the dashboard shows, the create and
 // update inputs, and the rules for an endpoint URL.
+import type { AutomationActionType } from './automations';
 import { isWithinHostnames } from './domains';
 import { publicHostname } from './icons';
 import { LinkInputError, type Link } from './links';
@@ -16,8 +17,9 @@ export const subscribableWebhookEvents = [
 ] as const;
 export type SubscribableWebhookEvent = (typeof subscribableWebhookEvents)[number];
 
-// webhook.test goes only to the endpoint it was sent to; no endpoint subscribes to it.
-export type WebhookEventType = SubscribableWebhookEvent | 'webhook.test';
+// webhook.test and automation.triggered go only to the endpoint they target; no endpoint
+// subscribes to them. An automation event skips a turned-off endpoint; a test reaches it.
+export type WebhookEventType = SubscribableWebhookEvent | 'webhook.test' | 'automation.triggered';
 
 export const maxWebhookUrlLength = 2048;
 // Milestones are counted in steps of 100 clicks, so an interval is a multiple of 100.
@@ -115,11 +117,26 @@ export interface LinkPreviousState {
 	enabled: boolean;
 }
 
+// The trigger of an automation.triggered event, with what met it.
+export type AutomationTriggerPayload =
+	| { type: 'end_date'; endsAt: string | null }
+	| { type: 'link_age'; days: number }
+	| { type: 'clicks'; clicks: number }
+	| { type: 'destination_down'; lastResult: string | null };
+
+// link is the link after the run's changes; actions are the ones that ran, in their order.
+export interface AutomationTriggeredData {
+	automation: { id: string; name: string; trigger: AutomationTriggerPayload };
+	link: Link;
+	actions: AutomationActionType[];
+}
+
 export type WebhookEventData =
 	| { link: Link }
 	| { link: Link; previous: LinkPreviousState }
 	| { link: Link; clicks: number }
-	| { message: string };
+	| { message: string }
+	| AutomationTriggeredData;
 
 export interface CreateWebhookInput {
 	url: string;
@@ -144,6 +161,14 @@ export function newWebhookEventId(): string {
 export function isSubscribableWebhookEvent(value: unknown): value is SubscribableWebhookEvent {
 	return (
 		typeof value === 'string' && (subscribableWebhookEvents as readonly string[]).includes(value)
+	);
+}
+
+export function isWebhookEventType(value: unknown): value is WebhookEventType {
+	return (
+		value === 'webhook.test' ||
+		value === 'automation.triggered' ||
+		isSubscribableWebhookEvent(value)
 	);
 }
 

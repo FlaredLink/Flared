@@ -2,10 +2,11 @@
 // Routing-store records for webhooks: endpoints, the event outbox, and deliveries; and the click
 // milestones that the analytics shards hand over. Link events are staged by links.ts in the
 // batch of the change, with the fragments below.
-import type { D1Database } from '@cloudflare/workers-types/index.ts';
+import type { D1Database, D1PreparedStatement } from '@cloudflare/workers-types/index.ts';
 import {
 	defaultMilestoneInterval,
 	isSubscribableWebhookEvent,
+	isWebhookEventType,
 	webhookDeliveryErrors,
 	type SubscribableWebhookEvent,
 	type WebhookDeliveryError,
@@ -27,7 +28,8 @@ export function webhooksOn(tenant: string): string {
 	return `COALESCE((SELECT webhook_endpoint_limit FROM tenant_policy WHERE tenant_id = ${tenant}), 0) > 0 AND EXISTS (SELECT 1 FROM webhook_endpoints WHERE tenant_id = ${tenant} AND enabled = 1)`;
 }
 
-function isoTime(column: string): string {
+// SQL: a millisecond time column as ISO 8601 in UTC, as Date.toISOString writes it.
+export function isoTime(column: string): string {
 	return `strftime('%Y-%m-%dT%H:%M:%S', ${column} / 1000, 'unixepoch') || '.' || printf('%03d', ${column} % 1000) || 'Z'`;
 }
 
@@ -176,7 +178,7 @@ function batchSize(limit: number, max: number): number {
 }
 
 function eventType(value: unknown): WebhookEventType {
-	if (value === 'webhook.test' || isSubscribableWebhookEvent(value)) return value;
+	if (isWebhookEventType(value)) return value;
 	throw new Error('Invalid stored webhook event type');
 }
 
@@ -424,7 +426,8 @@ export async function insertTestEvent(
 // Turns the oldest events not fanned out yet into deliveries, in one batch: first, pending
 // deliveries of a workspace whose limit is now 0 are skipped. An event goes to each enabled
 // endpoint of its workspace that existed when it happened and subscribes to its type (for a
-// milestone, with an interval that divides the clicks), or only to its target. Nothing goes to a
+// milestone, with an interval that divides the clicks), or only to its target: a test to the
+// target enabled or not, an automation event only while the target is enabled. Nothing goes to a
 // workspace at limit 0 or suspended. The same ordered set is marked in the same batch, and a
 // pair that already has a delivery is left alone, so a repeat creates no second delivery.
 // With tenantId, only that workspace's events and deliveries.
@@ -454,7 +457,7 @@ export async function fanOutWebhookEvents(
 				JOIN tenant_policy p ON p.tenant_id = e.tenant_id
 				JOIN webhook_endpoints w ON w.tenant_id = e.tenant_id
 				WHERE COALESCE(p.webhook_endpoint_limit, 0) > 0 AND p.suspended_at IS NULL
-				AND (w.id = e.target_endpoint_id OR (
+				AND ((w.id = e.target_endpoint_id AND (w.enabled = 1 OR e.type = 'webhook.test')) OR (
 					e.target_endpoint_id IS NULL AND w.enabled = 1 AND w.created_at <= e.created_at
 					AND EXISTS (SELECT 1 FROM json_each(w.events) WHERE value = e.type)
 					AND (e.type <> 'link.click_milestone' OR json_extract(e.payload, '$.clicks') % w.milestone_interval = 0)
@@ -661,8 +664,18 @@ export async function insertMilestoneEvents(
 	milestones: ClickMilestone[]
 ): Promise<number> {
 	if (milestones.length === 0) return 0;
+	const result = await milestoneEventsStatement(routing, milestones).run();
+	return result.meta.changes;
+}
+
+// The statement of insertMilestoneEvents, for a caller that batches it with other milestone
+// work, such as markClickApplications. milestones must not be empty.
+export function milestoneEventsStatement(
+	routing: D1Database,
+	milestones: ClickMilestone[]
+): D1PreparedStatement {
 	batchSize(milestones.length, 100);
-	const result = await routing
+	return routing
 		.prepare(
 			`INSERT INTO webhook_events (id, tenant_id, type, subject_id, payload, created_at)
 			SELECT m.id, m.tenant_id, 'link.click_milestone', m.link_id, json_object('link', ${linkJson('l', 'n')}, 'clicks', m.clicks), m.created_at
@@ -678,9 +691,7 @@ export async function insertMilestoneEvents(
 				AND EXISTS (SELECT 1 FROM json_each(w.events) WHERE value = 'link.click_milestone'))
 			ON CONFLICT(id) DO NOTHING`
 		)
-		.bind(JSON.stringify(milestones))
-		.run();
-	return result.meta.changes;
+		.bind(JSON.stringify(milestones));
 }
 
 // Deletes milestones from a shard once routing holds their events.

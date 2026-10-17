@@ -18,6 +18,14 @@ import { isConnectedAppPage, type ConnectedAppPage } from '@flared/contracts/oau
 import { isDomainPage, type DomainPage } from '@flared/contracts/domains';
 import { isWebhookEndpointPage, type WebhookEndpointPage } from '@flared/contracts/webhooks';
 import {
+	isAutomationPage,
+	isAutomationRunPage,
+	isLinkAutomationPage,
+	type AutomationPage,
+	type AutomationRunPage,
+	type LinkAutomationPage
+} from '@flared/contracts/automations';
+import {
 	isWorkspace,
 	isWorkspaceList,
 	workspaceField,
@@ -418,6 +426,49 @@ export async function fetchWebhooks(
 	const result = await getJson(service, headers, '/v1/webhooks');
 	if (!result.ok) return result;
 	return isWebhookEndpointPage(result.body)
+		? { ok: true, page: result.body }
+		: { ok: false, failure: malformed };
+}
+
+export async function fetchAutomations(
+	service: ApiService,
+	headers: Headers
+): Promise<{ ok: true; page: AutomationPage } | { ok: false; failure: ApiFailure }> {
+	const result = await getJson(service, headers, '/v1/automations');
+	if (!result.ok) return result;
+	return isAutomationPage(result.body)
+		? { ok: true, page: result.body }
+		: { ok: false, failure: malformed };
+}
+
+export async function fetchLinkAutomations(
+	service: ApiService,
+	headers: Headers,
+	linkId: string
+): Promise<{ ok: true; page: LinkAutomationPage } | { ok: false; failure: ApiFailure }> {
+	const result = await getJson(
+		service,
+		headers,
+		`/v1/links/${encodeURIComponent(linkId)}/automations`
+	);
+	if (!result.ok) return result;
+	return isLinkAutomationPage(result.body)
+		? { ok: true, page: result.body }
+		: { ok: false, failure: malformed };
+}
+
+export async function fetchAutomationRuns(
+	service: ApiService,
+	headers: Headers,
+	automationId: string
+): Promise<{ ok: true; page: AutomationRunPage } | { ok: false; failure: ApiFailure }> {
+	const result = await getJson(
+		service,
+		headers,
+		`/v1/automations/${encodeURIComponent(automationId)}/runs`
+	);
+	if (!result.ok) return result;
+	return isAutomationRunPage(result.body)
 		? { ok: true, page: result.body }
 		: { ok: false, failure: malformed };
 }

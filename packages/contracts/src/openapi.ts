@@ -3,6 +3,19 @@
 // in this package; tests check it against the API's routes and real responses. The session-only
 // token management routes for the dashboard are not part of the public API.
 import { browserFamilies, deviceCategories, osFamilies } from './analytics';
+import {
+	automationActionTypes,
+	automationNameMaxLength,
+	automationResults,
+	automationTriggerTypes,
+	automationsPerLink,
+	maxApplyLinks,
+	maxTriggerClicks,
+	maxTriggerDays,
+	minTriggerClicks,
+	minTriggerDays,
+	triggerClickStep
+} from './automations';
 import { domainFailures, domainSetups, domainStates } from './domains';
 import { exportAnalyticsPageSize, exportDimensions, exportLinkPageSize } from './export';
 import { errorStatus } from './errors';
@@ -18,7 +31,7 @@ import { tokenScopes, type TokenScope } from './tokens';
 // Duplicated from the client's QR module, which this package cannot import.
 const qrSizes = { minimum: 128, maximum: 2048, default: 512 };
 
-export const openApiVersion = '1.5.0';
+export const openApiVersion = '1.6.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const dateTime = { type: 'string', format: 'date-time' };
@@ -35,6 +48,12 @@ const object = (properties: Record<string, unknown>, required = Object.keys(prop
 	properties,
 	required
 });
+
+const endsAt = {
+	...dateTime,
+	description:
+		'Required by an end_date template and refused by the others: an ISO 8601 time with an offset, within 10 years. A past time runs at the next scheduled run.'
+};
 
 const schemas = {
 	Error: object({
@@ -307,6 +326,153 @@ const schemas = {
 		used: { ...count, description: 'Workspace domains that count against the limit.' },
 		limit: count
 	}),
+	AutomationTrigger: {
+		oneOf: [
+			object({ type: { const: 'end_date' } }),
+			object({
+				type: { const: 'link_age' },
+				days: { type: 'integer', minimum: minTriggerDays, maximum: maxTriggerDays }
+			}),
+			object({
+				type: { const: 'clicks' },
+				clicks: {
+					type: 'integer',
+					minimum: minTriggerClicks,
+					maximum: maxTriggerClicks,
+					multipleOf: triggerClickStep
+				}
+			}),
+			object({ type: { const: 'destination_down' } })
+		],
+		description:
+			'end_date: at the end date given when the template is applied to a link. link_age: this many days after the link was created. clicks: when the link reaches this many counted clicks. destination_down: when the destination fails two checks in a row, where the installation checks destinations.'
+	},
+	AutomationAction: {
+		oneOf: [
+			object({
+				type: { const: 'change_destination' },
+				destination: { type: 'string', format: 'uri', maxLength: maxDestinationLength }
+			}),
+			object({ type: { const: 'disable_link' } }),
+			object({
+				type: { const: 'send_webhook' },
+				endpointId: { type: 'string', description: 'A webhook endpoint of the workspace.' }
+			}),
+			object({ type: { const: 'email_owner' } })
+		],
+		description:
+			'Actions run in this order: change the destination, turn the link off, send an automation.triggered event to the webhook endpoint, email the workspace owner.'
+	},
+	Automation: object({
+		id: { type: 'string' },
+		name: { type: 'string', minLength: 1, maxLength: automationNameMaxLength },
+		enabled: {
+			type: 'boolean',
+			description: 'A template that is off does not run; its due applications are skipped.'
+		},
+		trigger: ref('AutomationTrigger'),
+		actions: {
+			type: 'array',
+			items: ref('AutomationAction'),
+			minItems: 1,
+			maxItems: automationActionTypes.length
+		},
+		links: { ...count, description: 'Links the template is applied to, whether it ran or not.' },
+		createdAt: dateTime,
+		updatedAt: dateTime
+	}),
+	AutomationPage: object({
+		automations: { type: 'array', items: ref('Automation') },
+		used: count,
+		limit: { ...count, description: 'Templates the workspace may keep; 0 turns automations off.' },
+		actionTypes: {
+			type: 'array',
+			items: { type: 'string', enum: [...automationActionTypes] },
+			description: 'The actions this installation offers.'
+		},
+		triggerTypes: {
+			type: 'array',
+			items: { type: 'string', enum: [...automationTriggerTypes] },
+			description: 'The triggers this installation offers.'
+		},
+		perLinkLimit: { const: automationsPerLink, description: 'Templates one link takes at most.' }
+	}),
+	LinkAutomation: object({
+		automationId: { type: 'string' },
+		name: { type: 'string' },
+		enabled: { type: 'boolean' },
+		trigger: ref('AutomationTrigger'),
+		state: {
+			type: 'string',
+			enum: ['waiting', 'done', 'failed', 'skipped'],
+			description:
+				'waiting: not run yet. done: it ran. failed and skipped: see result. Each application runs once; applying the template again re-arms it.'
+		},
+		endsAt: nullable(dateTime),
+		dueAt: { ...nullable(dateTime), description: 'When the trigger is met, once that is known.' },
+		firedAt: nullable(dateTime),
+		result: nullable({ type: 'string', enum: [...automationResults] }),
+		appliedAt: dateTime,
+		check: {
+			...nullable(
+				object({
+					lastCheckedAt: nullable(dateTime),
+					lastResult: nullable({ type: 'string' }),
+					failures: count
+				})
+			),
+			description: 'The destination checks of a destination_down template; null for the others.'
+		}
+	}),
+	LinkAutomationPage: object({
+		linkId: { type: 'string' },
+		automations: { type: 'array', items: ref('LinkAutomation'), maxItems: automationsPerLink }
+	}),
+	ApplyLinkAutomationResult: {
+		allOf: [
+			ref('LinkAutomationPage'),
+			object({
+				status: {
+					type: 'string',
+					enum: ['applied', 'unchanged'],
+					description: 'unchanged: the template already waited on the link with the same end date.'
+				}
+			})
+		]
+	},
+	ApplyAutomationInput: object(
+		{
+			endsAt
+		},
+		[]
+	),
+	ApplyAutomationLinksInput: object(
+		{
+			linkIds: {
+				type: 'array',
+				items: { type: 'string' },
+				minItems: 1,
+				maxItems: maxApplyLinks,
+				description: `Up to ${maxApplyLinks} link IDs; more fail with TOO_MANY_ITEMS.`
+			},
+			endsAt
+		},
+		['linkIds']
+	),
+	ApplyAutomationLinkResult: object(
+		{
+			linkId: { type: 'string' },
+			status: { type: 'string', enum: ['applied', 'unchanged', 'failed'] },
+			error: object({
+				code: { type: 'string', enum: Object.keys(errorStatus) },
+				message: { type: 'string' }
+			})
+		},
+		['linkId', 'status']
+	),
+	ApplyAutomationLinksResult: object({
+		results: { type: 'array', items: ref('ApplyAutomationLinkResult') }
+	}),
 	Workspace: object({
 		id: { type: 'string' },
 		name: { type: 'string' },
@@ -338,6 +504,13 @@ const json = (schema: unknown) => ({ 'application/json': { schema } });
 const errorResponse = { description: 'An error. See the code.', content: json(ref('Error')) };
 const linkId = { name: 'id', in: 'path', required: true, schema: { type: 'string' } };
 const domainId = { name: 'id', in: 'path', required: true, schema: { type: 'string' } };
+const automationId = (name: string) => ({
+	name,
+	in: 'path',
+	required: true,
+	schema: { type: 'string' },
+	description: 'An automation ID from GET /v1/automations.'
+});
 const cursor = {
 	name: 'cursor',
 	in: 'query',
@@ -546,6 +719,42 @@ export function openApiDocument(serverUrl: string) {
 					}
 				)
 			},
+			'/links/{id}/automations': {
+				get: operation(
+					'List the automations applied to a link',
+					'links:read',
+					{
+						'200': {
+							description: 'The templates on the link, oldest application first.',
+							content: json(ref('LinkAutomationPage'))
+						}
+					},
+					{ parameters: [linkId] }
+				)
+			},
+			'/links/{id}/automations/{automationId}': {
+				put: operation(
+					'Apply an automation to a link',
+					'links:write',
+					{
+						'200': {
+							description:
+								'The templates on the link after the apply. A link takes at most 5 templates.',
+							content: json(ref('ApplyLinkAutomationResult'))
+						}
+					},
+					{
+						parameters: [linkId, automationId('automationId')],
+						requestBody: { required: false, content: json(ref('ApplyAutomationInput')) }
+					}
+				),
+				delete: operation(
+					'Remove an automation from a link',
+					'links:write',
+					{ '204': { description: 'Removed. The template stays in the workspace.' } },
+					{ parameters: [linkId, automationId('automationId')] }
+				)
+			},
 			'/domains': {
 				get: operation('List domains you can use', 'domains:read', {
 					'200': {
@@ -657,6 +866,32 @@ export function openApiDocument(serverUrl: string) {
 						}
 					},
 					{ parameters: [cursor] }
+				)
+			},
+			'/automations': {
+				get: operation('List the workspace’s automation templates', 'links:read', {
+					'200': {
+						description:
+							'Templates, oldest first. Each is a trigger, then its actions. The workspace owner creates them in the Flared app.',
+						content: json(ref('AutomationPage'))
+					}
+				})
+			},
+			'/automations/{id}/links': {
+				post: operation(
+					'Apply an automation to links',
+					'links:write',
+					{
+						'200': {
+							description:
+								'One result for each link, in order; each link is applied or fails on its own. Applying again re-arms a template that already ran on a link.',
+							content: json(ref('ApplyAutomationLinksResult'))
+						}
+					},
+					{
+						parameters: [automationId('id')],
+						requestBody: { required: true, content: json(ref('ApplyAutomationLinksInput')) }
+					}
 				)
 			},
 			'/openapi.json': {

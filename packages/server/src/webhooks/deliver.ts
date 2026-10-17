@@ -1,23 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Webhook delivery: fan events out, claim deliveries, send them, and record the results. A
 // request that stages an event delivers its own workspace's new deliveries in the background;
-// the scheduled job moves click milestones from the analytics shards, fans out what is left,
-// sends retries, and cleans up. Delivery is at least once: a receiver dedupes on webhook-id.
+// the scheduled job can move click milestones from the analytics shards, then fans out what is
+// left, sends retries, and cleans up. Delivery is at least once: a receiver dedupes on webhook-id.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
 import { parseWebhookUrl, type WebhookEnvelope } from '@flared/contracts/webhooks';
 import {
 	claimWebhookDeliveries,
-	deleteClickMilestones,
 	deleteOldWebhookRecords,
 	expireWebhookDeliveries,
 	fanOutWebhookEvents,
 	finishWebhookDeliveries,
-	insertMilestoneEvents,
 	readClaimedDeliveries,
-	readClickMilestones,
 	type ClaimedDelivery,
 	type DeliveryResult
 } from '@flared/data/webhooks';
+import { transferClickMilestones } from '../automations/milestones';
 import type { AnalyticsShards } from '../shards';
 import { endpointSecret, keyId, signatureHeader } from './signing';
 
@@ -26,9 +24,8 @@ export const webhookTimeoutMs = 10_000;
 // Only this much of a response is read; the rest is cancelled.
 const responseBytes = 1024;
 const defaultConcurrency = 5;
-// Events fanned out in one run, and milestones moved from each shard.
+// Events fanned out in one run.
 const fanOutBatch = 100;
-const milestoneBatch = 50;
 // Rows expired or deleted in each statement of a cleanup run.
 const cleanupBatch = 1000;
 // claimWebhookDeliveries takes at most this many at once.
@@ -110,8 +107,9 @@ async function send(delivery: ClaimedDelivery, context: SendContext): Promise<De
 	// The secret came from another deployment secret and cannot be derived now.
 	if (endpoint.keyId !== context.currentKeyId)
 		return result(delivery, 'failed', { errorCode: 'secret_changed' });
-	// Turned off after the fan-out. A test event goes to its endpoint either way.
-	if (!endpoint.enabled && !event.targeted)
+	// Turned off after the fan-out. A test event goes to its endpoint either way; an automation
+	// event, though targeted, does not.
+	if (!endpoint.enabled && event.type !== 'webhook.test')
 		return result(delivery, 'skipped', { errorCode: 'disabled' });
 	let url: string;
 	try {
@@ -273,32 +271,22 @@ export interface WebhookJobSummary extends WebhookRunSummary {
 	events: number;
 }
 
-// The scheduled run. Each shard's waiting milestones become events (at most 3 statements per
-// shard: read, insert, delete; the insert comes first, so a stop in between writes nothing
-// twice), leftovers are fanned out (3), and due deliveries are claimed and sent up to
-// maxDeliveries (25 by default) in rounds of at most 100 (4 statements each). A shard that
-// fails does not stop the deliveries; the run then throws, so the job records a failure.
+// The scheduled run. With transferMilestones (the default), each shard's waiting milestones first
+// become events and mark the clicks automations they reach (transferClickMilestones: a read, and
+// 3 more statements when milestones wait). Leftovers are fanned out (3), and due deliveries are
+// claimed and sent up to maxDeliveries (25 by default) in rounds of at most 100 (4 statements
+// each). An edition whose automation job moves the milestones passes false. A shard that fails
+// does not stop the deliveries; the run then throws, so the job records a failure.
 export async function runWebhookJob(
 	stores: { routing: D1Database; analytics: AnalyticsShards },
-	settings: WebhookSendSettings & { maxDeliveries?: number }
+	settings: WebhookSendSettings & { maxDeliveries?: number; transferMilestones?: boolean }
 ): Promise<WebhookJobSummary> {
 	const { routing } = stores;
 	const now = (settings.now ?? Date.now)();
-	let milestones = 0;
-	const failedShards: string[] = [];
-	for (const [shardId, shard] of Object.entries(stores.analytics))
-		try {
-			const waiting = await readClickMilestones(shard, milestoneBatch);
-			if (waiting.length === 0) continue;
-			milestones += await insertMilestoneEvents(routing, waiting);
-			await deleteClickMilestones(
-				shard,
-				waiting.map((milestone) => milestone.id)
-			);
-		} catch {
-			failedShards.push(shardId);
-			console.error(JSON.stringify({ event: 'webhook_milestones_failed', shardId }));
-		}
+	const { milestones, failedShards } =
+		(settings.transferMilestones ?? true)
+			? await transferClickMilestones(stores, now)
+			: { milestones: 0, failedShards: [] };
 	const fanned = await fanOutWebhookEvents(routing, { now, limit: fanOutBatch });
 	const maxDeliveries = settings.maxDeliveries ?? 25;
 	if (!Number.isSafeInteger(maxDeliveries) || maxDeliveries < 0)
