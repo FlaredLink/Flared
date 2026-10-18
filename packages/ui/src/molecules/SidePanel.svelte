@@ -105,7 +105,7 @@
 	/* Narrow windows show the sidebar over the page. */
 	@media (max-width: 89.99rem) {
 		.side-panel {
-			box-shadow: var(--shadow-float);
+			box-shadow: var(--shadow-lift);
 		}
 	}
 </style>

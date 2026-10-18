@@ -1,18 +1,13 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
-	// A usage bar: coral normally (ink with tone 'ink'), amber from 80%, red at the limit.
-	let {
-		value,
-		max,
-		label,
-		tone = 'accent'
-	}: { value: number; max: number; label: string; tone?: 'accent' | 'ink' } = $props();
+	// A usage bar: ink normally, amber from 80%, red at the limit.
+	let { value, max, label }: { value: number; max: number; label: string } = $props();
 	const ratio = $derived(max > 0 ? Math.min(value / max, 1) : 0);
 	const level = $derived(ratio >= 1 ? 'full' : ratio >= 0.8 ? 'near' : 'normal');
 </script>
 
 <span
-	class="meter {level} {tone}"
+	class="meter {level}"
 	role="meter"
 	aria-label={label}
 	aria-valuemin={0}
@@ -27,15 +22,12 @@
 		height: 0.375rem;
 		overflow: hidden;
 		border-radius: var(--radius-pill, 999px);
-		background: var(--color-selected);
+		background: var(--color-surface-3);
 	}
 	.fill {
 		display: block;
 		height: 100%;
 		border-radius: inherit;
-		background: var(--color-accent);
-	}
-	.ink.normal .fill {
 		background: var(--color-strong);
 	}
 	.near .fill {

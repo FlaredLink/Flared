@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
+	import Button from '@flared/ui/atoms/Button.svelte';
 	import { invalidateAll } from '$app/navigation';
 	import UsageMeters from '@flared/ui/usage/UsageMeters.svelte';
 	import { limitFields, toLimitsView, type Limits } from '$lib/limits';
@@ -101,8 +102,8 @@
 			{#if limitsError}<p class="error" role="alert">{limitsError}</p>{/if}
 			<div class="button-row">
 				{#if owner}
-					<button class="button primary" type="submit" disabled={limitsPending}
-						>{limitsPending ? 'Saving…' : 'Save limits'}</button
+					<Button variant="primary" type="submit" disabled={limitsPending}
+						>{limitsPending ? 'Saving…' : 'Save limits'}</Button
 					>
 				{/if}
 				{#if limitsView.pending}
@@ -140,7 +141,7 @@
 		padding: 0;
 		border: 0;
 		background: none;
-		color: var(--color-accent-ink);
+		color: var(--color-link);
 		font-weight: 600;
 		text-decoration: underline;
 	}

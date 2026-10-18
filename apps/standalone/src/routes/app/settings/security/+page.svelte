@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
+	import Button from '@flared/ui/atoms/Button.svelte';
 	import { invalidateAll } from '$app/navigation';
 	import PasskeyList from '@flared/ui/passkeys/PasskeyList.svelte';
 	import SectionHeader from '@flared/ui/molecules/SectionHeader.svelte';
@@ -93,8 +94,8 @@
 		</div>
 		{#if passwordError}<p class="error" role="alert">{passwordError}</p>{/if}
 		{#if passwordMessage}<p role="status">{passwordMessage}</p>{/if}
-		<button class="button primary" type="submit" disabled={passwordPending}
-			>{passwordPending ? 'Changing…' : 'Change password'}</button
+		<Button variant="primary" type="submit" disabled={passwordPending}
+			>{passwordPending ? 'Changing…' : 'Change password'}</Button
 		>
 	</form>
 </section>

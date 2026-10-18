@@ -558,8 +558,8 @@
 		cursor: pointer;
 	}
 	.presets button[aria-pressed='true'] {
-		border-color: var(--color-accent);
-		background: var(--color-accent-soft);
+		border-color: var(--color-strong);
+		background: var(--color-surface-2);
 		color: var(--color-strong);
 		font-weight: 600;
 	}

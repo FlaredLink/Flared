@@ -72,8 +72,8 @@
 		font-weight: 600;
 	}
 	.current .mark {
-		background: var(--color-accent);
-		color: #fff;
+		background: var(--color-button-primary);
+		color: var(--color-on-primary);
 	}
 	.visually-hidden {
 		position: absolute;

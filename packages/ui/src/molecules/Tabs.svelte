@@ -107,7 +107,7 @@
 		border: 0;
 		border-bottom: 2px solid transparent;
 		background: none;
-		color: var(--color-lead);
+		color: var(--color-muted);
 		font: inherit;
 		font-size: 1rem;
 		cursor: pointer;
@@ -121,7 +121,7 @@
 		color: var(--color-strong);
 	}
 	button[aria-selected='true'] {
-		border-bottom-color: var(--color-accent);
+		border-bottom-color: var(--color-strong);
 		color: var(--color-strong);
 		font-weight: 600;
 	}

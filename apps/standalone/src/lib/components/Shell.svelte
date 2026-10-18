@@ -277,19 +277,10 @@
 		color: var(--color-strong);
 	}
 	.nav a[aria-current='page'] {
-		background: var(--color-selected);
+		background: var(--color-surface);
+		box-shadow: var(--shadow-ring);
 		color: var(--color-strong);
-		font-weight: 600;
-	}
-	.nav a[aria-current='page']::before {
-		content: '';
-		position: absolute;
-		top: 0;
-		bottom: 0;
-		left: 0;
-		width: 3px;
-		border-radius: 3px 0 0 3px;
-		background: var(--color-accent);
+		font-weight: 500;
 	}
 	.account {
 		padding-top: 1rem;

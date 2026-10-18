@@ -30,12 +30,18 @@
 		font-size: 0.9375rem;
 		cursor: pointer;
 	}
+	/* Touch screens get a 44px row; the whole label is the target. */
+	@media (pointer: coarse) {
+		.checkbox {
+			min-height: 2.75rem;
+		}
+	}
 	input {
 		width: 1.15rem;
 		height: 1.15rem;
 		flex: none;
 		margin: 0.15rem 0 0;
-		accent-color: var(--color-accent);
+		accent-color: var(--color-strong);
 		cursor: pointer;
 	}
 	.text {

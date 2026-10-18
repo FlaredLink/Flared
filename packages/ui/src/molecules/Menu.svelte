@@ -232,7 +232,7 @@
 	.heading {
 		padding: 0.5rem 0.65rem 0.65rem;
 		margin-bottom: 0.25rem;
-		border-bottom: 1px solid var(--color-rule);
+		border-bottom: 1px solid var(--color-rule-soft);
 	}
 	.trigger:hover,
 	.trigger[aria-expanded='true'] {
@@ -245,11 +245,11 @@
 		margin: 0;
 		min-width: 12rem;
 		padding: 0.375rem;
-		border: 1px solid var(--color-rule);
-		border-radius: var(--radius-md, 0.625rem);
-		background: var(--color-paper);
+		border: 0;
+		border-radius: 0.75rem;
+		background: var(--color-surface);
 		color: var(--color-ink);
-		box-shadow: var(--shadow-float);
+		box-shadow: var(--shadow-lift);
 		/* The gap stays outside :popover-open: the closing menu keeps its layout while it fades. */
 		gap: 2px;
 		/* Closing: the menu fades back toward its trigger, faster than it opens. overlay and display
@@ -291,24 +291,31 @@
 	[role='menuitemradio'] {
 		display: flex;
 		align-items: center;
-		gap: 0.65rem;
-		min-height: 2.5rem;
-		padding: 0 0.65rem;
+		gap: 0.625rem;
+		min-height: 2.375rem;
+		padding: 0 0.5rem;
 		border: 0;
-		border-radius: var(--radius-sm, 0.375rem);
+		border-radius: var(--radius-control, 0.5rem);
 		background: transparent;
 		color: var(--color-ink);
 		font: inherit;
-		font-size: 0.9375rem;
+		font-size: 0.8125rem;
 		text-align: left;
 		text-decoration: none;
 		cursor: pointer;
+	}
+	/* Touch screens get a 44px target. */
+	@media (pointer: coarse) {
+		[role='menuitem'],
+		[role='menuitemradio'] {
+			min-height: 2.75rem;
+		}
 	}
 	[role='menuitem']:hover,
 	[role='menuitem']:focus-visible,
 	[role='menuitemradio']:hover,
 	[role='menuitemradio']:focus-visible {
-		background: var(--color-hover);
+		background: var(--color-surface-2);
 		color: var(--color-strong);
 		outline: none;
 	}
@@ -316,7 +323,7 @@
 		color: var(--color-danger);
 	}
 	[role='menuitem'][aria-disabled='true'] {
-		color: var(--color-muted);
+		color: var(--color-subtle);
 		cursor: not-allowed;
 	}
 	.label {
@@ -328,8 +335,8 @@
 	}
 	.detail {
 		flex: none;
-		color: var(--color-muted);
-		font-size: 0.8125rem;
+		color: var(--color-subtle);
+		font-size: 0.6875rem;
 	}
 	.lines {
 		display: grid;
@@ -348,8 +355,8 @@
 		place-items: center;
 		width: 1.5rem;
 		height: 1.5rem;
-		border-radius: var(--radius-sm, 0.375rem);
-		background: var(--color-selected);
+		border-radius: 0.4375rem;
+		background: var(--color-surface-3);
 		color: var(--color-strong);
 		font-size: 0.6875rem;
 		font-weight: 700;
@@ -362,7 +369,7 @@
 	}
 	.divider {
 		height: 1px;
-		margin: 0.25rem 0;
-		background: var(--color-rule);
+		margin: 0.375rem 0.25rem;
+		background: var(--color-rule-soft);
 	}
 </style>

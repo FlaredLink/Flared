@@ -39,18 +39,16 @@
 		min-width: 0;
 		min-height: 2.75rem;
 		padding: 0 0.9rem;
-		border: 1px solid var(--color-rule);
 		border-radius: var(--radius-control, 0.5rem);
-		background: var(--color-input);
+		background: var(--color-surface-2);
+		box-shadow: var(--shadow-ring);
 		color: var(--color-muted);
 	}
 	.text-input:focus-within {
-		border-color: var(--color-strong);
-		outline: 1px solid var(--color-strong);
-		outline-offset: -1px;
+		box-shadow: 0 0 0 2px var(--color-focus);
 	}
 	.invalid {
-		border-color: var(--color-danger);
+		box-shadow: 0 0 0 1px var(--color-danger);
 	}
 	input {
 		flex: 1;
@@ -61,15 +59,23 @@
 		background: transparent;
 		color: var(--color-strong);
 		font: inherit;
-		font-size: 0.9375rem;
+		/* 16px on phones, so iOS does not zoom into the field. */
+		font-size: 1rem;
 		outline: none;
 	}
 	.mono input {
 		font-family: var(--font-mono);
-		font-size: 0.875rem;
+	}
+	@media (min-width: 48rem) {
+		input {
+			font-size: 0.9375rem;
+		}
+		.mono input {
+			font-size: 0.875rem;
+		}
 	}
 	input::placeholder {
-		color: var(--color-muted);
+		color: var(--color-subtle);
 	}
 	input:read-only {
 		cursor: default;

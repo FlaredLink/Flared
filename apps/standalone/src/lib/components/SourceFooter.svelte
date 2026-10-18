@@ -24,7 +24,9 @@
 		font-size: 0.8rem;
 	}
 	a {
-		color: var(--color-accent-ink);
+		color: var(--color-link);
 		font-weight: 600;
+		text-decoration: underline;
+		text-underline-offset: 3px;
 	}
 </style>

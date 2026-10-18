@@ -71,6 +71,6 @@
 		white-space: nowrap;
 	}
 	:global(.icon-button.copied) {
-		color: var(--color-accent-ink);
+		color: var(--color-positive);
 	}
 </style>

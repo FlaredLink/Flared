@@ -111,8 +111,9 @@
 		color: var(--color-strong);
 	}
 	label.checked {
-		background: var(--color-accent-soft);
-		color: var(--color-accent-ink);
+		background: var(--color-surface);
+		box-shadow: var(--shadow-ring);
+		color: var(--color-strong);
 	}
 	label:has(input:focus-visible) {
 		outline: 2px solid var(--color-focus);

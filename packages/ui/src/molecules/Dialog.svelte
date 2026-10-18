@@ -40,27 +40,28 @@
 
 <style>
 	dialog {
-		width: min(30rem, 100% - 2rem);
-		padding: 1.25rem 1.5rem 1.5rem;
-		border: 1px solid var(--color-rule);
-		border-radius: var(--radius-lg, 0.875rem);
-		background: var(--color-paper);
+		width: min(35rem, 100% - 2rem);
+		max-height: calc(100dvh - 2rem);
+		padding: 1.125rem;
+		border: 0;
+		border-radius: 1rem;
+		background: var(--color-surface);
 		color: var(--color-ink);
-		box-shadow: var(--shadow-float);
+		box-shadow: var(--shadow-lift);
+		overscroll-behavior: contain;
 		/* Closing: the dialog fades and sinks a little, faster than it opens. overlay and display
 		   keep it in the top layer until the fade ends. */
 		opacity: 0;
 		transform: translateY(0.5rem) scale(0.98);
 		transition-property: opacity, transform, overlay, display;
 		transition-duration: calc(var(--dur-base) * 0.7);
-		transition-timing-function: var(--ease-in);
+		transition-timing-function: var(--ease-out);
 		transition-behavior: allow-discrete;
 	}
 	dialog[open] {
 		opacity: 1;
 		transform: none;
 		transition-duration: var(--dur-base);
-		transition-timing-function: var(--ease-out);
 	}
 	@starting-style {
 		dialog[open] {
@@ -69,18 +70,21 @@
 		}
 	}
 	dialog::backdrop {
-		background: oklch(15% 0.01 265 / 0);
-		transition-property: background, overlay, display;
+		background: rgb(10 10 10 / 0);
+		backdrop-filter: blur(0);
+		transition-property: background, backdrop-filter, overlay, display;
 		transition-duration: calc(var(--dur-base) * 0.7);
 		transition-behavior: allow-discrete;
 	}
 	dialog[open]::backdrop {
-		background: oklch(15% 0.01 265 / 0.35);
+		background: rgb(10 10 10 / 0.32);
+		backdrop-filter: blur(2px);
 		transition-duration: var(--dur-base);
 	}
 	@starting-style {
 		dialog[open]::backdrop {
-			background: oklch(15% 0.01 265 / 0);
+			background: rgb(10 10 10 / 0);
+			backdrop-filter: blur(0);
 		}
 	}
 	.head {
@@ -88,12 +92,12 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 1rem;
-		margin: 0 -0.5rem 1rem 0;
+		margin: 0 -0.375rem 0.75rem 0;
 	}
 	h2 {
 		color: var(--color-strong);
-		font-size: 1.25rem;
-		font-weight: 700;
-		letter-spacing: -0.02em;
+		font-size: 1rem;
+		font-weight: 600;
+		letter-spacing: -0.01em;
 	}
 </style>

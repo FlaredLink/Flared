@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
+	import Button from '@flared/ui/atoms/Button.svelte';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { isLinkInvitePreview, type LinkInvitePreview } from '@flared/contracts/members';
@@ -144,8 +145,8 @@
 				/>
 			</div>
 			{#if error}<p class="error" role="alert">{error}</p>{/if}
-			<button class="button primary wide" type="submit" disabled={pending}
-				>{pending ? 'Creating your account…' : 'Create account and join'}</button
+			<Button variant="primary" wide type="submit" disabled={pending}
+				>{pending ? 'Creating your account…' : 'Create account and join'}</Button
 			>
 		</form>
 	{:else}

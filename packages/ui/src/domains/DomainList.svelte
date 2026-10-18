@@ -626,8 +626,8 @@
 		height: 1.85rem;
 		border: 2px solid var(--color-paper);
 		border-radius: 50%;
-		background: var(--color-accent);
-		color: #fff;
+		background: var(--color-button-primary);
+		color: var(--color-on-primary);
 	}
 	.hero h2 {
 		color: var(--color-strong);
@@ -766,16 +766,8 @@
 		background: var(--color-hover);
 	}
 	.row.selected {
-		background: var(--color-accent-soft);
-	}
-	.row.selected::before {
-		content: '';
-		position: absolute;
-		top: 0;
-		bottom: 0;
-		left: 0;
-		width: 3px;
-		background: var(--color-accent);
+		background: var(--color-surface-2);
+		box-shadow: var(--shadow-ring);
 	}
 	.cell {
 		display: flex;

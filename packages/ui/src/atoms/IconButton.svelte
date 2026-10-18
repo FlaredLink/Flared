@@ -57,8 +57,8 @@
 		}
 	}
 	.outlined {
-		border-color: var(--color-rule);
 		background: var(--color-paper);
+		box-shadow: var(--shadow-ring);
 	}
 	.icon-button:hover:not(:disabled),
 	.icon-button[aria-expanded='true'] {

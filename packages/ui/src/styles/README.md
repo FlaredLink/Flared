@@ -6,15 +6,15 @@
 - `tokens.css`: Flared design roles over those tokens.
 - `base.css`: element defaults.
 
-Each app imports `@flared/ui/styles` once and adds its own shell, navigation, and pages. `@flared/ui/styles/controls` adds the shared page container, skip link, buttons, icon buttons, and eyebrow text.
+Each app imports `@flared/ui/styles` once and adds its own shell, navigation, and pages. `@flared/ui/styles/controls` adds the shared page container, skip link, button row, and eyebrow text. Buttons are the `Button` and `IconButton` atoms.
 
 Kumo source: https://github.com/cloudflare/kumo/blob/8a8535b0d5fc9d90c37b12aad2b92fe3d092f008/packages/kumo/src/styles/theme-kumo.css
 
 Only the `@theme` wrappers are changed to `:root`, so the published semantic variables work without Tailwind or React. These are not Kumo React components.
 
-Coral (`--color-accent`) marks what is active or chosen: the current navigation item, the selected tab, a checked box, a selected row. Primary actions are ink black with white text, and white with black text in dark mode. Text actions use `--color-link` (blue). Kumo blue remains the accessible focus color.
+Coral (`--color-accent`) marks focus rings (2px, at least 3:1 on every surface) and brand moments only. A chosen option, the current navigation item, and a selected row use a raised surface with `--shadow-ring`, or ink. Primary actions are ink black with white text, and white with black text in dark mode. Text actions use `--color-link`, which is ink with an underline.
 
-The main area and panels are white (`--color-paper`). The frame behind them, such as the sidebar and the sign-in pages, uses the cool off-white `--color-canvas`. Separate regions with hairline borders. Text and neutral elements use near-neutral black and grey.
+The main area and panels are white (`--color-paper`, `--color-surface`). The frame behind them, such as the sidebar and the sign-in pages, uses the off-white `--color-canvas`. Fields, tracks, and hover rows use `--color-surface-2`; tiles and empty bars use `--color-surface-3`. Separate regions with `--color-rule` or the softer `--color-rule-soft`. Text uses one ink (`--color-strong`, `--color-ink`) and three greys: `--color-muted` (and `--color-lead`), `--color-subtle` for small grey text, which keeps 4.5:1 on every surface, and `--color-faint` for decoration only, never text.
 
 ## Token groups
 
@@ -23,7 +23,7 @@ The main area and panels are white (`--color-paper`). The frame behind them, suc
 - Fonts: Figtree (SIL OFL 1.1) for text, headings, and the wordmark (`--font-body`, `--font-display`, `--font-wordmark`); Geist Mono for code (`--font-mono`). Each app imports the font packages.
 - Type: `--text-xs` (12px) to `--text-3xl` (24px), then `--text-heading` and `--text-display`. App body text is `--text-base` (15px); marketing body text is `--text-lg` (16px). Weights are `--weight-regular`, `--weight-medium`, `--weight-strong`, `--weight-heavy`, and `--weight-display`.
 - Motion: `--dur-instant` (80ms) for press feedback, `--dur-fast` (140ms) for hover, menus, and tooltips, `--dur-base` (220ms) for dialogs, panels, and list rows, and `--dur-slow` (320ms) for chart values. An exit runs at about 70 percent of its enter duration. Use `--ease-out` to enter, `--ease-in` to exit, and `--ease-in-out` to move or resize.
-- Elevation: `--shadow-ring` draws a card edge as a 1px ring. `--shadow-raised` adds a short soft drop in light mode only. `--shadow-float` is for menus and dialogs.
+- Elevation: `--shadow-ring` draws a card or field edge as a 1px ring with a short drop in light mode. `--shadow-raised` adds a longer soft drop in light mode only. `--shadow-lift` is for menus, dialogs, and panels over the page.
 - Layers: `--z-sidebar`, `--z-header`, `--z-panel`, and `--z-skip-link`. Native dialogs and popovers use the top layer and need no value.
 
 ## Atomic layers

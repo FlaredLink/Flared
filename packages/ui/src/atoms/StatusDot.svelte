@@ -17,24 +17,25 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 0.5rem;
-		color: var(--color-ink);
+		color: var(--color-live);
 		font-size: 0.9375rem;
+		font-weight: 500;
 		white-space: nowrap;
 	}
 	.dot {
-		width: 0.55rem;
-		height: 0.55rem;
+		width: 0.45rem;
+		height: 0.45rem;
 		flex: none;
 		border-radius: 50%;
-		background: var(--color-live);
+		background: currentColor;
 	}
-	.warning .dot {
-		background: var(--color-warning);
+	.warning {
+		color: var(--color-warning);
 	}
-	.danger .dot {
-		background: var(--color-danger);
+	.danger {
+		color: var(--color-danger);
 	}
-	.neutral .dot {
-		background: var(--color-muted);
+	.neutral {
+		color: var(--color-subtle);
 	}
 </style>

@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
+	import Button from '@flared/ui/atoms/Button.svelte';
 	import ConsentCard from '@flared/ui/oauth/ConsentCard.svelte';
 	import type { PageData } from './$types';
 
@@ -32,7 +33,7 @@
 					Connecting apps isn’t available right now. Try again later.
 				{/if}
 			</p>
-			<a class="button secondary" href="/app">Go to Flared</a>
+			<div class="go"><Button variant="secondary" href="/app">Go to Flared</Button></div>
 		{/if}
 	</div>
 </section>
@@ -49,15 +50,14 @@
 		gap: 0.8rem;
 		width: min(100%, 32rem);
 		padding: 2rem;
-		border: var(--rule);
-		border-radius: var(--radius-md);
+		border-radius: var(--radius-lg);
 		background: var(--color-paper);
-		box-shadow: var(--shadow-float);
+		box-shadow: var(--shadow-lift);
 	}
 	h1 {
 		font-size: clamp(1.6rem, 4vw, 2rem);
 	}
-	.button {
+	.go {
 		justify-self: start;
 		margin-top: 0.5rem;
 	}

@@ -1,5 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
+	import Button from '../atoms/Button.svelte';
+
 	interface Props {
 		// The path of the /v1 API for this browser, such as "/api/v1".
 		apiBase: string;
@@ -34,8 +36,10 @@
 			Scanning it opens {shortName}. It stays the same if you change the destination.
 		</p>
 		<div class="actions">
-			<a class="button" href={`${base}?format=svg&download=1`} download>Download SVG</a>
-			<a class="button" href={`${base}?format=png&size=1024&download=1`} download>Download PNG</a>
+			<Button size="sm" href={`${base}?format=svg&download=1`} download>Download SVG</Button>
+			<Button size="sm" href={`${base}?format=png&size=1024&download=1`} download
+				>Download PNG</Button
+			>
 		</div>
 	</div>
 </section>
@@ -89,21 +93,5 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.5rem;
-	}
-	.button {
-		display: inline-flex;
-		align-items: center;
-		min-height: 44px;
-		padding: 0.4rem 0.9rem;
-		border: 1px solid var(--color-rule, #d0d5dd);
-		border-radius: var(--radius-sm, 6px);
-		background: var(--color-paper, #fff);
-		color: var(--color-ink, #101828);
-		font-size: 0.85rem;
-		font-weight: 600;
-		text-decoration: none;
-	}
-	.button:hover {
-		border-color: var(--color-muted, #667085);
 	}
 </style>

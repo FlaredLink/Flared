@@ -34,19 +34,17 @@
 		align-items: center;
 		min-width: 0;
 		min-height: 2.75rem;
-		border: 1px solid var(--color-rule);
 		border-radius: var(--radius-control, 0.5rem);
-		background: var(--color-input);
+		background: var(--color-surface-2);
+		box-shadow: var(--shadow-ring);
 		color: var(--color-strong);
 	}
 	.select:focus-within {
-		border-color: var(--color-strong);
-		outline: 1px solid var(--color-strong);
-		outline-offset: -1px;
+		box-shadow: 0 0 0 2px var(--color-focus);
 	}
 	.bare {
-		border-color: transparent;
 		background: transparent;
+		box-shadow: none;
 	}
 	select {
 		width: 100%;
@@ -57,9 +55,15 @@
 		background: transparent;
 		color: inherit;
 		font: inherit;
-		font-size: 0.9375rem;
+		/* 16px on phones, so iOS does not zoom into the field. */
+		font-size: 1rem;
 		appearance: none;
 		outline: none;
+	}
+	@media (min-width: 48rem) {
+		select {
+			font-size: 0.9375rem;
+		}
 	}
 	.with-icon select {
 		padding-left: 2.6rem;

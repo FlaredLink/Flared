@@ -43,7 +43,7 @@
 		inset: 0 auto 0 0;
 		width: 40%;
 		border-radius: 0 2px 2px 0;
-		background: var(--color-accent);
+		background: var(--color-strong);
 	}
 	/* Under reduced motion the base styles stop the animation, and the bar stays as a still line. */
 	.shown span {

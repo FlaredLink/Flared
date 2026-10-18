@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
+	import Button from '@flared/ui/atoms/Button.svelte';
 	import { utcDay } from '@flared/contracts/analytics';
 	import Checkbox from '@flared/ui/atoms/Checkbox.svelte';
 	import AuthFrame from '$lib/components/AuthFrame.svelte';
@@ -192,8 +193,8 @@
 								required
 								placeholder="https://example.com/page"
 							/>
-							<button class="button primary" type="submit" disabled={pending}
-								>{pending ? 'Creating…' : 'Create link'}</button
+							<Button variant="primary" type="submit" disabled={pending}
+								>{pending ? 'Creating…' : 'Create link'}</Button
 							>
 							{#if linkError}<p class="error" role="alert">{linkError}</p>{/if}
 						</form>
@@ -211,26 +212,28 @@
 							</p>
 						{:else}
 							<p>Open the link once. It counts as a real click.</p>
-							<a
-								class="button secondary"
-								href={link.shortUrl}
-								target="_blank"
-								rel="noopener"
-								onclick={() => void waitForClick()}>Open {link.shortUrl}</a
-							>
+							<div class="open">
+								<Button
+									variant="secondary"
+									href={link.shortUrl}
+									target="_blank"
+									rel="noopener"
+									onclick={() => void waitForClick()}>Open {link.shortUrl}</Button
+								>
+							</div>
 							{#if counting === 'waiting'}<p>Waiting for the click to count…</p>{/if}
 						{/if}
 					</li>
 				{/if}
 			</ol>
-			<a class="button primary" href={appRoutes.app}>Go to your links</a>
+			<Button variant="primary" href={appRoutes.app}>Go to your links</Button>
 		</section>
 	{:else if data.state === 'active'}
 		<section class="card" aria-labelledby="done-heading">
 			<p class="eyebrow">Flared</p>
 			<h1 id="done-heading">This installation is set up</h1>
 			<p>Sign in with the owner’s username and password. Setup never opens again.</p>
-			<a class="button primary" href={appRoutes.login}>Sign in</a>
+			<Button variant="primary" href={appRoutes.login}>Sign in</Button>
 		</section>
 	{:else if data.state === 'misconfigured'}
 		<section class="card" aria-labelledby="misconfigured-heading">
@@ -308,8 +311,8 @@
 					<input id="workspace" bind:value={workspaceName} required maxlength="64" />
 				</div>
 				{#if error}<p class="error" role="alert">{error}</p>{/if}
-				<button class="button primary wide" type="submit" disabled={pending}
-					>{pending ? 'Setting up…' : 'Set up Flared'}</button
+				<Button variant="primary" wide type="submit" disabled={pending}
+					>{pending ? 'Setting up…' : 'Set up Flared'}</Button
 				>
 			</form>
 		</section>
@@ -331,7 +334,7 @@
 		font-size: 1rem;
 		margin-bottom: 0.3rem;
 	}
-	.wizard li p + a {
+	.open {
 		margin-top: 0.5rem;
 	}
 	code {

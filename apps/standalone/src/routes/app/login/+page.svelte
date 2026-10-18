@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
+	import Button from '@flared/ui/atoms/Button.svelte';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import {
@@ -111,16 +112,17 @@
 			/>
 		</div>
 		{#if error}<p class="error" role="alert">{error}</p>{/if}
-		<button class="button primary wide" type="submit" disabled={pending}
-			>{pending ? 'Signing in…' : 'Sign in'}</button
+		<Button variant="primary" wide type="submit" disabled={pending}
+			>{pending ? 'Signing in…' : 'Sign in'}</Button
 		>
 	</form>
 	{#if passkeys}
-		<button
-			class="button secondary wide"
+		<Button
+			variant="secondary"
+			wide
 			type="button"
 			disabled={pending}
-			onclick={() => void usePasskey(false)}>Sign in with a passkey</button
+			onclick={() => void usePasskey(false)}>Sign in with a passkey</Button
 		>
 	{/if}
 	<p class="help">

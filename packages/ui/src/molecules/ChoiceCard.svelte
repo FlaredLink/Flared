@@ -62,9 +62,9 @@
 	}
 	.checked,
 	.checked:hover {
-		border-color: var(--color-accent);
-		box-shadow: 0 0 0 1px var(--color-accent);
-		background: var(--color-accent-soft);
+		border-color: var(--color-strong);
+		box-shadow: 0 0 0 1px var(--color-strong);
+		background: var(--color-surface);
 	}
 	input {
 		position: absolute;
@@ -105,11 +105,11 @@
 		border: 1.5px solid var(--color-rule);
 		border-radius: 50%;
 		background: var(--color-paper);
-		color: #fff;
+		color: var(--color-on-primary);
 	}
 	.checked .mark {
-		border-color: var(--color-accent);
-		background: var(--color-accent);
+		border-color: var(--color-strong);
+		background: var(--color-strong);
 	}
 	.row {
 		grid-template-columns: auto minmax(0, 1fr) auto;

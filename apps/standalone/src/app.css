@@ -34,10 +34,9 @@
 	gap: 0.9rem;
 	width: min(100%, 30rem);
 	padding: 2rem;
-	border: var(--rule);
-	border-radius: var(--radius-md);
+	border-radius: var(--radius-lg);
 	background: var(--color-paper);
-	box-shadow: var(--shadow-float);
+	box-shadow: var(--shadow-lift);
 }
 .card h1 {
 	font-size: clamp(1.5rem, 4vw, 1.9rem);
@@ -55,16 +54,23 @@
 	min-height: 44px;
 	padding: 0.6rem 0.8rem;
 	color: var(--color-ink);
-	border: var(--rule);
-	border-radius: var(--radius-sm);
-	background: var(--color-paper);
+	border: 0;
+	border-radius: var(--radius-control);
+	background: var(--color-surface-2);
+	box-shadow: var(--shadow-ring);
+	/* 16px, so iOS does not zoom into the field. */
+	font-size: 1rem;
+}
+.field input:focus-visible {
+	box-shadow: 0 0 0 2px var(--color-focus);
+	outline: none;
 }
 .field small {
 	color: var(--color-muted);
 	font-size: 0.8rem;
 }
 .error {
-	color: var(--color-accent-ink);
+	color: var(--color-danger);
 	font-size: 0.85rem;
 }
 .section {

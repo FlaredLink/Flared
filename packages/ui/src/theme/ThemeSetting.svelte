@@ -18,7 +18,6 @@
 		<SegmentedControl
 			name="theme"
 			label="Theme"
-			variant="outline"
 			wide
 			value={choice}
 			options={[

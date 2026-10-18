@@ -73,16 +73,8 @@
 		border-bottom: 1px solid var(--color-rule);
 	}
 	li.selected {
-		background: var(--color-accent-soft);
-	}
-	li.selected::before {
-		content: '';
-		position: absolute;
-		top: 0;
-		bottom: 0;
-		left: 0;
-		width: 3px;
-		background: var(--color-accent);
+		background: var(--color-surface-2);
+		box-shadow: var(--shadow-ring);
 	}
 	button {
 		display: grid;
@@ -124,7 +116,7 @@
 		font-size: 1rem;
 	}
 	.selected .action {
-		color: var(--color-accent-ink);
+		color: var(--color-strong);
 	}
 	@media (max-width: 30rem) {
 		button {

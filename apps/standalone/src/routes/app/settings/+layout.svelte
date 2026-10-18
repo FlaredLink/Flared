@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
+	import Button from '@flared/ui/atoms/Button.svelte';
 	import { onMount, tick, type Snippet } from 'svelte';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
@@ -204,17 +205,17 @@
 						autocomplete="current-password"
 					/>
 					<div class="button-row">
-						<button class="button primary" type="submit" disabled={reauthPending}>Confirm</button>
+						<Button variant="primary" type="submit" disabled={reauthPending}>Confirm</Button>
 						{#if canUsePasskey}
-							<button
-								class="button secondary"
+							<Button
+								variant="secondary"
 								type="button"
 								disabled={reauthPending}
-								onclick={() => void confirmPasskey()}>Use a passkey</button
+								onclick={() => void confirmPasskey()}>Use a passkey</Button
 							>
 						{/if}
-						<button class="button secondary" type="button" onclick={() => (reauthOpen = false)}
-							>Cancel</button
+						<Button variant="secondary" type="button" onclick={() => (reauthOpen = false)}
+							>Cancel</Button
 						>
 					</div>
 				</form>
