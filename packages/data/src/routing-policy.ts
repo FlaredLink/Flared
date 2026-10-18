@@ -75,6 +75,27 @@ export async function setClickForwarding(
 	return result.meta.changes === 1;
 }
 
+// Sets the flag for up to 100 workspaces in one statement, for an edition that settles several
+// at once. Returns how many rows changed.
+export async function setClickForwardingFlags(
+	db: D1Database,
+	flags: readonly { tenantId: string; on: boolean }[],
+	now: number
+): Promise<number> {
+	if (flags.length === 0) return 0;
+	if (flags.length > 100) throw new Error('Too many workspaces for one forwarding update');
+	const result = await db
+		.prepare(
+			`UPDATE tenant_policy SET click_forwarding = r.value, updated_at = ?1
+			FROM (SELECT json_extract(value, '$.tenantId') AS tenant_id, json_extract(value, '$.on') AS value
+				FROM json_each(?2)) AS r
+			WHERE tenant_policy.tenant_id = r.tenant_id AND tenant_policy.click_forwarding <> r.value`
+		)
+		.bind(now, JSON.stringify(flags.map(({ tenantId, on }) => ({ tenantId, on: on ? 1 : 0 }))))
+		.run();
+	return result.meta.changes;
+}
+
 // Tenants with the flag set, in tenant order after the cursor, for the edition's reconciliation.
 export async function listClickForwardingTenants(
 	db: D1Database,

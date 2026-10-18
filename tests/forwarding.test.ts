@@ -16,7 +16,8 @@ import { findRedirectTarget } from '../packages/data/src/links';
 import {
 	applyRoutingPolicy,
 	listClickForwardingTenants,
-	setClickForwarding
+	setClickForwarding,
+	setClickForwardingFlags
 } from '../packages/data/src/routing-policy';
 import { createClickConsumer, type QueueMessage } from '../packages/server/src/analytics';
 import { utmTagsOf } from '../packages/server/src/clicks';
@@ -225,6 +226,38 @@ describe('routing flag', () => {
 		expect(await listClickForwardingTenants(routing(), 't-free', 1)).toEqual(['t-fwd']);
 		for (const limit of [0, 501, 1.5])
 			await expect(listClickForwardingTenants(routing(), '', limit)).rejects.toThrow();
+	});
+
+	it('is set for several workspaces in one statement', async () => {
+		await routing()
+			.prepare(
+				"INSERT INTO tenant_policy (tenant_id, revision, analytics_shard_id, active_link_limit, domain_limit, webhook_endpoint_limit, automation_limit, updated_at) VALUES ('t-many-a', 1, 'analytics-1', 100, 1, 5, 25, 0), ('t-many-b', 1, 'analytics-1', 100, 1, 5, 25, 0)"
+			)
+			.run();
+		expect(
+			await setClickForwardingFlags(
+				routing(),
+				[
+					{ tenantId: 't-many-a', on: true },
+					{ tenantId: 't-many-b', on: false },
+					{ tenantId: 't-missing', on: true }
+				],
+				4
+			)
+		).toBe(1);
+		expect(await listClickForwardingTenants(routing(), 't-many', 500)).toContain('t-many-a');
+		expect(await listClickForwardingTenants(routing(), 't-many', 500)).not.toContain('t-many-b');
+		expect(await setClickForwardingFlags(routing(), [{ tenantId: 't-many-a', on: false }], 5)).toBe(
+			1
+		);
+		expect(await setClickForwardingFlags(routing(), [], 5)).toBe(0);
+		await expect(
+			setClickForwardingFlags(
+				routing(),
+				Array.from({ length: 101 }, (_, index) => ({ tenantId: `t-${index}`, on: true })),
+				5
+			)
+		).rejects.toThrow();
 	});
 
 	it('survives a newer policy projection', async () => {
