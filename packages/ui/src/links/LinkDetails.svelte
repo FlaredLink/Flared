@@ -8,6 +8,7 @@
 	import Menu, { type MenuItem } from '../molecules/Menu.svelte';
 	import Sparkline from '../molecules/Sparkline.svelte';
 	import { blockLabel } from './messages';
+	import { copyQrImage, qrAddress } from './LinkQr.svelte';
 
 	interface Props {
 		link: ListedLink;
@@ -49,7 +50,7 @@
 		});
 	});
 
-	const qr = $derived(`${apiBase}/links/${encodeURIComponent(link.id)}/qr`);
+	const qr = $derived(qrAddress(apiBase, link.id));
 	let qrStatus = $state('');
 	const qrItems = $derived<MenuItem[]>([
 		{ label: 'PNG image', icon: 'image', href: `${qr}?format=png&size=1024&download=1` },
@@ -57,17 +58,8 @@
 		{ label: 'Copy image', icon: 'copy', onselect: () => void copyQr() }
 	]);
 
-	// Copies the PNG where the browser allows images on the clipboard.
 	async function copyQr() {
-		try {
-			const response = await fetch(`${qr}?format=png&size=1024`);
-			if (!response.ok) throw new Error('qr');
-			const blob = await response.blob();
-			await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
-			qrStatus = 'QR code copied.';
-		} catch {
-			qrStatus = 'This browser cannot copy images. Download the QR code instead.';
-		}
+		qrStatus = await copyQrImage(qr);
 	}
 </script>
 

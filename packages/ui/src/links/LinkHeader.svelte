@@ -1,4 +1,13 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<script lang="ts" module>
+	// One view of the link page, such as Analytics or QR code. Each view has its own address.
+	export interface LinkView {
+		label: string;
+		href: string;
+		current: boolean;
+	}
+</script>
+
 <script lang="ts">
 	import ShownWorkspaceField from '../workspace/ShownWorkspaceField.svelte';
 	import type { Action } from 'svelte/action';
@@ -6,19 +15,20 @@
 	import Glyph from '../icons/Glyph.svelte';
 	import Button from '../atoms/Button.svelte';
 	import StatusDot from '../atoms/StatusDot.svelte';
-	import Breadcrumbs, { type Crumb } from '../molecules/Breadcrumbs.svelte';
+	import type { Crumb } from '../molecules/Breadcrumbs.svelte';
 	import CopyButton from '../molecules/CopyButton.svelte';
 	import Menu, { type MenuItem } from '../molecules/Menu.svelte';
 	import Callout from '../molecules/Callout.svelte';
+	import PageHeader from '../molecules/PageHeader.svelte';
 	import { blockLabel } from './messages';
 
 	interface Props {
 		link: Link;
-		// The path of the /v1 API for this browser, such as "/api/v1", for the QR code.
-		apiBase: string;
-		crumbs?: Crumb[];
-		// The link list, for the back link.
+		// The trail to this page, ending with the link.
+		crumbs: Crumb[];
+		// The link list, for the phone back button.
 		backHref: string;
+		views?: LinkView[];
 		// Form action URL for disable and enable. The app wrapper sends PATCH /v1/links/:id.
 		action: string;
 		enhance?: Action<HTMLFormElement>;
@@ -32,9 +42,9 @@
 	}
 	let {
 		link,
-		apiBase,
 		crumbs,
 		backHref,
+		views = [],
 		action,
 		enhance = () => {},
 		pending = false,
@@ -44,28 +54,8 @@
 	}: Props = $props();
 
 	const shortName = $derived(`${link.hostname}/${link.slug}`);
-	const qr = $derived(`${apiBase}/links/${encodeURIComponent(link.id)}/qr`);
 	let toggleForm = $state<HTMLFormElement>();
-	let qrStatus = $state('');
 
-	// Copies the PNG where the browser allows images on the clipboard.
-	async function copyQr() {
-		try {
-			const response = await fetch(`${qr}?format=png&size=1024`);
-			if (!response.ok) throw new Error('qr');
-			const blob = await response.blob();
-			await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
-			qrStatus = 'QR code copied.';
-		} catch {
-			qrStatus = 'This browser cannot copy images. Download the QR code instead.';
-		}
-	}
-
-	const qrItems = $derived<MenuItem[]>([
-		{ label: 'Download PNG', icon: 'download', href: `${qr}?format=png&size=1024&download=1` },
-		{ label: 'Download SVG', icon: 'download', href: `${qr}?format=svg&download=1` },
-		{ label: 'Copy QR image', icon: 'copy', onselect: () => void copyQr() }
-	]);
 	const moreItems = $derived<MenuItem[]>([
 		...(link.blocked
 			? []
@@ -83,59 +73,57 @@
 	]);
 </script>
 
-<header class="link-header">
-	{#if crumbs}<Breadcrumbs items={crumbs} />{/if}
-	<a class="back" href={backHref}><Glyph name="arrowLeft" size={18} />All links</a>
-	<div class="row">
-		<div class="titles">
-			<div class="name">
-				<h1>{link.title ?? shortName}</h1>
-				{#if link.blocked}
-					<StatusDot tone="danger">{blockLabel(link.blocked.reason)}</StatusDot>
-				{:else if link.enabled}
-					<StatusDot>Active</StatusDot>
-				{:else}
-					<StatusDot tone="neutral">Disabled</StatusDot>
-				{/if}
-			</div>
-			<div class="short">
-				<a href={link.shortUrl} target="_blank" rel="noopener noreferrer">{shortName}</a>
-			</div>
-			<a class="destination" href={link.destination} target="_blank" rel="noopener noreferrer"
-				><span>{link.destination}</span><Glyph name="arrowUpRight" size={18} /></a
+<!-- The views are tabs of one screen, so a switch replaces the history entry and back still
+     leads to the link list. -->
+{#snippet viewLinks(placement: 'bar' | 'under')}
+	<nav class="views {placement}" aria-label="Link views">
+		{#each views as view (view.href)}
+			<a
+				href={view.href}
+				aria-current={view.current ? 'page' : undefined}
+				data-sveltekit-replacestate
+				data-sveltekit-noscroll
+				data-sveltekit-keepfocus>{view.label}</a
 			>
-		</div>
-		<div class="actions">
-			<CopyButton text={link.shortUrl} label="Copy link" kind="button" variant="primary" />
-			<span class="qr-menu">
-				<Menu
-					id="link-qr-menu"
-					label="QR code"
-					text="QR code"
-					icon="qr"
-					caret="caretDown"
-					items={qrItems}
-					class="qr-trigger"
-				/>
-			</span>
-			{#if onedit && !link.blocked}
-				<Button icon="pencil" onclick={onedit}>Edit</Button>
+		{/each}
+	</nav>
+{/snippet}
+
+<PageHeader {crumbs} back={{ href: backHref, label: 'Links' }} title={link.title ?? shortName}>
+	{#snippet top(placement)}
+		{#if placement === 'bar' && views.length > 0}{@render viewLinks('bar')}{/if}
+	{/snippet}
+	{#snippet aside()}
+		{#if onedit && !link.blocked}
+			<Button size="sm" icon="pencil" onclick={onedit}><span class="wide-label">Edit</span></Button>
+		{/if}
+		<Menu id="link-more-menu" label="More actions for {shortName}" items={moreItems} />
+	{/snippet}
+	<div class="summary">
+		<p class="short">
+			<a href={link.shortUrl} target="_blank" rel="noopener noreferrer"
+				><span class="host">{link.hostname}/</span>{link.slug}</a
+			>
+			<CopyButton text={link.shortUrl} label="Copy short link" size="sm" />
+		</p>
+		<a class="destination" href={link.destination} target="_blank" rel="noopener noreferrer"
+			><span>{link.destination}</span><Glyph name="arrowUpRight" size={16} /></a
+		>
+		<p class="state">
+			{#if link.blocked}
+				<StatusDot tone="danger">{blockLabel(link.blocked.reason)}</StatusDot>
+			{:else if link.enabled}
+				<StatusDot>Active</StatusDot>
+			{:else}
+				<StatusDot tone="neutral">Disabled</StatusDot>
 			{/if}
-			<span class="more-menu">
-				<Menu
-					id="link-more-menu"
-					label="More actions for {shortName}"
-					items={moreItems}
-					class="more-trigger"
-				/>
-			</span>
-		</div>
+		</p>
 	</div>
 	<form bind:this={toggleForm} method="post" {action} use:enhance hidden>
 		<input type="hidden" name="intent" value={link.enabled ? 'disable' : 'enable'} />
 		<ShownWorkspaceField />
 	</form>
-	<p class="status" role="status" aria-live="polite">{qrStatus || notice}</p>
+	<p class="status" role="status" aria-live="polite">{notice}</p>
 	{#if error}
 		<Callout tone="danger" role="alert"><p>{error}</p></Callout>
 	{/if}
@@ -148,61 +136,65 @@
 			<p>This link is disabled. The short link does not open until you enable it.</p>
 		</Callout>
 	{/if}
-</header>
+</PageHeader>
+{#if views.length > 0}{@render viewLinks('under')}{/if}
 
 <style>
-	.link-header {
+	/* Phone: the views are a two-part switch under the summary; from 48rem, pills in the bar. */
+	.views {
 		display: grid;
-		gap: 0.85rem;
-		margin-bottom: 1.75rem;
+		grid-auto-columns: minmax(0, 1fr);
+		grid-auto-flow: column;
+		gap: 0.125rem;
+		margin-bottom: 1.25rem;
+		padding: 0.125rem;
+		border-radius: 0.8125rem;
+		background: var(--color-surface-2);
+		box-shadow: var(--shadow-ring);
 	}
-	.back {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.5rem;
-		justify-self: start;
-		color: var(--color-lead);
+	.views a {
+		display: grid;
+		place-items: center;
+		min-height: 2.75rem;
+		padding: 0 0.75rem;
+		border-radius: 0.6875rem;
+		color: var(--color-muted);
 		font-size: 0.9375rem;
+		font-weight: 500;
+		white-space: nowrap;
+		transition: color var(--dur-fast) var(--ease-out);
 	}
-	.back:hover {
+	.views a:hover {
 		color: var(--color-strong);
 	}
-	.row {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 1rem 1.5rem;
+	.views a[aria-current='page'] {
+		background: var(--color-surface);
+		box-shadow: var(--shadow-ring);
+		color: var(--color-strong);
+		font-weight: 600;
 	}
-	.titles {
+	.summary {
 		display: grid;
-		gap: 0.4rem;
+		gap: 0.375rem;
 		min-width: 0;
-		flex: 1 1 22rem;
-	}
-	.name {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.4rem 1rem;
-	}
-	h1 {
-		color: var(--color-strong);
-		font-size: clamp(2rem, 3.2vw, 2.75rem);
-		font-weight: 800;
-		letter-spacing: -0.045em;
-		line-height: 1.05;
 	}
 	.short {
 		display: flex;
 		align-items: center;
-		gap: 0.35rem;
+		gap: 0.25rem;
+		min-width: 0;
 		color: var(--color-strong);
-		font-size: 1.375rem;
+		font-size: 1.5rem;
+		font-weight: 700;
 		letter-spacing: -0.02em;
+		line-height: 1.2;
 	}
 	.short a {
+		min-width: 0;
 		overflow-wrap: anywhere;
+	}
+	.host {
+		color: var(--color-subtle);
 	}
 	.short a:hover,
 	.destination:hover span {
@@ -212,53 +204,76 @@
 	.destination {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.5rem;
+		gap: 0.375rem;
 		justify-self: start;
 		max-width: 100%;
-		color: var(--color-lead);
-		font-size: 1rem;
+		color: var(--color-muted);
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
 	}
 	.destination span {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
-	.actions {
+	.state {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 0.6rem;
-	}
-	/* The menus here look like secondary buttons. Each override names its wrapper twice over the
-	   menu's own two classes, so it wins whatever order the styles load in. */
-	.actions .qr-menu :global(.qr-trigger) {
-		width: auto;
-		min-height: 2.75rem;
-		padding: 0 1rem;
-		border-color: var(--color-rule);
-		background: var(--color-paper);
-		font-weight: 600;
-	}
-	.actions .qr-menu :global(.qr-trigger:hover),
-	.actions .more-menu :global(.more-trigger:hover) {
-		background: var(--color-selected);
-	}
-	.actions .more-menu :global(.more-trigger) {
-		width: 2.75rem;
-		height: 2.75rem;
-		border-color: var(--color-rule);
-		background: var(--color-paper);
+		gap: 0.5rem;
+		margin-top: 0.25rem;
 	}
 	.status {
-		color: var(--color-lead);
+		color: var(--color-muted);
 		font-size: 0.9375rem;
 	}
 	.status:empty {
 		display: none;
 	}
-	@media (max-width: 40rem) {
-		.actions {
-			width: 100%;
+	.wide-label {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+	}
+	@media (min-width: 48rem) {
+		.views.under {
+			display: none;
+		}
+		.views.bar {
+			display: flex;
+			margin: 0 0 0 0.5rem;
+			padding: 0;
+			background: none;
+			box-shadow: none;
+		}
+		.views.bar a {
+			min-height: 2.125rem;
+			padding: 0 0.625rem;
+			border-radius: var(--radius-control, 0.5rem);
+			font-size: 0.8125rem;
+		}
+		.views.bar a[aria-current='page'] {
+			background: var(--color-surface-2);
+			font-weight: 500;
+		}
+		.short {
+			font-size: 1.25rem;
+			font-weight: 600;
+		}
+		.wide-label {
+			position: static;
+			width: auto;
+			height: auto;
+			overflow: visible;
+			clip-path: none;
+		}
+	}
+	@media (min-width: 48rem) and (pointer: coarse) {
+		.views.bar a {
+			min-height: 2.75rem;
 		}
 	}
 </style>

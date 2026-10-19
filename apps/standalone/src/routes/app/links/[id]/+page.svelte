@@ -7,12 +7,13 @@
 	import LinkAnalytics from '@flared/ui/analytics/LinkAnalytics.svelte';
 	import LinkAutomations from '@flared/ui/automations/LinkAutomations.svelte';
 	import LinkEditForm from '@flared/ui/links/LinkEditForm.svelte';
-	import LinkHeader from '@flared/ui/links/LinkHeader.svelte';
+	import LinkHeader, { type LinkView } from '@flared/ui/links/LinkHeader.svelte';
+	import LinkQr from '@flared/ui/links/LinkQr.svelte';
 	import { linkErrorMessage } from '@flared/ui/links/messages';
 	import SplitView from '@flared/ui/molecules/SplitView.svelte';
 	import SidePanel from '@flared/ui/molecules/SidePanel.svelte';
 	import Callout from '@flared/ui/molecules/Callout.svelte';
-	import { appRoutes } from '$lib/routes';
+	import { appRoutes, linkRoute } from '$lib/routes';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -72,6 +73,19 @@
 			current: data.days === days
 		}))
 	);
+	// A switch between views keeps a 7-day range.
+	const views = $derived<LinkView[]>([
+		{
+			label: 'Analytics',
+			href: data.days === 7 ? '?days=7' : linkRoute(data.link.id),
+			current: data.view === 'analytics'
+		},
+		{
+			label: 'QR code',
+			href: data.days === 7 ? '?view=qr&days=7' : '?view=qr',
+			current: data.view === 'qr'
+		}
+	]);
 </script>
 
 <svelte:head><title>{shortName} · Flared</title></svelte:head>
@@ -90,52 +104,52 @@
 	</SidePanel>
 {/snippet}
 
+<LinkHeader
+	link={data.link}
+	crumbs={[{ label: 'Links', href: appRoutes.app }, { label: data.link.title ?? shortName }]}
+	backHref={appRoutes.app}
+	{views}
+	action="?/update"
+	enhance={enhanceUpdate}
+	{pending}
+	{notice}
+	error={toggleError}
+	onedit={() => (editing = true)}
+/>
+
 <SplitView panel={editing && !data.link.blocked ? editPanel : undefined}>
-	<LinkHeader
-		link={data.link}
-		apiBase="/api/v1"
-		crumbs={[
-			{ label: data.workspaceName ?? 'Workspace' },
-			{ label: 'Links', href: appRoutes.app },
-			{ label: data.link.title ?? shortName }
-		]}
-		backHref={appRoutes.app}
-		action="?/update"
-		enhance={enhanceUpdate}
-		{pending}
-		{notice}
-		error={toggleError}
-		onedit={() => (editing = true)}
-	/>
-
-	{#if data.analytics.status === 'ready'}
-		<LinkAnalytics
-			analytics={data.analytics.analytics}
-			{ranges}
-			navigate={(href) => goto(href, { noScroll: true, keepFocus: true })}
-			iconHref={(hostname) => `/api/v1/icons/${hostname}`}
-		/>
+	{#if data.view === 'qr'}
+		<LinkQr apiBase="/api/v1" link={data.link} />
 	{:else}
-		<Callout tone="danger" role="alert" title="We couldn’t load the clicks for this link">
-			<p>Refresh the page to try again. The link still redirects.</p>
-		</Callout>
-	{/if}
-
-	<section class="automations" aria-labelledby="link-automations-heading">
-		<LinkAutomations
-			linkId={data.link.id}
-			apiBase="/api/v1"
-			automations={data.automations?.automations ?? []}
-			canApply={!data.link.blocked && (data.automations?.limit ?? 0) > 0}
-			automationsHref={appRoutes.automations}
-			headingLevel={2}
-		/>
-		{#if !data.automations}
-			<p class="error" role="alert">
-				We couldn’t load the automation templates. Refresh the page to apply one.
-			</p>
+		{#if data.analytics?.status === 'ready'}
+			<LinkAnalytics
+				analytics={data.analytics.analytics}
+				{ranges}
+				navigate={(href) => goto(href, { noScroll: true, keepFocus: true })}
+				iconHref={(hostname) => `/api/v1/icons/${hostname}`}
+			/>
+		{:else}
+			<Callout tone="danger" role="alert" title="We couldn’t load the clicks for this link">
+				<p>Refresh the page to try again. The link still redirects.</p>
+			</Callout>
 		{/if}
-	</section>
+
+		<section class="automations" aria-labelledby="link-automations-heading">
+			<LinkAutomations
+				linkId={data.link.id}
+				apiBase="/api/v1"
+				automations={data.automations?.automations ?? []}
+				canApply={!data.link.blocked && (data.automations?.limit ?? 0) > 0}
+				automationsHref={appRoutes.automations}
+				headingLevel={2}
+			/>
+			{#if !data.automations}
+				<p class="error" role="alert">
+					We couldn’t load the automation templates. Refresh the page to apply one.
+				</p>
+			{/if}
+		</section>
+	{/if}
 </SplitView>
 
 <style>

@@ -16,9 +16,19 @@
 		label: string;
 		idPrefix: string;
 		size?: 'md' | 'sm';
+		// Underlined tabs over a rule, or pills: the chosen tab is a raised surface.
+		variant?: 'underline' | 'pill';
 		onchange?: (value: string) => void;
 	}
-	let { items, value = $bindable(), label, idPrefix, size = 'md', onchange }: Props = $props();
+	let {
+		items,
+		value = $bindable(),
+		label,
+		idPrefix,
+		size = 'md',
+		variant = 'underline',
+		onchange
+	}: Props = $props();
 	let list = $state<HTMLDivElement>();
 
 	function select(next: string) {
@@ -45,7 +55,7 @@
 </script>
 
 <div
-	class="tabs {size}"
+	class="tabs {size} {variant}"
 	role="tablist"
 	aria-label={label}
 	bind:this={list}
@@ -127,5 +137,30 @@
 	}
 	.sm button[aria-selected='true'] {
 		font-size: 1rem;
+	}
+	.pill {
+		gap: 0.25rem;
+		box-shadow: none;
+	}
+	.pill button,
+	.pill.sm button {
+		min-height: 2.125rem;
+		padding: 0 0.625rem;
+		border: 0;
+		border-radius: var(--radius-control, 0.5rem);
+		font-size: 0.8125rem;
+		font-weight: 500;
+	}
+	.pill button[aria-selected='true'] {
+		background: var(--color-surface-2);
+		box-shadow: var(--shadow-ring);
+		font-size: 0.8125rem;
+		font-weight: 500;
+	}
+	@media (pointer: coarse) {
+		.pill button,
+		.pill.sm button {
+			min-height: 2.75rem;
+		}
 	}
 </style>

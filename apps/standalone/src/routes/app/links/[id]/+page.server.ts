@@ -37,32 +37,36 @@ export const load: PageServerLoad = async ({ parent, platform, request, params, 
 	const service = platform?.env.API_SERVICE;
 	if (auth.status !== 'authenticated' || !service) error(503, 'Analytics are not available.');
 	const days = url.searchParams.get('days') === '7' ? 7 : 30;
+	// The QR code view needs only the link.
+	const view: 'analytics' | 'qr' = url.searchParams.get('view') === 'qr' ? 'qr' : 'analytics';
 	const now = Date.now();
 	const range = { from: oldestRetainedDay(now, days), to: utcDay(now) };
 	let link: Link;
-	let analytics: AnalyticsState;
+	let analytics: AnalyticsState | null;
 	let automations: AutomationPage | null;
 	try {
 		const [linkResult, analyticsResult, automationPage] = await Promise.all([
 			fetchLink(service, request.headers, params.id),
-			fetchLinkAnalytics(service, request.headers, params.id, range),
-			loadAutomations(service, request.headers)
+			view === 'analytics' ? fetchLinkAnalytics(service, request.headers, params.id, range) : null,
+			view === 'analytics' ? loadAutomations(service, request.headers) : null
 		]);
 		if (!linkResult.ok) {
 			if (linkResult.failure.status === 404) error(404, 'Link not found.');
 			error(503, 'This link is not available. Try again.');
 		}
 		link = linkResult.link;
-		analytics = analyticsResult.ok
-			? { status: 'ready', analytics: analyticsResult.analytics }
-			: { status: 'unavailable' };
+		analytics = !analyticsResult
+			? null
+			: analyticsResult.ok
+				? { status: 'ready', analytics: analyticsResult.analytics }
+				: { status: 'unavailable' };
 		automations = automationPage;
 	} catch (cause) {
 		if (cause && typeof cause === 'object' && 'status' in cause) throw cause;
 		console.error(JSON.stringify({ event: 'link_analytics_unavailable' }));
 		error(503, 'This link is not available. Try again.');
 	}
-	return { link, analytics, automations, days };
+	return { link, analytics, automations, days, view };
 };
 
 export const actions: Actions = {

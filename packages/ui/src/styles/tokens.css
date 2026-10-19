@@ -96,15 +96,7 @@
 	--color-shadow-soft: light-dark(oklch(22% 0 0 / 0.035), oklch(0% 0 0 / 0.3));
 	--color-clear: transparent;
 	--color-accent-soft: light-dark(oklch(96.5% 0.025 35), var(--dark-accent-soft));
-	--color-chart-fill: light-dark(oklch(80% 0.13 35 / 0.32), oklch(62% 0.15 35 / 0.26));
-	/* Data marks: data-1 is clicks, data-2 is the previous period. Each mark is at least 3:1 on
-	 * its background; the soft tints sit behind row labels and keep text above 13:1. */
-	--color-data-1: light-dark(oklch(58% 0.17 255), oklch(72% 0.13 255));
-	--color-data-1-soft: light-dark(oklch(95% 0.03 250), oklch(28% 0.05 255));
-	--color-data-2: light-dark(oklch(60% 0.02 265), oklch(64% 0.015 265));
-	--color-data-2-soft: light-dark(oklch(95% 0.005 265), oklch(26% 0.005 265));
-	--color-chart-grid: light-dark(oklch(91% 0 0), oklch(30% 0 0));
-	--color-chart-cursor: light-dark(oklch(78% 0 0), oklch(50% 0 0));
+	/* Chart values under the pointer: dark in both themes. */
 	--color-tooltip: oklch(25% 0 0);
 	--color-on-tooltip: oklch(97% 0 0);
 	--color-code-success: oklch(77% 0.17 130);

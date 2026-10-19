@@ -2,7 +2,6 @@
 <script lang="ts">
 	import EmptyState from '../empty/EmptyState.svelte';
 	import Glyph from '../icons/Glyph.svelte';
-	import Select from '../atoms/Select.svelte';
 	import SegmentedControl from '../molecules/SegmentedControl.svelte';
 	import Tabs, { tabPanelId, tabId, type TabItem } from '../molecules/Tabs.svelte';
 	import DimensionIcon, { type IconKind } from './DimensionIcon.svelte';
@@ -100,21 +99,8 @@
 	}
 
 	const peak = $derived(Math.max(0, ...analytics.days.map((day) => day.clicks)));
-	// A round top tick at or above the peak, close enough that the tallest bar fills the plot.
-	const scale = $derived.by(() => {
-		if (peak <= 1) return 1;
-		const power = 10 ** Math.floor(Math.log10(peak));
-		const steps = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
-		return (
-			steps.map((step) => step * power).find((tick) => tick >= peak && Number.isInteger(tick)) ??
-			peak
-		);
-	});
-	// Whole-number gridlines: three or four even steps where the top tick allows them.
-	const ticks = $derived.by(() => {
-		const count = [3, 4, 2].find((parts) => scale % parts === 0) ?? 1;
-		return Array.from({ length: count + 1 }, (_, index) => (scale / count) * index);
-	});
+	// The range ends today (UTC), which is still counting; its bar is striped.
+	const today = $derived(analytics.asOf.slice(0, 10));
 
 	// Up to four day labels under their bars, always with the first and the last day. The first
 	// and last align with the plot's edges, so they cannot overflow it.
@@ -129,6 +115,16 @@
 	});
 
 	const countries = $derived(analytics.countries.filter((row) => row.value !== 'unknown').length);
+	// Shares and the top site come from the breakdowns; null when there is nothing to show.
+	const phoneShare = $derived.by(() => {
+		const recorded = sum(analytics.devices);
+		const phones = analytics.devices.find((row) => row.value === 'mobile')?.clicks ?? 0;
+		return recorded === 0 ? null : percent((phones / recorded) * 100);
+	});
+	const topReferrer = $derived.by(() => {
+		const row = analytics.referrers.find((item) => item.value !== 'unknown');
+		return row ? referrer(row.value) : null;
+	});
 
 	interface Breakdown {
 		id: string;
@@ -209,21 +205,19 @@
 	}
 </script>
 
-{#snippet rows(breakdown: Breakdown, bars: boolean)}
+{#snippet rows(breakdown: Breakdown)}
 	{#if breakdown.rows.length > 0}
 		{@const open = expanded[breakdown.id] ?? false}
-		<ol class="rows" class:bars id="{id}-{breakdown.id}-rows">
+		<ol class="rows" id="{id}-{breakdown.id}-rows">
 			{#each open ? breakdown.rows : breakdown.rows.slice(0, preview) as row (row.value)}
 				{@const value = share(breakdown.rows, row.clicks)}
 				<li>
+					<span class="fill" style:width={`${value}%`} aria-hidden="true"></span>
 					<DimensionIcon kind={breakdown.kind} value={row.value} {iconHref} />
 					<span class="name">{breakdown.name(row.value)}</span>
 					<span class="share" title={clickCount(row.clicks)}
 						>{percent(value)}<span class="visually-hidden">, {clickCount(row.clicks)}</span></span
 					>
-					{#if bars}<span class="meter" aria-hidden="true"
-							><span style:width={`${value}%`}></span></span
-						>{/if}
 				</li>
 			{/each}
 		</ol>
@@ -252,38 +246,41 @@
 	{/if}
 {/snippet}
 
+{#snippet kpi(label: string, value: string | null)}
+	<div class="kpi">
+		<dt>{label}</dt>
+		<dd>
+			{#if value === null}<span aria-hidden="true">–</span><span class="visually-hidden">None</span
+				>{:else}{value}{/if}
+		</dd>
+	</div>
+{/snippet}
+
 <section class="analytics" aria-labelledby="{id}-heading">
-	<div class="bar">
-		<h2 id="{id}-heading" class="heading">Analytics</h2>
-		<div class="period">
-			{#if ranges.length > 0}
-				<Select
-					icon="calendar"
-					value={currentRange}
-					aria-label="Period"
-					onchange={(event) => chooseRange(event.currentTarget.value)}
-				>
-					{#each ranges as range (range.href)}
-						<option value={range.href}>Last {range.label}</option>
-					{/each}
-				</Select>
-			{/if}
+	<div class="head">
+		<div class="titles">
+			<h2 id="{id}-heading">Clicks</h2>
 			<p class="dates">{formatDay(analytics.from)} – {formatDay(analytics.to)} · UTC</p>
 		</div>
+		{#if ranges.length > 0}
+			<SegmentedControl
+				options={ranges.map((range) => ({ value: range.href, label: range.label }))}
+				value={currentRange}
+				name="{id}-range"
+				label="Date range"
+				onchange={chooseRange}
+			/>
+		{/if}
 	</div>
 
-	<dl class="stats">
-		<div>
-			<dt>Total clicks</dt>
-			<dd>{numbers.format(analytics.total)}</dd>
-		</div>
-		<div>
-			<dt>{countries === 1 ? 'Country' : 'Countries'}</dt>
-			<dd>{numbers.format(countries)}</dd>
-		</div>
+	<dl class="kpis">
+		{@render kpi('Clicks', numbers.format(analytics.total))}
+		{@render kpi(countries === 1 ? 'Country' : 'Countries', numbers.format(countries))}
+		{@render kpi('On phones', phoneShare)}
+		{@render kpi('Top referrer', topReferrer)}
 	</dl>
 	<p class="as-of">
-		<Glyph name="refresh" size={18} />
+		<Glyph name="refresh" size={16} />
 		<span
 			>Updated {time.format(new Date(analytics.asOf))} UTC. New clicks can take up to five minutes to
 			appear.<span class="sep" aria-hidden="true">·</span>Link previews and known bots are not
@@ -296,8 +293,8 @@
 			Open the short link in a browser; the click shows here within a few minutes.
 		</EmptyState>
 	{:else}
-		<section class="daily" aria-labelledby="{id}-daily">
-			<div class="daily-bar">
+		<section class="card daily" aria-labelledby="{id}-daily">
+			<div class="daily-head">
 				<h3 id="{id}-daily">Clicks per day</h3>
 				<SegmentedControl
 					options={[
@@ -317,29 +314,21 @@
 						role="img"
 						aria-label={`Daily clicks from ${formatDay(analytics.from)} to ${formatDay(analytics.to)}. Highest day: ${numbers.format(peak)}.`}
 					>
-						{#each ticks as tick (tick)}
-							<span class="tick" style:top="{100 - (tick / scale) * 100}%" aria-hidden="true"
-								>{numbers.format(tick)}</span
-							>
-						{/each}
-						<div class="area" aria-hidden="true">
-							{#each ticks as tick (tick)}
-								<span class="grid" class:base={tick === 0} style:top="{100 - (tick / scale) * 100}%"
+						<!-- One bar per day: daily bars keep a sparse count from looking like a trend. -->
+						{#each analytics.days as day (day.day)}
+							<div class="column" class:today={day.day === today}>
+								<span
+									class="day-bar"
+									style:height={`${peak === 0 ? 0 : (day.clicks / peak) * 100}%`}
+									aria-hidden="true"
 								></span>
-							{/each}
-							<!-- One bar per day: daily bars keep a sparse count from looking like a trend. -->
-							<div class="columns">
-								{#each analytics.days as day (day.day)}
-									<div class="column">
-										{#if day.clicks > 0}<span
-												class="day-bar"
-												style:height={`${(day.clicks / scale) * 100}%`}
-											></span>{/if}
-										<span class="tip">{formatDay(day.day)}: {numbers.format(day.clicks)}</span>
-									</div>
-								{/each}
+								<span class="tip" aria-hidden="true"
+									>{formatDay(day.day)}{day.day === today ? ' (today so far)' : ''}: {numbers.format(
+										day.clicks
+									)}</span
+								>
 							</div>
-						</div>
+						{/each}
 					</div>
 					<div class="axis" aria-hidden="true">
 						{#each labels as label (label.day)}
@@ -365,36 +354,40 @@
 		</section>
 
 		<div class="breakdowns">
-			<section class="breakdown" aria-labelledby="{id}-countries">
+			<section class="card breakdown" aria-labelledby="{id}-countries">
 				<h3 id="{id}-countries">Countries</h3>
-				{@render rows(countryBreakdown, false)}
+				{@render rows(countryBreakdown)}
 			</section>
-			<section class="breakdown" aria-labelledby="{id}-technology">
-				<h3 id="{id}-technology" class="visually-hidden">Devices and software</h3>
+			<section class="card breakdown" aria-labelledby="{id}-technology">
+				<h3 id="{id}-technology" class:visually-hidden={technologyTabs.length > 1}>
+					{technologyTabs.length > 1 ? 'Devices and software' : 'Devices'}
+				</h3>
 				{#if technologyTabs.length > 1}
-					<Tabs
-						items={technologyTabs}
-						bind:value={technologyTab}
-						label="Devices and software"
-						idPrefix="{id}-tech"
-						size="sm"
-					/>
+					<div class="tech-tabs">
+						<Tabs
+							items={technologyTabs}
+							bind:value={technologyTab}
+							label="Devices and software"
+							idPrefix="{id}-tech"
+							size="sm"
+							variant="pill"
+						/>
+					</div>
 					<div
 						role="tabpanel"
 						id={tabPanelId(`${id}-tech`, shownTechnology.id)}
 						aria-labelledby={tabId(`${id}-tech`, shownTechnology.id)}
 						class="panel"
 					>
-						{@render rows(shownTechnology, true)}
+						{@render rows(shownTechnology)}
 					</div>
 				{:else}
-					<p class="single-title" aria-hidden="true">Devices</p>
-					{@render rows(shownTechnology, true)}
+					{@render rows(shownTechnology)}
 				{/if}
 			</section>
-			<section class="breakdown" aria-labelledby="{id}-referrers">
+			<section class="card breakdown" aria-labelledby="{id}-referrers">
 				<h3 id="{id}-referrers">Referrers</h3>
-				{@render rows(referrerBreakdown, false)}
+				{@render rows(referrerBreakdown)}
 			</section>
 		</div>
 	{/if}
@@ -404,116 +397,135 @@
 	.analytics {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr);
-		gap: 1.5rem;
+		gap: 1rem;
 		container-type: inline-size;
 	}
-	.bar {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: flex-end;
-		justify-content: space-between;
-		gap: 0.75rem 1.5rem;
-		box-shadow: inset 0 -1px var(--color-rule);
-	}
-	.heading {
-		padding: 0.5rem 0 0.6rem;
-		color: var(--color-strong);
-		font-size: 1.1875rem;
-		font-weight: 650;
-		letter-spacing: -0.02em;
-	}
-	.period {
+	.head {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 0.5rem 1rem;
-		padding-bottom: 0.6rem;
+		justify-content: space-between;
+		gap: 0.75rem;
 	}
-	.dates {
-		color: var(--color-lead);
-		font-size: 0.9375rem;
-		white-space: nowrap;
-	}
-	.stats {
+	.titles {
 		display: flex;
 		flex-wrap: wrap;
-		margin: 0;
+		align-items: baseline;
+		gap: 0.25rem 0.75rem;
 	}
-	.stats div {
-		display: grid;
-		gap: 0.15rem;
-		padding-right: 3.5rem;
-	}
-	.stats div + div {
-		padding-left: 3.5rem;
-		border-left: 1px solid var(--color-rule);
-	}
-	.stats dd {
-		margin: 0;
+	h2 {
 		color: var(--color-strong);
-		font-size: 2.5rem;
-		font-weight: 750;
-		letter-spacing: -0.04em;
-		line-height: 1.1;
-		font-variant-numeric: tabular-nums;
+		font-size: 1.0625rem;
+		font-weight: 600;
+		letter-spacing: -0.01em;
 	}
-	.stats dt {
-		order: 2;
-		color: var(--color-lead);
-		font-size: 0.875rem;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
+	.dates {
+		color: var(--color-subtle);
+		font-size: 0.8125rem;
+		white-space: nowrap;
+	}
+	.kpis {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.625rem;
+		margin: 0;
+	}
+	.kpi {
+		display: grid;
+		align-content: start;
+		gap: 0.25rem;
+		min-width: 0;
+		padding: 0.75rem 0.875rem;
+		border-radius: 0.75rem;
+		background: var(--color-surface);
+		box-shadow: var(--shadow-ring);
+	}
+	dt {
+		color: var(--color-subtle);
+		font-size: 0.75rem;
+	}
+	dd {
+		margin: 0;
+		overflow: hidden;
+		color: var(--color-strong);
+		font-size: 1.375rem;
+		font-weight: 600;
+		letter-spacing: -0.02em;
+		line-height: 1.25;
+		font-variant-numeric: tabular-nums;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.as-of {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.5rem;
+		color: var(--color-subtle);
+		font-size: 0.8125rem;
+	}
+	.as-of :global(svg) {
+		flex: none;
+		margin-top: 0.125rem;
+	}
+	.sep {
+		margin: 0 0.5rem;
+	}
+	.card {
+		display: grid;
+		align-content: start;
+		gap: 0.75rem;
+		min-width: 0;
+		padding: 0.875rem;
+		border-radius: 0.75rem;
+		background: var(--color-surface);
+		box-shadow: var(--shadow-ring);
+	}
+	.daily-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+	}
+	h3 {
+		color: var(--color-strong);
+		font-size: 0.9375rem;
+		font-weight: 600;
 	}
 	.chart {
 		margin: 0;
 	}
+	/* One column per day, no grid: ink bars at 16%, solid under the pointer, today striped. */
 	.plot {
-		position: relative;
-		height: 10rem;
-		margin-left: 2.75rem;
-	}
-	.tick {
-		position: absolute;
-		right: calc(100% + 0.75rem);
-		color: var(--color-lead);
-		font-size: 0.8125rem;
-		font-variant-numeric: tabular-nums;
-		transform: translateY(-50%);
-	}
-	.area {
-		position: absolute;
-		inset: 0;
-	}
-	.grid {
-		position: absolute;
-		right: 0;
-		left: 0;
-		border-top: 1px dashed var(--color-rule);
-	}
-	.grid.base {
-		border-top-style: solid;
-	}
-	/* One column per day; the bar keeps 1px of surface on each side as the gap. */
-	.columns {
-		position: absolute;
-		inset: 0;
 		display: flex;
+		align-items: flex-end;
+		gap: 2px;
+		height: 7.5rem;
 	}
 	.column {
 		position: relative;
+		display: flex;
 		flex: 1;
+		align-items: flex-end;
+		justify-content: center;
 		min-width: 0;
+		height: 100%;
 	}
 	.day-bar {
-		position: absolute;
-		right: 1px;
-		bottom: 0;
-		left: 1px;
-		min-height: 2px;
+		width: 100%;
 		max-width: 2.5rem;
-		margin-inline: auto;
-		border-radius: 4px 4px 0 0;
-		background: var(--color-accent);
+		min-height: 2px;
+		border-radius: 3px 3px 1px 1px;
+		background: color-mix(in srgb, var(--color-strong) 16%, transparent);
+		transition: background var(--dur-fast) var(--ease-out);
+	}
+	.column:hover .day-bar {
+		background: var(--color-strong);
+	}
+	.today .day-bar,
+	.today:hover .day-bar {
+		background: repeating-linear-gradient(135deg, var(--color-faint) 0 3px, transparent 3px 6px);
+		box-shadow: inset 0 0 0 1px var(--color-faint);
 	}
 	.tip {
 		position: absolute;
@@ -522,31 +534,35 @@
 		z-index: 1;
 		display: none;
 		padding: 0.25rem 0.5rem;
-		border: 1px solid var(--color-rule);
 		border-radius: var(--radius-sm, 0.375rem);
-		background: var(--color-paper);
-		color: var(--color-ink);
+		background: var(--color-tooltip);
+		color: var(--color-on-tooltip);
 		font-size: 0.75rem;
 		white-space: nowrap;
 		pointer-events: none;
 		transform: translateX(-50%);
 	}
-	.column:hover {
-		background: var(--color-hover);
+	.column:first-child .tip {
+		left: 0;
+		transform: none;
+	}
+	.column:last-child .tip {
+		right: 0;
+		left: auto;
+		transform: none;
 	}
 	.column:hover .tip {
 		display: block;
 	}
 	.axis {
 		position: relative;
-		height: 1.75rem;
-		margin-left: 2.75rem;
-		color: var(--color-lead);
-		font-size: 0.8125rem;
+		height: 1.5rem;
+		color: var(--color-subtle);
+		font-size: 0.75rem;
 	}
 	.axis span {
 		position: absolute;
-		top: 0.5rem;
+		top: 0.375rem;
 		white-space: nowrap;
 		transform: translateX(-50%);
 	}
@@ -556,25 +572,13 @@
 	.axis span:last-child {
 		transform: translateX(-100%);
 	}
-	.daily {
-		display: grid;
-		gap: 1rem;
-		padding-bottom: 1.25rem;
-		border-bottom: 1px solid var(--color-rule);
-	}
-	.daily-bar {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.75rem;
-	}
 	/* The chart's plot and axis rows together. */
 	.table-scroll {
-		height: 11.75rem;
+		height: 9rem;
 		overflow-y: auto;
-		border: 1px solid var(--color-rule);
+		overscroll-behavior: contain;
 		border-radius: var(--radius-sm, 0.375rem);
+		box-shadow: var(--shadow-ring);
 	}
 	.table-scroll:focus-visible {
 		outline: 2px solid var(--color-focus);
@@ -589,18 +593,18 @@
 	th {
 		position: sticky;
 		top: 0;
-		background: var(--color-paper);
-		color: var(--color-lead);
-		font-weight: 600;
+		background: var(--color-surface);
+		color: var(--color-subtle);
+		font-weight: 500;
 		text-align: left;
-		box-shadow: inset 0 -1px var(--color-rule);
+		box-shadow: inset 0 -1px var(--color-rule-soft);
 	}
 	th,
 	td {
 		padding: 0.4rem 0.75rem;
 	}
 	tbody tr + tr td {
-		border-top: 1px solid var(--color-rule);
+		border-top: 1px solid var(--color-rule-soft);
 	}
 	th:last-child,
 	td:last-child {
@@ -609,112 +613,87 @@
 	.breakdowns {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr);
-		gap: 2rem;
+		gap: 0.625rem;
 	}
 	.breakdown {
-		display: grid;
-		align-content: start;
-		gap: 0.75rem;
-		min-width: 0;
+		gap: 0.375rem;
+		padding-inline: 0.375rem;
 	}
-	h3,
-	.single-title {
-		min-height: 2.25rem;
-		color: var(--color-strong);
-		font-size: 1.1875rem;
-		font-weight: 650;
-		letter-spacing: -0.02em;
+	.breakdown h3,
+	.tech-tabs {
+		margin: 0 0.5rem 0.25rem;
 	}
 	.panel {
 		display: grid;
-		gap: 0.75rem;
+		gap: 0.375rem;
 	}
 	.rows {
+		display: grid;
 		margin: 0;
 		padding: 0;
 		list-style: none;
 	}
+	/* The share is a grey bar behind the row. */
 	.rows li {
+		position: relative;
 		display: grid;
-		grid-template-columns: 1.5rem minmax(0, 1fr) 3rem;
+		grid-template-columns: 1.25rem minmax(0, 1fr) auto;
 		align-items: center;
-		gap: 0.35rem 0.85rem;
-		padding: 0.6rem 0;
+		gap: 0.625rem;
+		min-height: 2.25rem;
+		padding: 0 0.625rem;
+		isolation: isolate;
 	}
-	.rows li + li {
-		border-top: 1px solid var(--color-rule);
-	}
-	.rows.bars li {
-		border-top: 0;
-		padding: 0.45rem 0;
-	}
-	.rows.bars li > :global(:first-child),
-	.rows.bars .share {
-		grid-row: span 2;
+	.fill {
+		position: absolute;
+		inset-block: 2px;
+		left: 0;
+		z-index: -1;
+		border-radius: 0.5rem;
+		background: var(--color-surface-2);
 	}
 	.name {
 		overflow: hidden;
 		color: var(--color-strong);
-		font-size: 0.9375rem;
+		font-size: 0.875rem;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 	.share {
-		color: var(--color-strong);
+		color: var(--color-muted);
 		text-align: right;
-		font-size: 0.9375rem;
+		font-size: 0.875rem;
 		font-variant-numeric: tabular-nums;
-	}
-	.meter {
-		grid-column: 2 / 3;
-		display: block;
-		height: 0.5rem;
-		overflow: hidden;
-		border-radius: var(--radius-pill, 999px);
-		background: var(--color-selected);
-	}
-	.meter span {
-		display: block;
-		height: 100%;
-		border-radius: inherit;
-		background: var(--color-strong);
 	}
 	.all {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.5rem;
+		gap: 0.375rem;
 		justify-self: start;
 		min-height: 2.25rem;
-		padding: 0;
+		padding: 0 0.625rem;
 		border: 0;
+		border-radius: var(--radius-control, 0.5rem);
 		background: none;
 		color: var(--color-strong);
 		font: inherit;
-		font-size: 0.9375rem;
-		font-weight: 600;
+		font-size: 0.8125rem;
+		font-weight: 500;
 		cursor: pointer;
 	}
 	.all:hover {
-		text-decoration: underline;
-		text-underline-offset: 3px;
+		background: var(--color-surface-2);
+	}
+	@media (pointer: coarse) {
+		.all {
+			min-height: 2.75rem;
+		}
 	}
 	.none,
 	.note {
-		color: var(--color-lead);
-		font-size: 0.875rem;
-	}
-	.as-of {
-		display: flex;
-		align-items: flex-start;
-		gap: 0.6rem;
-		color: var(--color-lead);
-		font-size: 0.875rem;
-	}
-	.as-of :global(svg) {
-		margin-top: 0.1rem;
-	}
-	.sep {
-		margin: 0 0.6rem;
+		padding: 0 0.625rem 0.375rem;
+		color: var(--color-subtle);
+		font-size: 0.8125rem;
 	}
 	.visually-hidden {
 		position: absolute;
@@ -724,8 +703,19 @@
 		clip-path: inset(50%);
 		white-space: nowrap;
 	}
-	/* Two columns with the device tabs across the bottom, then three side by side. */
+	/* Four KPIs in a row; two breakdown columns with the device card across the bottom, then
+	   three side by side. */
 	@container (min-width: 38rem) {
+		.kpis {
+			grid-template-columns: repeat(4, minmax(0, 1fr));
+		}
+		.plot {
+			gap: 4px;
+			height: 9.375rem;
+		}
+		.table-scroll {
+			height: 10.875rem;
+		}
 		.breakdowns {
 			grid-template-columns: repeat(2, minmax(0, 1fr));
 		}
@@ -735,36 +725,12 @@
 		}
 	}
 	@container (min-width: 60rem) {
+		.breakdowns {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+		}
 		.breakdown:nth-child(2) {
 			grid-column: auto;
 			grid-row: auto;
-		}
-		.breakdowns {
-			grid-template-columns: repeat(3, minmax(0, 1fr));
-			gap: 0;
-		}
-		.breakdown {
-			padding: 0 2rem;
-		}
-		.breakdown:first-child {
-			padding-left: 0;
-		}
-		.breakdown:last-child {
-			padding-right: 0;
-		}
-		.breakdown + .breakdown {
-			border-left: 1px solid var(--color-rule);
-		}
-	}
-	@container (max-width: 30rem) {
-		.stats div {
-			padding-right: 1.75rem;
-		}
-		.stats div + div {
-			padding-left: 1.75rem;
-		}
-		.stats dd {
-			font-size: 2rem;
 		}
 	}
 </style>

@@ -174,6 +174,10 @@
 		align-items: center;
 		gap: 0.5rem;
 	}
+	/* A top snippet that renders only in the bar leaves no gap on a phone. */
+	.top-under:empty {
+		display: none;
+	}
 	.lead {
 		color: var(--color-muted);
 		font-size: 0.9375rem;
