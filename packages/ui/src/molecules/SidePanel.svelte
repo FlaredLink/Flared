@@ -11,9 +11,12 @@
 		label: string;
 		id: string;
 		onclose?: () => void;
+		// A column beside the page content under the page bar, from SplitView, in place of a
+		// panel over the page.
+		docked?: boolean;
 		children: Snippet;
 	}
-	let { label, id, onclose, children }: Props = $props();
+	let { label, id, onclose, docked = false, children }: Props = $props();
 	let panel = $state<HTMLElement>();
 
 	// On narrow screens the panel covers the page, so Escape closes it there too.
@@ -28,9 +31,10 @@
      read CSS variables or the CSS reduced-motion rule, so both are handled here. -->
 <aside
 	class="side-panel"
+	class:docked
 	aria-labelledby={id}
 	bind:this={panel}
-	out:fly={{ x: 24, duration: prefersReducedMotion.current ? 0 : 154, easing: cubicIn }}
+	out:fly={{ x: 24, duration: prefersReducedMotion.current || docked ? 0 : 154, easing: cubicIn }}
 >
 	<div class="head">
 		<p class="label" {id}>{label}</p>
@@ -58,6 +62,8 @@
 		width: min(var(--side-panel-width), 100%);
 		border-left: 1px solid var(--color-rule);
 		background: var(--color-paper);
+		/* Over the page, so it lifts off it. */
+		box-shadow: var(--shadow-lift);
 		animation: slide-in var(--dur-base) var(--ease-out);
 	}
 	.head {
@@ -95,17 +101,40 @@
 			opacity: 0;
 		}
 	}
-	/* Wide windows keep the page beside the sidebar. Below 90rem the page would keep too
-	   little width for a link list beside the app navigation, so the panel covers it. */
+	/* A docked panel is a column that runs from the page bar (3.75rem from 48rem, with a 1.5rem
+	   margin under it) to the bottom of the window and to the main area's right edge. */
+	.docked {
+		position: sticky;
+		top: 3.75rem;
+		right: auto;
+		bottom: auto;
+		z-index: auto;
+		width: auto;
+		height: calc(100dvh - 3.75rem);
+		/* The negative bottom margin lets the column reach past the main area's bottom padding, so
+		   it stays under the bar at the end of the page. */
+		margin: -1.5rem calc(var(--page-bleed, 0px) * -1) calc(var(--page-bottom, 0px) * -1) 0;
+		border-left-color: var(--color-rule-soft);
+		background: transparent;
+		box-shadow: none;
+		animation: none;
+	}
+	.docked .head {
+		min-height: 3rem;
+		padding: 0.5rem 0.5rem 0.5rem 1.125rem;
+		border-bottom: 0;
+	}
+	.docked .body {
+		padding: 0.25rem 1.125rem 1.5rem;
+	}
+	/* Wide windows keep the page beside an undocked panel. Below 90rem the page would keep too
+	   little width for a list beside the app navigation, so the panel covers it. */
 	@media (min-width: 90rem) {
-		:global(body:has(.side-panel)) {
+		:global(body:has(.side-panel:not(.docked))) {
 			padding-right: var(--side-panel-width);
 		}
-	}
-	/* Narrow windows show the sidebar over the page. */
-	@media (max-width: 89.99rem) {
 		.side-panel {
-			box-shadow: var(--shadow-lift);
+			box-shadow: none;
 		}
 	}
 </style>

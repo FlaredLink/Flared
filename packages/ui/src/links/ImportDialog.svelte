@@ -62,6 +62,39 @@
 	const lists = new Intl.ListFormat('en', { type: 'conjunction' });
 	const previewLimit = 50;
 
+	// The source only changes the export steps shown; the file itself decides how it is read.
+	const sources = [
+		{
+			id: 'bitly',
+			name: 'Bitly',
+			file: 'CSV export',
+			letter: 'b',
+			help: 'Export your links from Bitly as a CSV file, then choose that file here.'
+		},
+		{
+			id: 'dub',
+			name: 'Dub',
+			file: 'CSV export',
+			letter: 'D',
+			help: 'Export your links from Dub as a CSV file, then choose that file here.'
+		},
+		{
+			id: 'rebrandly',
+			name: 'Rebrandly',
+			file: 'CSV export',
+			letter: 'R',
+			help: 'Export your links from Rebrandly as a CSV file, then choose that file here.'
+		},
+		{
+			id: 'flared',
+			name: 'Flared',
+			file: 'JSON export',
+			letter: 'F',
+			help: 'Choose the JSON file from Workspace settings, Export, in another Flared workspace.'
+		}
+	] as const;
+	let source = $state<(typeof sources)[number]['id']>('bitly');
+
 	type Phase = 'choose' | 'reading' | 'checking' | 'preview' | 'importing' | 'done';
 	// taken: a copied link whose ending is in use; it gets a new ending.
 	type Check = { status: 'ready' | 'taken' } | { status: 'failed'; reason: string };
@@ -425,9 +458,33 @@
 				<Button variant="primary" onclick={() => (open = false)}>Done</Button>
 			</div>
 		{:else}
-			<p class="help">
-				Export a CSV from Bitly, Dub, Rebrandly, or Short.io, or use a Flared export file.
-			</p>
+			{#if !file}
+				<p class="help">
+					Choose the file you exported. You check every row before Flared creates a link.
+				</p>
+				<fieldset class="sources">
+					<legend class="visually-hidden">File source</legend>
+					{#each sources as item (item.id)}
+						<label class="source">
+							<input
+								type="radio"
+								name="import-source"
+								value={item.id}
+								bind:group={source}
+								class="visually-hidden"
+							/>
+							<span class="tile" aria-hidden="true">{item.letter}</span>
+							<span class="source-text"
+								><span class="name">{item.name}</span><span class="kind">{item.file}</span></span
+							>
+						</label>
+					{/each}
+				</fieldset>
+				<p class="source-help">
+					{sources.find((item) => item.id === source)?.help} A CSV from Short.io or another service works
+					too.
+				</p>
+			{/if}
 			<FormField for="import-file" label="File" error={fileError || null}>
 				<input
 					bind:this={fileInput}
@@ -573,23 +630,94 @@
 		color: var(--color-lead);
 		font-size: 0.875rem;
 	}
+	.sources {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.5rem;
+		min-width: 0;
+		margin: 0;
+		padding: 0;
+		border: 0;
+	}
+	.source {
+		display: flex;
+		align-items: center;
+		gap: 0.625rem;
+		min-width: 0;
+		min-height: 3.75rem;
+		padding: 0.625rem;
+		border-radius: 0.75rem;
+		background: var(--color-surface-2);
+		font-size: 0.875rem;
+		cursor: pointer;
+	}
+	.source:has(input:checked) {
+		background: var(--color-surface);
+		box-shadow: 0 0 0 2px var(--color-strong);
+	}
+	.source:has(input:focus-visible) {
+		outline: 2px solid var(--color-focus);
+		outline-offset: 2px;
+	}
+	.tile {
+		display: grid;
+		flex: none;
+		place-items: center;
+		width: 2rem;
+		height: 2rem;
+		border-radius: 0.5rem;
+		background: var(--color-surface-3);
+		color: var(--color-strong);
+		font-size: 0.75rem;
+		font-weight: 700;
+		letter-spacing: -0.03em;
+	}
+	.source-text {
+		display: grid;
+		min-width: 0;
+	}
+	.name {
+		color: var(--color-strong);
+		font-weight: 600;
+	}
+	.kind {
+		color: var(--color-subtle);
+		font-size: 0.75rem;
+	}
+	.source-help {
+		padding: 0.75rem 0.875rem;
+		border-radius: 0.75rem;
+		background: var(--color-surface-2);
+		color: var(--color-muted);
+		font-size: 0.875rem;
+		line-height: 1.5;
+	}
 	.file {
 		min-width: 0;
-		color: var(--color-ink);
+		color: var(--color-muted);
 		font: inherit;
-		font-size: 0.9375rem;
+		font-size: 0.875rem;
 	}
+	/* The browser's own file button, as the primary button of the dialog. */
 	.file::file-selector-button {
-		min-height: 2.25rem;
+		min-height: 2.75rem;
 		margin-right: 0.75rem;
-		padding: 0 0.85rem;
-		border: 1px solid var(--color-rule);
-		border-radius: var(--radius-control, 0.5rem);
-		background: var(--color-paper);
-		color: var(--color-strong);
+		padding: 0 1rem;
+		border: 0;
+		border-radius: 0.5625rem;
+		background: var(--color-button-primary);
+		color: var(--color-on-primary);
 		font: inherit;
-		font-weight: 600;
+		font-weight: 500;
 		cursor: pointer;
+	}
+	.visually-hidden {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
 	}
 	.columns {
 		display: grid;

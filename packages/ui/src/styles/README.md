@@ -30,12 +30,17 @@ The main area and panels are white (`--color-paper`, `--color-surface`). The fra
 
 An app shell sets these custom properties on its main area; the shared components read them and work without them.
 
-- `--page-bleed`: how far the `PageHeader` bar reaches past the content on each side, so it runs from edge to edge of the main area. Default 0.
+- `--page-bleed`: how far the `PageHeader` bar reaches past the content on each side, so it runs from edge to edge of the main area. A docked `SidePanel` and a phone `LinkList` reach the same edges. Default 0.
 - `--page-top`: the main area's top padding, which the bar covers. Default 0.
+- `--page-bottom`: the main area's bottom padding, which a docked `SidePanel` reaches past. Default 0.
 - `--page-bar-position`: `sticky` keeps the bar at the top while the page scrolls. Default `relative`.
 - `--page-background`: the colour behind the bar. Default `--color-paper`.
 - `[data-page-bar]` marks the bar, so a shell can tell whether a page has one (for example, to pad the top of a page without it).
 - A container (`container-type: inline-size`) narrower than 4.5rem, such as a collapsed sidebar, makes a `Menu` text trigger show only its lead.
+
+`SplitView` with `dockAt` turns its `SidePanel` into a column beside the content once the view is that many pixels wide; the column sticks under the 3.75rem page bar.
+
+Component hooks: `--site-icon-size` sets a `SiteIcon` tile's edge, and `--sparkline-color`, `--sparkline-gap`, and `--sparkline-radius` style `Sparkline` bars.
 
 Below 48rem, `PageHeader` is a phone top bar (a back button on a pushed screen) and `Dialog` is a bottom sheet. Both clear the safe areas of `viewport-fit=cover`.
 

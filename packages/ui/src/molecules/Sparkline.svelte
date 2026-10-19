@@ -1,43 +1,37 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
-	// A small area chart of daily counts, oldest first. The text beside it carries the numbers.
-	let { values, height = 80 }: { values: number[]; height?: number } = $props();
-	const width = 300;
-	const points = $derived.by(() => {
-		const max = Math.max(1, ...values);
-		const step = values.length > 1 ? width / (values.length - 1) : width;
-		return values.map((value, index) => [index * step, height - 3 - (value / max) * (height - 6)]);
-	});
-	const line = $derived(points.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' '));
-	const area = $derived(`0,${height} ${line} ${width},${height}`);
+	// Bars of daily counts, oldest first. The text beside it carries the numbers. With today, the
+	// last bar is today and shows in ink.
+	let { values, today = false }: { values: number[]; today?: boolean } = $props();
+	const max = $derived(Math.max(1, ...values));
 </script>
 
-<svg
-	viewBox="0 0 {width} {height}"
-	preserveAspectRatio="none"
-	style:height="{height}px"
-	aria-hidden="true"
->
-	{#if points.length > 1}
-		<polygon class="area" points={area} />
-		<polyline class="line" points={line} />
-	{/if}
-</svg>
+<span class="sparkline" aria-hidden="true">
+	{#each values as value, index (index)}
+		<span
+			class:today={today && index === values.length - 1}
+			style:height="{Math.max(0, (value / max) * 100)}%"
+		></span>
+	{/each}
+</span>
 
 <style>
-	svg {
-		display: block;
+	/* The caller sets the size; bars share the width and grow from the bottom. */
+	.sparkline {
+		display: flex;
+		align-items: flex-end;
+		gap: var(--sparkline-gap, 1px);
 		width: 100%;
-		overflow: visible;
+		height: 100%;
 	}
-	.area {
-		fill: var(--color-chart-fill);
+	span span {
+		flex: 1;
+		min-width: 0;
+		min-height: 2px;
+		border-radius: var(--sparkline-radius, 1px);
+		background: var(--sparkline-color, var(--color-surface-3));
 	}
-	.line {
-		fill: none;
-		stroke: var(--color-accent);
-		stroke-width: 2;
-		stroke-linejoin: round;
-		vector-effect: non-scaling-stroke;
+	.today {
+		background: var(--color-strong);
 	}
 </style>

@@ -4,10 +4,10 @@
 	import EmptyState from '../empty/EmptyState.svelte';
 	import Glyph from '../icons/Glyph.svelte';
 	import SiteIcon from '../icons/SiteIcon.svelte';
-	import IconButton from '../atoms/IconButton.svelte';
 	import Checkbox from '../atoms/Checkbox.svelte';
 	import Badge from '../atoms/Badge.svelte';
 	import Menu, { type MenuItem } from '../molecules/Menu.svelte';
+	import Sparkline from '../molecules/Sparkline.svelte';
 	import { iconHostnameOfUrl } from '@flared/contracts/icons';
 	import type { Link, ListedLink } from '@flared/contracts/links';
 	import { blockLabel } from './messages';
@@ -23,15 +23,14 @@
 		highlightId?: string | null;
 		// Address of a site's icon on the app's origin. Without it, rows show a letter tile.
 		iconHref?: (hostname: string) => string;
-		// Search and domain filter above the table. They submit as ?q= and ?domain= to this page,
-		// which passes them to GET /v1/links. Without it, the list shows no filters.
-		filters?: { search: string; domainId: string; domains: { id: string; hostname: string }[] };
-		// With a details panel: the open link, and the call that opens one. Without it, a title
-		// opens the analytics page.
+		// The list shows the result of a search or a domain filter, so no links means no match.
+		filtered?: boolean;
+		// What an unfiltered empty list shows in place of the default text.
+		empty?: Snippet;
+		// With a details panel: the open link, and the call that opens one from 48rem. Phones and
+		// lists without it open the link's analytics page.
 		selectedId?: string | null;
 		onselect?: (link: ListedLink) => void;
-		// The search field, for a shortcut that focuses it.
-		searchInput?: HTMLInputElement;
 		// Rows get checkboxes for an action on several links. selectedIds holds the chosen link
 		// IDs on this page; bulkBar shows above the list while one link or more is chosen.
 		selectable?: boolean;
@@ -46,10 +45,10 @@
 		nextHref = null,
 		highlightId = null,
 		iconHref,
-		filters,
+		filtered = false,
+		empty,
 		selectedId = null,
 		onselect,
-		searchInput = $bindable(),
 		selectable = false,
 		selectedIds = $bindable([]),
 		bulkBar
@@ -74,36 +73,13 @@
 	function chooseAll(checked: boolean) {
 		selectedIds = checked ? links.map((link) => link.id) : [];
 	}
-	const filtered = $derived(Boolean(filters && (filters.search || filters.domainId)));
 
-	// The search runs as the person types. The field keeps its own text, so a response for an
-	// earlier query cannot overwrite keys typed since; it follows the URL only while unfocused.
-	let query = $state(untrack(() => filters?.search ?? ''));
-	let searchTimer: ReturnType<typeof setTimeout> | undefined;
-	$effect(() => {
-		const search = filters?.search ?? '';
-		if (document.activeElement !== searchInput) query = search;
-	});
-
-	function searchSoon(form: HTMLFormElement | null) {
-		clearTimeout(searchTimer);
-		searchTimer = setTimeout(() => {
-			if (query.trim() !== (filters?.search ?? '')) form?.requestSubmit();
-		}, 300);
-	}
 	let status = $state('');
-	let copiedId = $state<string | null>(null);
-	let copiedTimer: ReturnType<typeof setTimeout> | undefined;
-
 	const numbers = new Intl.NumberFormat();
 
 	function clicksText(link: ListedLink): string {
 		if (link.clicksLast30Days === null) return 'Clicks unavailable';
-		return `${numbers.format(link.clicksLast30Days)} ${link.clicksLast30Days === 1 ? 'click' : 'clicks'}`;
-	}
-
-	function clicksNumber(link: ListedLink): string {
-		return link.clicksLast30Days === null ? '–' : numbers.format(link.clicksLast30Days);
+		return `${numbers.format(link.clicksLast30Days)} ${link.clicksLast30Days === 1 ? 'click' : 'clicks'} in the last 30 days`;
 	}
 
 	function display(url: string): string {
@@ -111,15 +87,11 @@
 	}
 
 	async function copy(link: Link) {
-		clearTimeout(copiedTimer);
 		try {
 			await navigator.clipboard.writeText(link.shortUrl);
-			copiedId = link.id;
 			status = `Copied ${display(link.shortUrl)}`;
-			copiedTimer = setTimeout(() => (copiedId = null), 2500);
 		} catch {
-			copiedId = null;
-			status = 'Copy failed. Select the short link and copy it.';
+			status = 'Copy failed. Open the link and copy it from there.';
 		}
 	}
 
@@ -140,65 +112,24 @@
 		];
 	}
 
-	// A click anywhere on a row opens its details, except on the row's own controls.
+	// From 48rem a click anywhere on a row opens its details, except on the row's own controls.
 	function rowClick(event: MouseEvent, link: ListedLink) {
-		if (!onselect) return;
+		if (!onselect || !window.matchMedia('(min-width: 48rem)').matches) return;
 		if ((event.target as HTMLElement).closest('a, button, input, label, [popover]')) return;
 		onselect(link);
 	}
 </script>
 
+{#snippet short(link: ListedLink)}<span class="host">{link.hostname}/</span>{link.slug}{/snippet}
+
 <section class="link-list" aria-labelledby="link-list-heading">
 	<h2 id="link-list-heading" class="visually-hidden">Your links</h2>
-	{#if filters}
-		<!-- SvelteKit runs this GET form in place: focus and scroll stay, and history gets no
-		     entry per typed query. -->
-		<form
-			class="filters"
-			method="get"
-			role="search"
-			aria-label="Filter links"
-			data-sveltekit-keepfocus
-			data-sveltekit-noscroll
-			data-sveltekit-replacestate
-			onsubmit={() => clearTimeout(searchTimer)}
-		>
-			<label class="search">
-				<span class="visually-hidden">Search links</span>
-				<Glyph name="search" size={20} />
-				<input
-					type="search"
-					name="q"
-					bind:value={query}
-					oninput={(event) => searchSoon(event.currentTarget.form)}
-					placeholder="Search links…"
-					maxlength="100"
-					autocomplete="off"
-					bind:this={searchInput}
-				/>
-			</label>
-			{#if filters.domains.length > 1}
-				<label class="domain">
-					<span class="visually-hidden">Domain</span>
-					<select
-						name="domain"
-						value={filters.domainId}
-						onchange={(event) => event.currentTarget.form?.requestSubmit()}
-					>
-						<option value="">All domains</option>
-						{#each filters.domains as domain (domain.id)}
-							<option value={domain.id}>{domain.hostname}</option>
-						{/each}
-					</select>
-					<Glyph name="caretDown" size={16} />
-				</label>
-			{/if}
-		</form>
-	{/if}
 	<p class="visually-hidden" role="status" aria-live="polite">{status}</p>
 	{#if links.length === 0}
 		{#if filtered}
 			<p class="empty">No links match. <a href="?">Show all links</a></p>
+		{:else if empty}
+			{@render empty()}
 		{:else}
 			<EmptyState title="No links yet"
 				>Create your first short link using the field above.</EmptyState
@@ -216,20 +147,16 @@
 				{/if}
 			</div>
 		{/if}
-		<div class="columns" class:selectable aria-hidden="true">
-			<span>Link</span><span class="clicks-head">Clicks · 30 days</span>
-		</div>
 		<ul class="rows">
 			{#each links as link (link.id)}
 				{@const site = iconHostnameOfUrl(link.destination)}
 				{@const name = link.title ?? display(link.shortUrl)}
-				<!-- The title button is the keyboard path; the row click is a larger target. -->
+				<!-- The open button is the keyboard path; the row click is a larger target. -->
 				<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
 				<li
 					class:selectable
 					class:chosen={selectable && selectedIds.includes(link.id)}
-					class:selected={link.id === selectedId}
-					class:highlight={link.id === highlightId && link.id !== selectedId}
+					class:selected={link.id === selectedId || link.id === highlightId}
 					class:clickable={onselect}
 					onclick={(event) => rowClick(event, link)}
 				>
@@ -245,78 +172,55 @@
 					<SiteIcon
 						hostname={site ?? display(link.destination)}
 						src={site && iconHref ? iconHref(site) : null}
-						size={36}
+						size={32}
 					/>
 					<div class="main">
-						<span class="title-row">
+						<span class="line">
+							<!-- A phone opens the link's own screen; from 48rem the button opens the details. -->
+							{#if analyticsHref}
+								<a class="open" class:phone-only={onselect} href={analyticsHref(link)}
+									>{@render short(link)}</a
+								>
+							{:else if !onselect}
+								<span class="open">{@render short(link)}</span>
+							{/if}
 							{#if onselect}
 								<button
 									type="button"
-									class="title"
+									class="open"
+									class:wide-only={analyticsHref}
 									aria-expanded={link.id === selectedId}
 									aria-controls="link-details"
-									onclick={() => onselect(link)}>{name}</button
+									onclick={() => onselect(link)}>{@render short(link)}</button
 								>
-							{:else if analyticsHref}
-								<a class="title" href={analyticsHref(link)}>{name}</a>
-							{:else}
-								<span class="title">{name}</span>
 							{/if}
-							{#if link.blocked}<Badge tone="danger">{blockLabel(link.blocked.reason)}</Badge
-								>{:else if !link.enabled}<Badge>Disabled</Badge>{/if}
 						</span>
-						<span class="sub">
-							<!-- Copy sits beside the address it copies. -->
-							<a
-								class="short"
-								href={link.shortUrl}
-								target="_blank"
-								rel="noopener noreferrer"
-								title="Open {display(link.shortUrl)} in a new tab"
-								><span class="short-text">{link.hostname}/<strong>{link.slug}</strong></span><Glyph
-									name="arrowUpRight"
-									size={14}
-								/></a
+						<!-- After the short link from 48rem; on a phone at the start of the second line, so a
+						     narrow row keeps the slug. -->
+						{#if link.blocked || !link.enabled}
+							<span class="badges"
+								>{#if link.blocked}<Badge tone="danger">{blockLabel(link.blocked.reason)}</Badge
+									>{:else}<Badge>Disabled</Badge>{/if}</span
 							>
-							<span class="copy">
-								{#if copiedId === link.id}
-									<span class="copied"><Glyph name="check" size={16} />Copied</span>
-								{:else}
-									<IconButton
-										icon="copy"
-										size="sm"
-										label={`Copy ${display(link.shortUrl)}`}
-										onclick={() => void copy(link)}
-									/>
-								{/if}
-							</span>
-							<span class="destination" title={link.destination}
-								><span class="arrow" aria-hidden="true">→</span>{site ??
-									display(link.destination)}</span
-							>
-						</span>
+						{/if}
+						<span class="second" title={link.title ? undefined : link.destination}
+							>{link.title ?? display(link.destination)}</span
+						>
 					</div>
-					{#if analyticsHref}
-						<a
-							class="clicks"
-							href={analyticsHref(link)}
-							aria-label={`${clicksText(link)} in the last 30 days for ${display(link.shortUrl)}. Open analytics.`}
-							><Glyph name="chart" size={16} /><span
-								>{clicksNumber(link)}<span class="unit">
-									{link.clicksLast30Days === 1 ? 'click' : 'clicks'} · 30d</span
-								></span
-							></a
+					<span class="count">
+						<span class="number" aria-hidden="true"
+							>{link.clicksLast30Days === null ? '–' : numbers.format(link.clicksLast30Days)}</span
 						>
-					{:else}
-						<span class="clicks" title="Clicks in the last 30 days"
-							><span
-								>{clicksNumber(link)}<span class="unit">
-									{link.clicksLast30Days === 1 ? 'click' : 'clicks'} · 30d</span
-								></span
-							></span
+						<span class="visually-hidden">{clicksText(link)}</span>
+						<span class="spark"
+							>{#if link.dailyClicksLast30Days}<Sparkline
+									values={link.dailyClicksLast30Days}
+								/>{/if}</span
 						>
-					{/if}
-					<Menu id="link-menu-{link.id}" label="More actions for {name}" items={actions(link)} />
+					</span>
+					<span class="actions">
+						<Menu id="link-menu-{link.id}" label="More actions for {name}" items={actions(link)} />
+					</span>
 				</li>
 			{/each}
 		</ul>
@@ -332,117 +236,18 @@
 <style>
 	.link-list {
 		display: grid;
-		gap: 0.75rem;
-		container-type: inline-size;
-	}
-	/* A compact toolbar, so finding a link reads apart from creating one. */
-	.filters {
-		display: flex;
-		flex-wrap: wrap;
 		gap: 0.5rem;
 	}
-	.search,
-	.domain {
-		position: relative;
-		display: flex;
-		align-items: center;
-		min-height: 2.5rem;
-		border: 1px solid transparent;
-		border-radius: var(--radius-control, 0.5rem);
-		background: var(--color-surface-2);
-		box-shadow: var(--shadow-ring);
-		color: var(--color-lead);
-	}
-	.search {
-		flex: 0 1 24rem;
-		gap: 0.6rem;
-		padding: 0 0.75rem;
-	}
-	.search:focus-within,
-	.domain:focus-within {
-		box-shadow: 0 0 0 2px var(--color-focus);
-		outline: none;
-	}
-	.search input {
-		flex: 1;
-		min-width: 0;
-		align-self: stretch;
-		padding: 0;
-		border: 0;
-		background: transparent;
-		color: var(--color-strong);
-		font: inherit;
-		font-size: 1rem;
-		outline: none;
-	}
-	.search input::placeholder {
-		color: var(--color-lead);
-	}
-	.domain {
-		flex: 0 1 12rem;
-		color: var(--color-strong);
-	}
-	.domain select {
-		width: 100%;
-		align-self: stretch;
-		padding: 0 2.5rem 0 0.85rem;
-		border: 0;
-		background: transparent;
-		color: inherit;
-		font: inherit;
-		font-size: 1rem;
-		appearance: none;
-		outline: none;
-	}
-	.domain select option {
-		background: var(--color-paper);
-		color: var(--color-strong);
-	}
-	.domain :global(svg) {
-		position: absolute;
-		right: 0.9rem;
-		pointer-events: none;
-	}
-	.columns,
-	li {
-		display: grid;
-		grid-template-columns: 2.5rem minmax(0, 1fr) 9rem auto;
-		align-items: center;
-		gap: 0 1rem;
-	}
-	.columns {
-		padding: 0 1rem 0 1.25rem;
-		color: var(--color-lead);
-		font-size: 0.8125rem;
-		font-weight: 600;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-	}
-	.columns span:first-child {
-		grid-column: 1 / 3;
-	}
-	/* Selectable lists put a checkbox column before the site icon. */
-	.columns.selectable,
-	li.selectable {
-		grid-template-columns: auto 2.5rem minmax(0, 1fr) 9rem auto;
-	}
-	.columns.selectable span:first-child {
-		grid-column: 1 / 4;
-	}
+	/* Choosing several links is a task for a wider screen; a phone opens one link at a time. */
+	.selection,
 	.select-cell {
-		display: flex;
-		align-items: center;
-	}
-	li.chosen {
-		background: var(--color-selected);
+		display: none;
 	}
 	.selection {
-		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
 		gap: 0.5rem 1rem;
 		min-height: 2.75rem;
-		padding: 0 0.25rem;
 	}
 	.chosen-count {
 		color: var(--color-strong);
@@ -455,177 +260,152 @@
 		align-items: center;
 		gap: 0.5rem;
 	}
-	.clicks-head {
-		text-align: right;
-		white-space: nowrap;
-	}
+	/* Phone: rows run to the screen edges with a soft line between them, as in a native list. */
 	.rows {
-		margin: 0;
+		margin: 0 calc(var(--page-bleed, 0px) * -1);
 		padding: 0;
 		list-style: none;
-		border: 1px solid var(--color-rule);
-		border-radius: var(--radius-md, 0.625rem);
-		background: var(--color-paper);
-		overflow: hidden;
 	}
 	li {
+		--site-icon-size: 36px;
 		position: relative;
-		min-height: 4.6rem;
-		padding: 0.75rem 1rem 0.75rem 1.25rem;
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		min-height: 4.25rem;
+		padding: 0.625rem calc(var(--page-bleed, 0px) - 0.5rem) 0.625rem var(--page-bleed, 0px);
 	}
-	li + li {
-		border-top: 1px solid var(--color-rule);
+	li + li::before {
+		content: '';
+		position: absolute;
+		top: 0;
+		right: 0;
+		left: calc(var(--page-bleed, 0px) + 3rem);
+		border-top: 1px solid var(--color-rule-soft);
 	}
-	.clickable {
-		cursor: pointer;
-	}
-	.clickable:hover {
-		background: var(--color-hover);
-	}
-	li.selected,
-	li.highlight {
+	li:active {
 		background: var(--color-surface-2);
-		box-shadow: var(--shadow-ring);
+	}
+	li.chosen {
+		background: var(--color-selected);
+	}
+	.select-cell {
+		position: relative;
+		z-index: 1;
+		align-items: center;
 	}
 	.main {
 		display: grid;
-		gap: 0.1rem;
+		flex: 1;
+		grid-template-columns: auto minmax(0, 1fr);
+		align-items: center;
+		gap: 0.125rem 0;
 		min-width: 0;
 	}
-	.title-row {
+	.line {
+		grid-column: 1 / -1;
+	}
+	.badges {
+		display: flex;
+		grid-row: 2;
+		margin-right: 0.375rem;
+	}
+	.second {
+		grid-row: 2;
+		grid-column: 2;
+	}
+	.line {
 		display: flex;
 		align-items: center;
-		gap: 0.6rem;
+		gap: 0.5rem;
 		min-width: 0;
 	}
-	.title {
+	.open {
 		overflow: hidden;
 		padding: 0;
 		border: 0;
 		background: none;
 		color: var(--color-strong);
 		font: inherit;
-		font-size: 1.0625rem;
+		font-size: 1rem;
 		font-weight: 600;
 		text-align: left;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	button.open {
 		cursor: pointer;
 	}
-	a.title:hover,
-	button.title:hover {
-		text-decoration: underline;
-		text-underline-offset: 3px;
+	/* The phone's open link covers the whole row; the checkbox and the menu sit above it. */
+	a.open::after {
+		content: '';
+		position: absolute;
+		inset: 0;
 	}
-	.sub {
-		display: flex;
-		align-items: center;
-		gap: 0.25rem;
-		min-width: 0;
-		color: var(--color-lead);
-		font-size: 0.9375rem;
+	.wide-only {
+		display: none;
 	}
-	/* The short link gives way only after the destination has shrunk to nothing. */
-	.short {
-		display: inline-flex;
-		flex: 0 1 auto;
-		align-items: center;
-		gap: 0.2rem;
-		min-width: 0;
-		color: var(--color-lead);
-	}
-	.short-text {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.short :global(svg) {
-		flex: none;
-		opacity: 0.7;
-	}
-	.short strong {
-		color: var(--color-strong);
-		font-weight: 600;
-	}
-	.short:hover .short-text {
-		text-decoration: underline;
-		text-underline-offset: 3px;
-	}
-	.copy {
-		display: inline-flex;
-		flex: none;
-		align-items: center;
-		min-height: 2.25rem;
-	}
-	.copied {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.3rem;
-		padding-inline: 0.4rem;
-		color: var(--color-positive);
-		font-size: 0.875rem;
+	.host {
+		color: var(--color-subtle);
 		font-weight: 500;
 	}
-	.destination {
-		flex: 1 1 0;
-		min-width: 0;
+	.second {
 		overflow: hidden;
+		color: var(--color-subtle);
+		font-size: 0.8125rem;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
-	.arrow {
-		margin-right: 0.4rem;
+	.count {
+		display: grid;
+		flex: none;
+		justify-items: end;
+		gap: 0.3rem;
 	}
-	/* A chip, so the count reads as the way into analytics. */
-	.clicks {
-		display: inline-flex;
-		align-items: center;
-		justify-self: end;
-		gap: 0.4rem;
-		min-height: 2.25rem;
-		padding: 0 0.7rem;
-		border-radius: var(--radius-control, 0.5rem);
+	.number {
 		color: var(--color-strong);
-		font-size: 1rem;
+		font-size: 0.9375rem;
+		font-weight: 600;
 		font-variant-numeric: tabular-nums;
-		white-space: nowrap;
 	}
-	a.clicks {
-		border: 1px solid var(--color-rule);
-		background: var(--color-paper);
+	.spark {
+		display: block;
+		--sparkline-color: var(--color-faint);
+		width: 2.5rem;
+		height: 0.875rem;
 	}
-	a.clicks :global(svg) {
-		color: var(--color-lead);
-	}
-	a.clicks:hover {
-		border-color: var(--color-strong);
-	}
-	.unit {
-		display: none;
-		color: var(--color-lead);
+	.actions {
+		position: relative;
+		z-index: 1;
+		flex: none;
 	}
 	.foot {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		gap: 1rem;
-		padding: 0.25rem 0.25rem 0;
-		color: var(--color-lead);
-		font-size: 0.9375rem;
+		padding-top: 0.5rem;
+		color: var(--color-subtle);
+		font-size: 0.875rem;
 	}
 	.more {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.4rem;
+		min-height: 2.75rem;
 		color: var(--color-link);
+		text-decoration: underline;
+		text-underline-offset: 3px;
 	}
 	.empty {
-		padding: 1.5rem 0;
-		color: var(--color-lead);
+		padding: 2rem 0;
+		color: var(--color-subtle);
+		text-align: center;
 	}
 	.empty a {
 		color: var(--color-link);
 		text-decoration: underline;
+		text-underline-offset: 3px;
 	}
 	.visually-hidden {
 		position: absolute;
@@ -635,42 +415,103 @@
 		clip-path: inset(50%);
 		white-space: nowrap;
 	}
-	/* Narrow lists drop the column labels, so each count carries its own unit. */
-	@container (max-width: 34rem) {
-		.columns {
-			display: none;
-		}
-		.search {
-			flex-basis: 100%;
+	/* 48rem and up: separate rounded rows with a 30-day sparkline beside the count, and the row
+	   opens the details panel. */
+	@media (min-width: 48rem) {
+		.rows {
+			display: grid;
+			margin: 0;
 		}
 		li {
-			grid-template-columns: 2.25rem minmax(0, 1fr) auto;
-			gap: 0.4rem 0.75rem;
-			padding-inline: 0.85rem 0.5rem;
-		}
-		.clicks {
-			grid-column: 2;
-			grid-row: 2;
-			justify-self: start;
-			min-height: 2.25rem;
-			font-size: 0.9375rem;
-		}
-		.unit {
-			display: inline;
-		}
-		li > :global(.trigger) {
-			grid-column: var(--trigger-column, 3);
-			grid-row: 1 / 3;
+			--site-icon-size: 32px;
+			display: grid;
+			grid-template-columns: 2rem minmax(0, 1fr) 5.25rem 3.5rem auto;
+			min-height: 3.5rem;
+			padding: 0.625rem 0.25rem 0.625rem 0.75rem;
+			border-radius: 0.75rem;
+			transition: background-color var(--dur-fast, 0.15s);
 		}
 		li.selectable {
-			--trigger-column: 4;
-			grid-template-columns: auto 2.25rem minmax(0, 1fr) auto;
+			grid-template-columns: auto 2rem minmax(0, 1fr) 5.25rem 3.5rem auto;
 		}
-		li.selectable .select-cell {
-			grid-row: 1 / 3;
+		.selection,
+		.select-cell {
+			display: flex;
 		}
-		li.selectable .clicks {
-			grid-column: 3;
+		li + li::before {
+			display: none;
+		}
+		li:active {
+			background: none;
+		}
+		.phone-only {
+			display: none;
+		}
+		.wide-only {
+			display: block;
+		}
+		a.open::after {
+			content: none;
+		}
+		.open {
+			font-size: 0.9375rem;
+		}
+		.open:hover {
+			text-decoration: underline;
+			text-underline-offset: 3px;
+		}
+		.second {
+			grid-column: 1 / -1;
+			font-size: 0.75rem;
+		}
+		.main {
+			grid-template-columns: minmax(0, max-content) 1fr;
+		}
+		.line {
+			grid-column: 1;
+		}
+		.badges {
+			grid-row: 1;
+			grid-column: 2;
+			margin: 0 0 0 0.5rem;
+		}
+		/* The count and its sparkline become two columns. */
+		.count {
+			display: contents;
+		}
+		.spark {
+			grid-column: -4;
+			grid-row: 1;
+			width: 100%;
+			height: 1.5rem;
+			--sparkline-color: var(--color-surface-3);
+			--sparkline-gap: 1px;
+		}
+		.number {
+			grid-column: -3;
+			grid-row: 1;
+			justify-self: end;
+		}
+		.clickable {
+			cursor: pointer;
+		}
+		li.selected {
+			background: var(--color-surface-2);
+			box-shadow: var(--shadow-ring);
+		}
+		li.selected .spark {
+			--sparkline-color: var(--color-faint);
+		}
+		li.chosen {
+			background: var(--color-selected);
+		}
+	}
+	@media (min-width: 48rem) and (hover: hover) {
+		.clickable:hover {
+			background: var(--color-surface-2);
+		}
+		.clickable:hover .spark {
+			--sparkline-color: var(--color-faint);
 		}
 	}
 </style>

@@ -13,8 +13,9 @@
 		// A count beside the title, such as the number of links.
 		count?: number;
 		lead?: string;
-		// A fact or control in the bar, before the actions, such as the settings scope.
-		top?: Snippet;
+		// A fact or control in the bar, before the actions, such as the settings scope. It renders
+		// in the bar from 48rem and under it on a phone, and gets which of the two it is.
+		top?: Snippet<['bar' | 'under']>;
 		// Actions at the end of the bar.
 		aside?: Snippet;
 		// Content under the bar, such as status.
@@ -62,12 +63,12 @@
 					>{numbers.format(count)}</span
 				>{/if}
 		</h1>
-		{#if top}<div class="top">{@render top()}</div>{/if}
+		{#if top}<div class="top">{@render top('bar')}</div>{/if}
 		{#if aside}<div class="aside">{@render aside()}</div>{/if}
 	</div>
 	{#if underPhone}
 		<div class="under" class:phone-only={!under}>
-			{#if top}<div class="top-under">{@render top()}</div>{/if}
+			{#if top}<div class="top-under">{@render top('under')}</div>{/if}
 			{#if lead}<p class="lead">{lead}</p>{/if}
 			{#if children}{@render children()}{/if}
 		</div>

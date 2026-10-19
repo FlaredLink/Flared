@@ -43,11 +43,12 @@
 		flex: none;
 		align-items: center;
 		justify-content: center;
-		width: var(--size);
-		height: var(--size);
-		border: 1px solid var(--color-rule, #d0d5dd);
-		border-radius: calc(var(--size) / 4);
-		background: var(--color-surface, #fff);
+		/* A list can set --site-icon-size to change the tile by width. */
+		--edge: var(--site-icon-size, var(--size));
+		width: var(--edge);
+		height: var(--edge);
+		border-radius: calc(var(--edge) * 0.28);
+		background: var(--color-surface-3, #ececee);
 	}
 	img {
 		display: block;
@@ -56,9 +57,9 @@
 		object-fit: contain;
 	}
 	.letter {
-		color: var(--color-muted, #667085);
-		font-size: calc(var(--size) * 0.45);
-		font-weight: 650;
+		color: var(--color-muted, #52525b);
+		font-size: calc(var(--edge) * 0.4);
+		font-weight: 600;
 		line-height: 1;
 	}
 </style>

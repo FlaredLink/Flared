@@ -3,7 +3,6 @@
 	import type { Snippet } from 'svelte';
 	import type { ListedLink } from '@flared/contracts/links';
 	import Glyph from '../icons/Glyph.svelte';
-	import Button from '../atoms/Button.svelte';
 	import StatusDot from '../atoms/StatusDot.svelte';
 	import CopyButton from '../molecules/CopyButton.svelte';
 	import Menu, { type MenuItem } from '../molecules/Menu.svelte';
@@ -17,49 +16,46 @@
 		analyticsHref?: string;
 		// Where the destination and title are edited.
 		editHref?: string;
-		// The link's automations, shown after Performance.
+		// The link's automations, shown after the clicks.
 		automations?: Snippet;
 	}
 	let { link, apiBase, analyticsHref, editHref, automations }: Props = $props();
 
 	const numbers = new Intl.NumberFormat();
-	const dayFormat = new Intl.DateTimeFormat(undefined, {
+	const weekday = new Intl.DateTimeFormat(undefined, { weekday: 'short', timeZone: 'UTC' });
+	const longDay = new Intl.DateTimeFormat(undefined, {
+		weekday: 'long',
 		month: 'short',
 		day: 'numeric',
 		timeZone: 'UTC'
 	});
 	const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
-	let days = $state('30');
 
 	// The list carries one count per UTC day for the last 30 days, ending today.
-	const daily = $derived(link.dailyClicksLast30Days ?? null);
-	const shown = $derived(daily ? daily.slice(-Number(days)) : null);
-	const total = $derived(shown ? shown.reduce((sum, value) => sum + value, 0) : null);
-	const range = $derived.by(() => {
-		if (!shown) return null;
-		const today = new Date();
-		const end = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
-		const start = end - (shown.length - 1) * 86_400_000;
-		return { start: dayFormat.format(start), end: dayFormat.format(end) };
+	const week = $derived(link.dailyClicksLast30Days?.slice(-7) ?? null);
+	const total = $derived(week ? week.reduce((sum, value) => sum + value, 0) : null);
+	const days = $derived.by(() => {
+		if (!week) return [];
+		const now = new Date();
+		const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+		return week.map((clicks, index) => {
+			const day = today - (week.length - 1 - index) * 86_400_000;
+			const last = index === week.length - 1;
+			return {
+				short: last ? 'Today' : weekday.format(day),
+				long: last ? 'Today' : longDay.format(day),
+				clicks
+			};
+		});
 	});
-	// The busiest day gives the sparkline a scale: its top is this many clicks.
-	const busiest = $derived.by(() => {
-		if (!shown || !range || total === 0) return null;
-		const most = Math.max(...shown);
-		const index = shown.lastIndexOf(most);
-		const today = new Date();
-		const end = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
-		return {
-			clicks: most,
-			day: dayFormat.format(end - (shown.length - 1 - index) * 86_400_000)
-		};
-	});
+
 	const qr = $derived(`${apiBase}/links/${encodeURIComponent(link.id)}/qr`);
-	const qrDownloads = $derived<MenuItem[]>([
-		{ label: 'PNG image', icon: 'image', href: `${qr}?format=png&size=1024&download=1` },
-		{ label: 'SVG image', icon: 'image', href: `${qr}?format=svg&download=1` }
-	]);
 	let qrStatus = $state('');
+	const qrItems = $derived<MenuItem[]>([
+		{ label: 'PNG image', icon: 'image', href: `${qr}?format=png&size=1024&download=1` },
+		{ label: 'SVG image', icon: 'image', href: `${qr}?format=svg&download=1` },
+		{ label: 'Copy image', icon: 'copy', onselect: () => void copyQr() }
+	]);
 
 	// Copies the PNG where the browser allows images on the clipboard.
 	async function copyQr() {
@@ -76,8 +72,17 @@
 </script>
 
 <div class="details">
-	<div class="name">
-		<h3>{link.title ?? `${link.hostname}/${link.slug}`}</h3>
+	<div class="head">
+		<!-- Opens the short link, so the owner can try the redirect. -->
+		<h3 class="short">
+			<a href={link.shortUrl} target="_blank" rel="noopener noreferrer"
+				><span class="host">{link.hostname}/</span>{link.slug}</a
+			>
+		</h3>
+		<CopyButton text={link.shortUrl} label="Copy short link" size="sm" />
+	</div>
+	<div class="state">
+		{#if link.title}<p class="title">{link.title}</p>{/if}
 		{#if link.blocked}
 			<StatusDot tone="danger">{blockLabel(link.blocked.reason)}</StatusDot>
 		{:else if link.enabled}
@@ -86,28 +91,23 @@
 			<StatusDot tone="neutral">Disabled</StatusDot>
 		{/if}
 	</div>
-	<!-- Opens the short link, so the owner can try the redirect. -->
-	<a class="short" href={link.shortUrl} target="_blank" rel="noopener noreferrer"
-		><span>{link.hostname}/</span><strong>{link.slug}</strong></a
-	>
-	<CopyButton
-		text={link.shortUrl}
-		label="Copy link"
-		kind="button"
-		variant="primary"
-		size="lg"
-		wide
-	/>
 
 	<div class="block">
-		<div class="row">
-			<h4>Destination</h4>
-			{#if editHref && !link.blocked}<Button size="sm" icon="pencil" href={editHref}>Edit</Button
-				>{/if}
+		<p class="label" id="link-destination-label">Destination</p>
+		<div class="field">
+			<a
+				href={link.destination}
+				target="_blank"
+				rel="noopener noreferrer"
+				aria-describedby="link-destination-label"
+				title={link.destination}>{link.destination}</a
+			>
+			{#if editHref && !link.blocked}
+				<a class="edit" href={editHref} aria-label="Edit link" title="Edit link"
+					><Glyph name="pencil" size={16} /></a
+				>
+			{/if}
 		</div>
-		<a class="destination" href={link.destination} target="_blank" rel="noopener noreferrer"
-			><span>{link.destination}</span><Glyph name="external" size={20} /></a
-		>
 		{#if link.iosDestination || link.androidDestination}
 			<dl class="devices">
 				{#if link.iosDestination}<dt>iPhone</dt>
@@ -120,71 +120,44 @@
 
 	<div class="block">
 		<div class="row">
-			<h4 id="link-performance-heading">Performance</h4>
-			<label class="range">
-				<span class="visually-hidden">Period</span>
-				<select bind:value={days} aria-describedby="link-performance-heading">
-					<option value="7">7 days</option>
-					<option value="30">30 days</option>
-				</select>
-				<Glyph name="caretDown" size={14} />
-			</label>
+			<p class="label" id="link-week-label">Clicks, last 7 days</p>
+			{#if total !== null}<strong class="total">{numbers.format(total)}</strong>{/if}
 		</div>
-		{#if shown && total !== null && range}
-			<p class="total">
-				<strong>{numbers.format(total)}</strong> total {total === 1 ? 'click' : 'clicks'}
-			</p>
-			<Sparkline values={shown} height={72} />
-			<p class="dates"><span>{range.start}</span><span>{range.end}</span></p>
-			{#if busiest}
-				<p class="note">
-					Busiest day: {busiest.day}, {numbers.format(busiest.clicks)}
-					{busiest.clicks === 1 ? 'click' : 'clicks'}
-				</p>
-			{/if}
-			<div class="row">
-				<p class="note">{total === 0 ? 'No clicks in this period.' : ''}</p>
-				{#if analyticsHref}<a class="link" href={analyticsHref}
-						>View analytics<Glyph name="arrow" size={16} /></a
-					>{/if}
+		{#if week}
+			<div class="week"><Sparkline values={week} today /></div>
+			<div class="days" aria-hidden="true">
+				{#each days as day, index (index)}<span>{day.short}</span>{/each}
 			</div>
+			<ul class="visually-hidden" aria-labelledby="link-week-label">
+				{#each days as day, index (index)}
+					<li>{day.long}: {numbers.format(day.clicks)} {day.clicks === 1 ? 'click' : 'clicks'}</li>
+				{/each}
+			</ul>
 		{:else}
 			<p class="note">Clicks are not available right now.</p>
 		{/if}
+		{#if analyticsHref}<a class="more" href={analyticsHref}
+				>View analytics<Glyph name="arrow" size={16} /></a
+			>{/if}
 	</div>
 
 	{#if automations}
 		<div class="block">{@render automations()}</div>
 	{/if}
 
-	<div class="block qr">
+	<div class="qr">
 		<img
 			src="{qr}?format=svg"
 			alt="QR code for {link.hostname}/{link.slug}"
-			width="88"
-			height="88"
+			width="56"
+			height="56"
 		/>
-		<div class="qr-body">
-			<h4>QR code</h4>
-			<!-- One download control: the format is its choice. -->
-			<div class="qr-actions">
-				<Menu
-					id="link-qr-download-{link.id}"
-					label="Download QR code"
-					text="Download"
-					icon="download"
-					caret="caretDown"
-					align="start"
-					items={qrDownloads}
-					class="qr-download"
-				/>
-				<Button size="sm" icon="copy" onclick={copyQr}>Copy QR</Button>
-			</div>
-			<p class="qr-status" role="status">{qrStatus}</p>
-		</div>
+		<p class="qr-text">QR code<span>PNG or SVG</span></p>
+		<Menu id="link-qr-menu-{link.id}" label="Download QR code" icon="download" items={qrItems} />
+		<p class="qr-status" role="status">{qrStatus}</p>
 	</div>
 
-	<dl class="block facts">
+	<dl class="facts">
 		<dt>Created</dt>
 		<dd>{dateFormat.format(new Date(link.createdAt))}</dd>
 		<dt>Updated</dt>
@@ -199,196 +172,194 @@
 		gap: 1rem;
 		min-width: 0;
 	}
-	.name {
-		display: grid;
-		gap: 0.2rem;
-	}
-	h3 {
-		overflow-wrap: anywhere;
-		color: var(--color-strong);
-		font-size: 1.75rem;
-		font-weight: 750;
-		letter-spacing: -0.035em;
-		line-height: 1.15;
+	.head {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.5rem;
 	}
 	.short {
-		overflow-wrap: anywhere;
-		text-decoration: none;
+		flex: 1;
+		min-width: 0;
+		margin: 0;
+		padding-top: 0.25rem;
 		color: var(--color-strong);
-		font-size: 2.1rem;
-		letter-spacing: -0.04em;
-		line-height: 1.15;
+		font-size: 1.125rem;
+		font-weight: 600;
+		letter-spacing: -0.01em;
+		line-height: 1.3;
+		overflow-wrap: anywhere;
 	}
-	.short:hover strong {
+	.short a {
+		color: inherit;
+	}
+	.short a:hover {
 		text-decoration: underline;
-		text-underline-offset: 4px;
+		text-underline-offset: 3px;
 	}
-	.short span {
-		color: var(--color-lead);
-		font-weight: 400;
+	.host {
+		color: var(--color-subtle);
+		font-weight: 500;
 	}
-	.short strong {
-		font-weight: 750;
+	.state {
+		display: grid;
+		gap: 0.25rem;
+		margin-top: -0.5rem;
+	}
+	.title {
+		color: var(--color-muted);
+		font-size: 0.875rem;
+		overflow-wrap: anywhere;
 	}
 	.block {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr);
-		gap: 0.6rem;
-		padding-top: 1.1rem;
-		border-top: 1px solid var(--color-rule);
+		gap: 0.375rem;
 	}
 	.row {
 		display: flex;
-		align-items: center;
+		align-items: baseline;
 		justify-content: space-between;
 		gap: 1rem;
 	}
-	h4 {
-		margin: 0;
-		color: var(--color-strong);
-		font-size: 1rem;
-		font-weight: 600;
+	.label {
+		color: var(--color-subtle);
+		font-size: 0.75rem;
 	}
-	.link {
-		color: var(--color-link);
-	}
-	.link:hover {
-		text-decoration: underline;
-		text-underline-offset: 3px;
-	}
-	.destination {
+	.field {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
-		gap: 0.75rem;
-		color: var(--color-link);
-		font-size: 1rem;
+		gap: 0.5rem;
+		min-height: 2.25rem;
+		padding: 0 0.25rem 0 0.625rem;
+		border-radius: 0.5625rem;
+		background: var(--color-surface-2);
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-size: 0.75rem;
 	}
-	.destination span {
+	.field > a:first-child {
+		flex: 1;
+		min-width: 0;
 		overflow: hidden;
+		color: var(--color-strong);
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
-	.destination :global(svg) {
-		color: var(--color-ink);
+	.field > a:first-child:hover {
+		text-decoration: underline;
+		text-underline-offset: 3px;
 	}
-	.range {
-		position: relative;
-		display: inline-flex;
-		align-items: center;
-		color: var(--color-strong);
-	}
-	.range select {
-		min-height: 2.25rem;
-		padding: 0 2rem 0 0.75rem;
-		border: 1px solid var(--color-rule);
-		border-radius: var(--radius-control, 0.5rem);
-		background: var(--color-paper);
-		color: inherit;
-		font: inherit;
-		font-size: 0.875rem;
-		appearance: none;
-	}
-	.range select option {
-		background: var(--color-paper);
-	}
-	.range :global(svg) {
-		position: absolute;
-		right: 0.65rem;
-		pointer-events: none;
-	}
-	.total {
-		display: flex;
-		align-items: baseline;
-		gap: 0.6rem;
-		color: var(--color-lead);
-		font-size: 1.0625rem;
-	}
-	.total strong {
-		color: var(--color-strong);
-		font-size: 2.75rem;
-		font-weight: 750;
-		letter-spacing: -0.04em;
-		line-height: 1;
-		font-variant-numeric: tabular-nums;
-	}
-	.dates {
-		display: flex;
-		justify-content: space-between;
-		color: var(--color-lead);
-		font-size: 0.875rem;
-	}
-	.note {
-		color: var(--color-lead);
-		font-size: 0.9375rem;
-		font-style: italic;
-	}
-	.link {
-		display: inline-flex;
+	.edit {
+		display: inline-grid;
 		flex: none;
-		align-items: center;
-		gap: 0.35rem;
-		font-size: 0.9375rem;
+		place-items: center;
+		width: 2rem;
+		height: 2rem;
+		border-radius: 0.5rem;
+		color: var(--color-subtle);
 	}
-	.qr {
-		grid-template-columns: auto minmax(0, 1fr);
-		align-items: start;
-		gap: 1rem;
-	}
-	.qr img {
-		width: 88px;
-		height: 88px;
-		padding: 4px;
-		border: 1px solid var(--color-rule);
-		border-radius: var(--radius-sm, 0.375rem);
-		background: #fff;
-	}
-	.qr-body {
-		display: grid;
-		gap: 0.3rem;
-	}
-	.qr-actions {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-		margin-top: 0.35rem;
-	}
-	/* The download menu looks like the small button beside it. */
-	.qr-actions :global(.qr-download) {
-		width: auto;
-		min-height: 2.25rem;
-		gap: 0.5rem;
-		padding: 0 0.75rem;
-		border-color: var(--color-rule);
-		background: var(--color-paper);
-		font-size: 0.875rem;
-		font-weight: 600;
+	.edit:hover {
+		background: var(--color-surface-3);
+		color: var(--color-strong);
 	}
 	@media (pointer: coarse) {
-		.qr-actions :global(.qr-download) {
-			min-height: 2.75rem;
+		.edit {
+			width: 2.75rem;
+			height: 2.75rem;
 		}
 	}
+	.total {
+		color: var(--color-strong);
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+	}
+	.week {
+		--sparkline-gap: 0.375rem;
+		--sparkline-radius: 5px 5px 2px 2px;
+		height: 5.25rem;
+	}
+	.days {
+		display: grid;
+		grid-template-columns: repeat(7, minmax(0, 1fr));
+		gap: 0.375rem;
+		color: var(--color-subtle);
+		font-size: 0.6875rem;
+		text-align: center;
+	}
+	.note {
+		color: var(--color-subtle);
+		font-size: 0.875rem;
+	}
+	.more {
+		display: inline-flex;
+		align-items: center;
+		justify-self: start;
+		gap: 0.35rem;
+		min-height: 2.25rem;
+		color: var(--color-link);
+		font-size: 0.875rem;
+		text-decoration: underline;
+		text-underline-offset: 3px;
+	}
+	.qr {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.75rem;
+		padding-top: 0.875rem;
+		border-top: 1px solid var(--color-rule-soft);
+	}
+	/* The code stays dark on white in both themes, so every scanner reads it. */
+	.qr img {
+		width: 68px;
+		height: 68px;
+		padding: 6px;
+		border-radius: 0.5rem;
+		background: #fff;
+		box-shadow: 0 0 0 1px rgb(10 10 10 / 0.08);
+	}
+	.qr-text {
+		display: grid;
+		flex: 1;
+		color: var(--color-muted);
+		font-size: 0.8125rem;
+	}
+	.qr-text span {
+		color: var(--color-subtle);
+		font-size: 0.75rem;
+	}
 	.qr-status {
-		color: var(--color-lead);
+		flex-basis: 100%;
+		color: var(--color-subtle);
 		font-size: 0.8125rem;
 	}
 	.qr-status:empty {
 		display: none;
 	}
 	.facts {
-		grid-template-columns: 6rem minmax(0, 1fr);
+		display: grid;
+		grid-template-columns: 5rem minmax(0, 1fr);
+		gap: 0.25rem 0.75rem;
 		margin: 0;
-		row-gap: 0.4rem;
+		padding-top: 0.875rem;
+		border-top: 1px solid var(--color-rule-soft);
+		font-size: 0.8125rem;
 	}
 	dt {
-		color: var(--color-strong);
-		font-size: 0.9375rem;
+		color: var(--color-subtle);
 	}
 	dd {
 		margin: 0;
-		color: var(--color-lead);
-		font-size: 0.9375rem;
+		color: var(--color-strong);
+	}
+	.devices {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		gap: 0.25rem 0.75rem;
+		margin: 0.375rem 0 0;
+		font-size: 0.8125rem;
+	}
+	.devices dd {
+		overflow-wrap: anywhere;
 	}
 	.visually-hidden {
 		position: absolute;
@@ -397,20 +368,5 @@
 		overflow: hidden;
 		clip-path: inset(50%);
 		white-space: nowrap;
-	}
-	.devices {
-		display: grid;
-		grid-template-columns: auto minmax(0, 1fr);
-		gap: 0.35rem 0.75rem;
-		margin-top: 0.75rem;
-		font-size: 0.875rem;
-	}
-	.devices dt {
-		color: var(--color-lead);
-	}
-	.devices dd {
-		margin: 0;
-		overflow-wrap: anywhere;
-		color: var(--color-strong);
 	}
 </style>
