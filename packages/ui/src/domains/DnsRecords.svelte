@@ -15,7 +15,7 @@
 		<tbody>
 			{#each domain.records as dnsRecord (`${dnsRecord.type}:${dnsRecord.name}`)}
 				<tr>
-					<td data-label="Type">{dnsRecord.type}</td>
+					<td data-label="Type"><code>{dnsRecord.type}</code></td>
 					<td data-label="Name">
 						<span class="cell"
 							><code>{dnsRecord.name}</code><CopyButton
@@ -41,45 +41,55 @@
 </div>
 
 <style>
+	/* Base: each value is its own labelled row, as on a phone. A wide container shows a table. */
 	.records {
-		border: 1px solid var(--color-rule);
-		border-radius: var(--radius-md, 0.625rem);
-		background: var(--color-paper);
-		overflow: hidden;
+		border-radius: 0.75rem;
+		background: var(--color-surface-2);
+		container-type: inline-size;
 	}
 	table {
+		display: block;
 		width: 100%;
 		border-collapse: collapse;
-		font-size: 0.9375rem;
 	}
-	th {
-		padding: 0.6rem 1rem;
-		border-bottom: 1px solid var(--color-rule);
-		background: var(--color-canvas);
-		color: var(--color-lead);
-		font-size: 0.75rem;
-		font-weight: 600;
-		letter-spacing: 0.08em;
-		text-align: left;
-		text-transform: uppercase;
+	thead {
+		display: none;
+	}
+	tbody,
+	tr {
+		display: block;
+	}
+	tr + tr {
+		border-top: 1px solid var(--color-rule);
 	}
 	td {
-		padding: 0.5rem 1rem;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		min-height: 3.25rem;
+		padding: 0.25rem 0.25rem 0.25rem 0.75rem;
 		color: var(--color-strong);
-		vertical-align: middle;
 	}
-	th + th,
 	td + td {
-		border-left: 1px solid var(--color-rule);
+		border-top: 1px solid var(--color-rule-soft);
+	}
+	td::before {
+		content: attr(data-label);
+		flex: none;
+		width: 3.5rem;
+		color: var(--color-subtle);
+		font-size: 0.75rem;
 	}
 	.cell {
 		display: flex;
+		flex: 1;
 		align-items: center;
-		justify-content: space-between;
 		gap: 0.5rem;
 		min-width: 0;
 	}
 	code {
+		flex: 1;
+		min-width: 0;
 		overflow-wrap: anywhere;
 		font-family: var(--font-mono);
 		font-size: 0.875rem;
@@ -92,27 +102,47 @@
 		clip-path: inset(50%);
 		white-space: nowrap;
 	}
-	/* On narrow screens each record becomes a stack of labelled values. */
-	@media (max-width: 36rem) {
-		thead {
-			display: none;
+	@container (min-width: 30rem) {
+		table {
+			display: table;
+			table-layout: fixed;
 		}
-		tr,
+		thead {
+			display: table-header-group;
+		}
+		tbody {
+			display: table-row-group;
+		}
+		tr {
+			display: table-row;
+		}
+		th {
+			padding: 0.625rem 0.75rem 0;
+			color: var(--color-subtle);
+			font-size: 0.6875rem;
+			font-weight: 500;
+			text-align: left;
+		}
+		th:first-child {
+			width: 5.5rem;
+		}
+		th:nth-child(2) {
+			width: 30%;
+		}
 		td {
-			display: block;
+			display: table-cell;
+			min-height: 0;
+			padding: 0.25rem 0.5rem 0.25rem 0.75rem;
+			vertical-align: middle;
 		}
 		td + td {
-			border-left: 0;
-			border-top: 1px solid var(--color-rule);
+			border-top: 0;
 		}
 		td::before {
-			content: attr(data-label);
-			display: block;
-			color: var(--color-lead);
-			font-size: 0.75rem;
-			font-weight: 600;
-			letter-spacing: 0.08em;
-			text-transform: uppercase;
+			content: none;
+		}
+		tbody tr:last-child td {
+			padding-bottom: 0.5rem;
 		}
 	}
 </style>

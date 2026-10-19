@@ -31,14 +31,15 @@
 		margin: 0;
 		padding: 0;
 		list-style: none;
+		container-type: inline-size;
 	}
 	li {
 		display: flex;
 		flex: 1;
 		align-items: center;
 		gap: 0.6rem;
-		color: var(--color-lead);
-		font-size: 0.9375rem;
+		color: var(--color-muted);
+		font-size: 0.875rem;
 		white-space: nowrap;
 	}
 	li:last-child {
@@ -56,12 +57,12 @@
 		display: grid;
 		flex: none;
 		place-items: center;
-		width: 1.75rem;
-		height: 1.75rem;
+		width: 1.5rem;
+		height: 1.5rem;
 		border-radius: 50%;
-		background: var(--color-selected);
+		background: var(--color-surface-3);
 		color: var(--color-ink);
-		font-size: 0.8125rem;
+		font-size: 0.75rem;
 		font-weight: 600;
 	}
 	.done .mark {
@@ -82,11 +83,15 @@
 		overflow: hidden;
 		clip-path: inset(50%);
 	}
-	@media (max-width: 40rem) {
+	/* Base: only the current step shows its name. A wide stepper names every step. */
+	.name {
+		display: none;
+	}
+	.current .name {
+		display: inline;
+	}
+	@container (min-width: 30rem) {
 		.name {
-			display: none;
-		}
-		.current .name {
 			display: inline;
 		}
 	}

@@ -7,10 +7,16 @@
 	import type { Snippet } from 'svelte';
 
 	// The text carries the state; the dot repeats it in colour.
-	let { tone = 'live', children }: { tone?: StatusTone; children: Snippet } = $props();
+	let {
+		tone = 'live',
+		size = 'md',
+		children
+	}: { tone?: StatusTone; size?: 'sm' | 'md'; children: Snippet } = $props();
 </script>
 
-<span class="status {tone}"><span class="dot" aria-hidden="true"></span>{@render children()}</span>
+<span class="status {tone} {size}"
+	><span class="dot" aria-hidden="true"></span>{@render children()}</span
+>
 
 <style>
 	.status {
@@ -28,6 +34,10 @@
 		flex: none;
 		border-radius: 50%;
 		background: currentColor;
+	}
+	.sm {
+		gap: 0.375rem;
+		font-size: 0.8125rem;
 	}
 	.warning {
 		color: var(--color-warning);

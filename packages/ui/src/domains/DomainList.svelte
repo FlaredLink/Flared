@@ -1,20 +1,15 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { tick } from 'svelte';
 	import Glyph from '../icons/Glyph.svelte';
 	import Button from '../atoms/Button.svelte';
-	import Badge from '../atoms/Badge.svelte';
-	import StatusDot, { type StatusTone } from '../atoms/StatusDot.svelte';
 	import PageHeader from '../molecules/PageHeader.svelte';
 	import type { Crumb } from '../molecules/Breadcrumbs.svelte';
-	import SplitView from '../molecules/SplitView.svelte';
-	import SidePanel from '../molecules/SidePanel.svelte';
 	import Callout from '../molecules/Callout.svelte';
-	import Menu, { type MenuItem } from '../molecules/Menu.svelte';
+	import Dialog from '../molecules/Dialog.svelte';
 	import DomainAddForm from './DomainAddForm.svelte';
+	import DomainCard from './DomainCard.svelte';
 	import { shownWorkspace } from '../workspace/shown';
-	import DomainSetup from './DomainSetup.svelte';
-	import DomainDetails from './DomainDetails.svelte';
 	import {
 		domainCheckIntervalMs,
 		normalizeHostname,
@@ -63,7 +58,8 @@
 	let pending = $state<string | null>(null);
 	let status = $state('');
 	let error = $state('');
-	let confirmingId = $state<string | null>(null);
+	let confirming = $state<Domain | null>(null);
+	let confirmOpen = $state(false);
 	// When each domain can be checked again, in epoch milliseconds. The API allows one check a
 	// minute per domain, so the button counts down instead of failing.
 	let cooldowns = $state<Record<string, number>>({});
@@ -95,72 +91,17 @@
 	const nearLimit = $derived(!atLimit && page.limit > 0 && page.used / page.limit >= 0.8);
 	const workspaceDomains = $derived(page.domains.filter((domain) => domain.kind === 'workspace'));
 	const platformDomains = $derived(page.domains.filter((domain) => domain.kind === 'platform'));
-	const unfinished = (domain: Domain) =>
-		domain.kind === 'workspace' && domain.state !== 'active' && domain.state !== 'disabled';
-	const ready = (domain: Domain) => domain.kind === 'platform' || domain.state === 'active';
-	const readyHost = $derived(
-		(platformDomains.find((domain) => domain.isDefault) ?? platformDomains[0])?.hostname ?? null
-	);
-
-	// The setup view opens on its own while a domain waits and none is active yet. Undefined
-	// means no choice yet; null means the list.
-	let setupChoice = $state<string | null | undefined>(undefined);
-	const setupDomain = $derived.by(() => {
-		if (setupChoice === null) return null;
-		if (setupChoice !== undefined)
-			return (
-				workspaceDomains.find((domain) => domain.id === setupChoice && unfinished(domain)) ?? null
-			);
-		return workspaceDomains.some((domain) => domain.state === 'active')
-			? null
-			: (workspaceDomains.find(unfinished) ?? null);
-	});
 	const empty = $derived(workspaceDomains.length === 0);
+	const firstSetup = $derived(!workspaceDomains.some((domain) => domain.state === 'active'));
+	const canAdd = $derived(manage && page.limit > 0);
 
-	let selectedId = $state<string | null>(null);
-	const selected = $derived(
-		setupDomain
-			? null
-			: (page.domains.find((domain) => domain.id === selectedId && ready(domain)) ?? null)
-	);
-
-	// With room for two columns, the first active domain opens in the panel, as in the mockups.
-	onMount(() => {
-		if (empty || !window.matchMedia('(min-width: 75rem)').matches) return;
-		const first =
-			workspaceDomains.find((domain) => domain.state === 'active') ?? platformDomains[0];
-		if (first) selectedId = first.id;
-	});
-
-	const lead = $derived(
-		setupDomain
-			? 'Finish connecting your subdomain.'
-			: empty
-				? 'Use a familiar address for every link.'
-				: 'Your addresses, ready to share.'
-	);
-
-	const stateLabels: Record<Domain['state'], string> = {
-		pending: 'Waiting for DNS',
-		verifying: 'Verifying',
-		active: 'Active',
-		failed: 'Failed',
-		disabled: 'Removed'
+	const checkOutcomes: Record<Domain['state'], string> = {
+		pending: 'not ready yet',
+		verifying: 'verifying',
+		active: 'active',
+		failed: 'setup failed',
+		disabled: 'removed'
 	};
-	const stateTones: Record<Domain['state'], StatusTone> = {
-		pending: 'warning',
-		verifying: 'warning',
-		active: 'live',
-		failed: 'danger',
-		disabled: 'neutral'
-	};
-
-	function stateLabel(domain: Domain): string {
-		if (domain.kind === 'platform') return 'Ready';
-		return domain.state === 'pending' && domain.setup === 'worker_custom_domain'
-			? 'Waiting for setup'
-			: stateLabels[domain.state];
-	}
 
 	function begin(action: string) {
 		pending = action;
@@ -169,7 +110,7 @@
 	}
 
 	async function openAdd() {
-		setupChoice = null;
+		refuse('', null);
 		adding = true;
 		await tick();
 		hostnameInput?.focus();
@@ -179,6 +120,14 @@
 	function refuse(message: string, field: 'subdomain' | 'domain' | null) {
 		fieldError = message;
 		errorField = field;
+	}
+
+	// Moves focus to a card, so a keyboard or screen reader lands on the domain that changed.
+	async function focusCard(domainId: string) {
+		await tick();
+		const heading = document.getElementById(`domain-${domainId}`);
+		heading?.focus({ preventScroll: true });
+		heading?.scrollIntoView({ block: 'nearest' });
 	}
 
 	async function add() {
@@ -224,11 +173,11 @@
 			domain = '';
 			adding = false;
 			await onChanged();
-			setupChoice = result.value.state === 'active' ? null : result.value.id;
 			status =
 				result.value.setup === 'worker_custom_domain'
-					? `Added ${result.value.hostname}. Follow the steps shown below.`
-					: `Added ${result.value.hostname}. Add the DNS record shown below.`;
+					? `Added ${result.value.hostname}. Follow the steps in its card.`
+					: `Added ${result.value.hostname}. Add the DNS record in its card.`;
+			await focusCard(result.value.id);
 		} finally {
 			pending = null;
 		}
@@ -247,32 +196,33 @@
 			coolDown(domain.id, domainCheckIntervalMs / 1000);
 			lastChecks = { ...lastChecks, [domain.id]: { at: Date.now(), state: result.value.state } };
 			await onChanged();
-			if (result.value.state === 'active') {
-				setupChoice = null;
-				selectedId = domain.id;
-			}
 			status =
 				result.value.state === 'active'
 					? `${domain.hostname} is active.`
-					: `Checked ${domain.hostname}: ${stateLabels[result.value.state].toLowerCase()}.`;
+					: `Checked ${domain.hostname}: ${checkOutcomes[result.value.state]}.`;
 		} finally {
 			pending = null;
 		}
+	}
+
+	function askRemove(domain: Domain) {
+		confirming = domain;
+		confirmOpen = true;
 	}
 
 	async function remove(domain: Domain) {
 		begin(`remove:${domain.id}`);
 		try {
 			const result = await removeDomain(apiBase, domain.id, workspace());
-			confirmingId = null;
+			confirmOpen = false;
 			if (!result.ok && result.failure.code !== 'NOT_FOUND') {
 				error = domainErrorMessage(result.failure);
 				return;
 			}
 			await onChanged();
-			setupChoice = null;
-			selectedId = null;
 			status = `Removed ${domain.hostname}.`;
+			const next = page.domains[0];
+			if (next) await focusCard(next.id);
 		} finally {
 			pending = null;
 		}
@@ -284,39 +234,6 @@
 			? '1 active link on this domain will stop working.'
 			: `${numbers.format(count)} active links on this domain will stop working.`;
 	}
-
-	function open(domain: Domain) {
-		confirmingId = null;
-		if (unfinished(domain)) {
-			setupChoice = domain.id;
-			return;
-		}
-		if (ready(domain)) selectedId = selectedId === domain.id ? null : domain.id;
-	}
-
-	function askRemove(domain: Domain) {
-		if (unfinished(domain)) setupChoice = domain.id;
-		else selectedId = domain.id;
-		confirmingId = domain.id;
-	}
-
-	function actions(domain: Domain): MenuItem[] {
-		const items: MenuItem[] = [];
-		if (unfinished(domain))
-			items.push({ label: 'Finish setup', icon: 'arrow', onselect: () => open(domain) });
-		else if (ready(domain))
-			items.push({ label: 'Show details', icon: 'info', onselect: () => (selectedId = domain.id) });
-		if (linksHref && ready(domain))
-			items.push({ label: 'View links', icon: 'link', href: linksHref(domain) });
-		if (manage && domain.kind === 'workspace' && domain.state !== 'disabled')
-			items.push({
-				label: 'Remove domain',
-				icon: 'trash',
-				danger: true,
-				onselect: () => askRemove(domain)
-			});
-		return items;
-	}
 </script>
 
 {#snippet usage()}
@@ -327,524 +244,251 @@
 	</span>
 {/snippet}
 
-{#snippet readyBar()}
-	{#if readyHost}
-		<div class="ready-bar">
-			<Glyph name="globe" size={22} />
-			<p><strong>{readyHost}</strong> is ready to use while you finish setup.</p>
-			{#if createHref}<a class="text-action" href={createHref}
-					>Create a link<Glyph name="arrow" size={16} /></a
-				>{/if}
-		</div>
-	{/if}
+{#snippet card(domain: Domain)}
+	<li>
+		<DomainCard
+			{domain}
+			{firstSetup}
+			lastCheck={lastChecks[domain.id] ?? null}
+			checking={pending === `check:${domain.id}`}
+			wait={secondsLeft(domain.id)}
+			busy={pending !== null}
+			{guideHref}
+			{createHref}
+			linksHref={linksHref?.(domain)}
+			oncheck={manage ? () => void check(domain) : undefined}
+			onremove={manage ? () => askRemove(domain) : undefined}
+		/>
+	</li>
 {/snippet}
 
-<!-- The panel is passed only while a domain is open, so the list keeps the full width. -->
-{#snippet details()}
-	{#if selected}
-		{@const domain = selected}
-		<SidePanel id="domain-details-label" label="Domain details" onclose={() => (selectedId = null)}>
-			<DomainDetails
-				{domain}
-				{createHref}
-				linksHref={linksHref?.(domain)}
-				confirming={confirmingId === domain.id}
-				removing={pending === `remove:${domain.id}`}
-				busy={pending !== null}
-				stopping={stopping(domain.activeLinks)}
-				onremove={manage ? () => (confirmingId = domain.id) : undefined}
-				onconfirm={() => void remove(domain)}
-				oncancel={() => (confirmingId = null)}
-			/>
-		</SidePanel>
-	{/if}
-{/snippet}
-
-<SplitView panel={selected ? details : undefined}>
-	<PageHeader {crumbs} title="Domains" {lead}>
-		{#snippet aside()}
-			{#if !empty && !setupDomain}
-				<div class="aside">
-					{@render usage()}
-					{#if manage && !adding && page.limit > 0}
-						<Button
-							variant="primary"
-							icon="plus"
-							disabled={atLimit || pending !== null}
-							onclick={() => void openAdd()}>Add domain</Button
-						>
-					{/if}
-				</div>
-			{:else}
-				{@render usage()}
-			{/if}
-		{/snippet}
-	</PageHeader>
-
-	<div class="domains" aria-busy={pending !== null}>
-		<p class="visually-hidden" role="status" aria-live="polite">{status}</p>
-		{#if error}<Callout tone="danger" role="alert"><p>{error}</p></Callout>{/if}
-
-		{#if setupDomain}
-			{@const domain = setupDomain}
-			<button type="button" class="back" onclick={() => (setupChoice = null)}
-				><Glyph name="arrowLeft" size={18} />All domains</button
+<PageHeader {crumbs} title="Domains">
+	{#snippet top()}{@render usage()}{/snippet}
+	{#snippet aside()}
+		{#if canAdd && !empty}
+			<Button
+				size="sm"
+				variant="primary"
+				icon="plus"
+				disabled={atLimit || pending !== null}
+				onclick={() => void openAdd()}>Add<span class="wide-label">&nbsp;domain</span></Button
 			>
-			<DomainSetup
-				{domain}
-				lastCheck={lastChecks[domain.id] ?? null}
-				checking={pending === `check:${domain.id}`}
-				wait={secondsLeft(domain.id)}
-				busy={pending !== null}
-				{guideHref}
-				oncheck={manage ? () => void check(domain) : undefined}
-				onremove={manage ? () => (confirmingId = domain.id) : undefined}
-			/>
-			{#if confirmingId === domain.id}
-				<div class="confirm" role="alertdialog" aria-labelledby="confirm-{domain.id}">
-					<p id="confirm-{domain.id}">
-						<strong>Remove {domain.hostname}?</strong>
-						{stopping(domain.activeLinks)}
-					</p>
-					<div class="confirm-actions">
-						<Button size="sm" disabled={pending !== null} onclick={() => (confirmingId = null)}
-							>Keep</Button
-						>
-						<Button
-							size="sm"
-							variant="danger"
-							disabled={pending !== null}
-							onclick={() => void remove(domain)}
-							>{pending === `remove:${domain.id}` ? 'Removing…' : 'Remove'}</Button
-						>
-					</div>
-				</div>
+		{/if}
+	{/snippet}
+</PageHeader>
+
+<div class="domains" aria-busy={pending !== null}>
+	<p class="visually-hidden" role="status" aria-live="polite">{status}</p>
+	{#if error}<Callout tone="danger" role="alert"><p>{error}</p></Callout>{/if}
+
+	{#if empty}
+		<section class="first" aria-labelledby="domain-first-heading">
+			<span class="first-mark" aria-hidden="true"><Glyph name="globe" size={22} /></span>
+			<h2 id="domain-first-heading">Add a custom domain</h2>
+			{#if page.limit > 0 && !manage}
+				<p class="first-lead">Only the workspace owner can add a domain.</p>
+			{:else if page.limit > 0}
+				<p class="first-lead">Use a subdomain you own, such as go.yourbrand.com.</p>
+				<DomainAddForm
+					bind:subdomain
+					bind:domain
+					bind:input={hostnameInput}
+					error={fieldError}
+					{errorField}
+					pending={pending === 'add'}
+					disabled={atLimit || pending !== null}
+					onsubmit={() => void add()}
+				/>
+				{#if guideHref}<a class="text-action" href={guideHref}
+						>How setup works<Glyph name="arrowUpRight" size={16} /></a
+					>{/if}
+			{:else}
+				<p class="first-lead">Custom domains are not available in this workspace.</p>
 			{/if}
-			{@render readyBar()}
-		{:else if empty}
-			<section class="hero" aria-labelledby="domain-hero-heading">
-				<span class="hero-mark" aria-hidden="true"
-					><Glyph name="globe" size={64} /><span class="badge-link"
-						><Glyph name="link" size={16} /></span
-					></span
-				>
-				<h2 id="domain-hero-heading">Your links. Your domain.</h2>
-				{#if page.limit > 0 && !manage}
-					<p class="hero-lead">Only the workspace owner can add a domain.</p>
-				{:else if page.limit > 0}
-					<p class="hero-lead">Add a subdomain you own, such as go.yourbrand.com.</p>
-					<DomainAddForm
-						bind:subdomain
-						bind:domain
-						bind:input={hostnameInput}
-						error={fieldError}
-						{errorField}
-						pending={pending === 'add'}
-						disabled={atLimit || pending !== null}
-						onsubmit={() => void add()}
-						centered
-					/>
-					{#if guideHref}<a class="guide" href={guideHref}
-							>How setup works<Glyph name="arrowUpRight" size={16} /></a
-						>{/if}
-				{:else}
-					<p class="hero-lead">Custom domains are not available in this workspace.</p>
+		</section>
+		{#if platformDomains.length > 0}
+			<section class="available" aria-labelledby="available-heading">
+				<h2 id="available-heading" class="small-heading">Already available</h2>
+				<ul class="cards">
+					{#each platformDomains as domain (domain.id)}{@render card(domain)}{/each}
+				</ul>
+				{#if page.limit > 0}
+					<p class="included">
+						<Glyph name="check" size={18} />{page.limit === 1
+							? 'One custom domain is included in your plan.'
+							: `${numbers.format(page.limit)} custom domains are included in your plan.`}
+					</p>
 				{/if}
 			</section>
-			{#if platformDomains.length > 0}
-				<section class="available" aria-labelledby="available-heading">
-					<h2 id="available-heading" class="small-heading">Already available</h2>
-					<ul>
-						{#each platformDomains as domain (domain.id)}
-							<li>
-								<Glyph name="link" size={26} />
-								<div class="available-main">
-									<p class="available-name">
-										<strong>{domain.hostname}</strong><Badge outlined>Included</Badge><StatusDot
-											>Ready to use</StatusDot
-										>
-									</p>
-									<p class="sub">Create links now. No domain setup needed.</p>
-								</div>
-								{#if createHref}<a class="text-action" href={createHref}
-										>Create a link<Glyph name="arrow" size={16} /></a
-									>{/if}
-							</li>
-						{/each}
-					</ul>
-					{#if page.limit > 0}
-						<p class="included">
-							<Glyph name="check" size={18} />{page.limit === 1
-								? 'One custom domain is included in your plan.'
-								: `${numbers.format(page.limit)} custom domains are included in your plan.`}
-						</p>
-					{/if}
-				</section>
-			{/if}
-		{:else}
-			{#if manage && adding && !atLimit}
-				<section class="add-card" aria-labelledby="domain-add-heading">
-					<h2 id="domain-add-heading" class="small-heading">Add a custom domain</h2>
-					<DomainAddForm
-						bind:subdomain
-						bind:domain
-						bind:input={hostnameInput}
-						error={fieldError}
-						{errorField}
-						pending={pending === 'add'}
-						disabled={pending !== null}
-						onsubmit={() => void add()}
-						oncancel={() => {
-							adding = false;
-							refuse('', null);
-						}}
-					/>
-				</section>
-			{/if}
-			<div class="table">
-				<div class="columns" aria-hidden="true">
-					<span>Domain</span><span>Status</span><span>Links</span><span></span>
-				</div>
-				<ul aria-label="Domains">
-					{#each [...workspaceDomains, ...platformDomains] as domain (domain.id)}
-						<!-- The name button is the keyboard path; the row click is a larger target. -->
-						<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-						<li
-							class="row"
-							class:selected={selected?.id === domain.id}
-							onclick={(event) => {
-								if (!(event.target as HTMLElement).closest('a, button, [popover]')) open(domain);
-							}}
-						>
-							<span class="cell name">
-								<Glyph name={domain.kind === 'platform' ? 'link' : 'globe'} size={22} />
-								<button
-									type="button"
-									class="hostname"
-									aria-expanded={ready(domain) ? selected?.id === domain.id : undefined}
-									onclick={() => open(domain)}>{domain.hostname}</button
-								>
-								{#if domain.isDefault}<Badge>Default</Badge>{/if}
-								{#if domain.kind === 'platform'}<span class="included-badge"
-										><Badge>Included</Badge></span
-									>{/if}
-							</span>
-							<span class="cell">
-								<StatusDot tone={domain.kind === 'platform' ? 'live' : stateTones[domain.state]}
-									>{stateLabel(domain)}</StatusDot
-								>
-							</span>
-							<span class="cell count"
-								>{domain.activeLinks === null ? '–' : numbers.format(domain.activeLinks)}</span
-							>
-							<span class="cell">
-								{#if actions(domain).length > 0}
-									<Menu
-										id="domain-menu-{domain.id}"
-										label="More actions for {domain.hostname}"
-										items={actions(domain)}
-									/>
-								{/if}
-							</span>
-						</li>
-					{/each}
-				</ul>
-			</div>
-			<div class="foot">
-				<p>The default domain is preselected when you create a link.</p>
-				{#if createHref}<a class="text-action" href={createHref}
-						>View all links<Glyph name="arrow" size={16} /></a
-					>{/if}
-			</div>
-			{#if !manage}
-				<p class="note">Only the workspace owner can add or remove domains.</p>
-			{:else if atLimit && page.limit > 0}
-				<p class="note">You have used all your custom domains. To add another, remove one first.</p>
-			{:else if nearLimit}
-				<p class="note">You are close to your custom domain limit.</p>
-			{/if}
 		{/if}
-	</div>
-</SplitView>
+	{:else}
+		<ul class="cards" aria-label="Domains">
+			{#each [...workspaceDomains, ...platformDomains] as domain (domain.id)}{@render card(
+					domain
+				)}{/each}
+		</ul>
+		<div class="foot">
+			<p>The default domain is preselected when you create a link.</p>
+			{#if createHref}<a class="text-action" href={createHref}
+					>View all links<Glyph name="arrow" size={16} /></a
+				>{/if}
+		</div>
+		{#if !manage}
+			<p class="note">Only the workspace owner can add or remove domains.</p>
+		{:else if atLimit && page.limit > 0}
+			<p class="note">You have used all your custom domains. To add another, remove one first.</p>
+		{:else if nearLimit}
+			<p class="note">You are close to your custom domain limit.</p>
+		{/if}
+	{/if}
+</div>
+
+{#if canAdd && !empty}
+	<Dialog bind:open={adding} id="domain-add-heading" title="Add a custom domain">
+		<DomainAddForm
+			bind:subdomain
+			bind:domain
+			bind:input={hostnameInput}
+			error={fieldError}
+			{errorField}
+			pending={pending === 'add'}
+			disabled={atLimit || pending !== null}
+			onsubmit={() => void add()}
+		/>
+	</Dialog>
+{/if}
+
+{#if manage}
+	<Dialog
+		bind:open={confirmOpen}
+		id="domain-remove-heading"
+		title={confirming ? `Remove ${confirming.hostname}?` : 'Remove domain?'}
+	>
+		{#if confirming}
+			{@const domain = confirming}
+			<p class="confirm-text">{stopping(domain.activeLinks)}</p>
+			<div class="confirm-actions">
+				<Button disabled={pending !== null} onclick={() => (confirmOpen = false)}>Keep</Button>
+				<Button variant="danger" disabled={pending !== null} onclick={() => void remove(domain)}
+					>{pending === `remove:${domain.id}` ? 'Removing…' : 'Remove'}</Button
+				>
+			</div>
+		{/if}
+	</Dialog>
+{/if}
 
 <style>
 	.domains {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr);
-		gap: 1.5rem;
-	}
-	.aside {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 1rem 1.5rem;
+		gap: 1.25rem;
+		width: min(100%, 56rem);
 	}
 	.usage {
-		color: var(--color-lead);
-		font-size: 0.9375rem;
+		color: var(--color-subtle);
+		font-size: 0.8125rem;
 	}
 	.usage.warn {
 		color: var(--color-warning);
 	}
-	.back {
-		display: inline-flex;
-		align-items: center;
-		justify-self: start;
-		gap: 0.5rem;
-		margin-top: -0.75rem;
-		padding: 0.25rem 0;
-		border: 0;
-		background: none;
-		color: var(--color-link);
-		font: inherit;
-		font-size: 0.9375rem;
-		cursor: pointer;
-	}
-	.back:hover,
-	.text-action:hover {
-		text-decoration: underline;
-		text-underline-offset: 3px;
-	}
-	.hero {
-		display: grid;
-		justify-items: center;
-		gap: 0.85rem;
-		padding: 0.5rem 0 1rem;
-		text-align: center;
-	}
-	.hero-mark {
-		position: relative;
-		color: var(--color-strong);
-	}
-	.badge-link {
+	/* The button reads "Add" on a phone and keeps the full name for screen readers. */
+	.wide-label {
 		position: absolute;
-		right: -0.35rem;
-		bottom: -0.1rem;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+	}
+	.cards {
+		display: grid;
+		gap: 0.625rem;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.first {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0.75rem;
+		padding: 1.25rem 1rem;
+		border-radius: 0.875rem;
+		background: var(--color-surface);
+		box-shadow: var(--shadow-ring);
+	}
+	.first-mark {
 		display: grid;
 		place-items: center;
-		width: 1.85rem;
-		height: 1.85rem;
-		border: 2px solid var(--color-paper);
-		border-radius: 50%;
-		background: var(--color-button-primary);
-		color: var(--color-on-primary);
-	}
-	.hero h2 {
+		width: 2.5rem;
+		height: 2.5rem;
+		border-radius: 0.625rem;
+		background: var(--color-surface-2);
 		color: var(--color-strong);
-		font-size: clamp(1.75rem, 2.6vw, 2.25rem);
-		font-weight: 800;
-		letter-spacing: -0.045em;
 	}
-	.hero-lead {
-		margin-bottom: 0.5rem;
-		color: var(--color-ink);
-		font-size: 1.0625rem;
+	.first h2 {
+		color: var(--color-strong);
+		font-size: 1.25rem;
+		font-weight: 600;
+		letter-spacing: -0.01em;
 	}
-	.guide {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.35rem;
-		color: var(--color-link);
+	.first-lead {
+		color: var(--color-muted);
 		font-size: 0.9375rem;
-		text-decoration: underline;
-		text-underline-offset: 3px;
 	}
 	.small-heading {
-		color: var(--color-lead);
-		font-size: 0.9375rem;
+		color: var(--color-muted);
+		font-size: 0.875rem;
 		font-weight: 500;
 		letter-spacing: 0;
 	}
 	.available {
 		display: grid;
+		grid-template-columns: minmax(0, 1fr);
 		gap: 0.75rem;
-		padding-top: 1.5rem;
-		border-top: 1px solid var(--color-rule);
-	}
-	.available ul {
-		margin: 0;
-		padding: 0;
-		list-style: none;
-	}
-	.available li {
-		display: grid;
-		grid-template-columns: auto minmax(0, 1fr) auto;
-		align-items: center;
-		gap: 1rem;
-		padding: 0.75rem 0;
-		border-bottom: 1px solid var(--color-rule);
-		color: var(--color-strong);
-	}
-	.available-main {
-		display: grid;
-		gap: 0.2rem;
-		min-width: 0;
-	}
-	.available-name {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.5rem 1rem;
-		color: var(--color-strong);
-		font-size: 1.0625rem;
-	}
-	.sub,
-	.note,
-	.foot p {
-		color: var(--color-lead);
-		font-size: 0.875rem;
 	}
 	.included {
 		display: flex;
 		align-items: center;
-		gap: 0.75rem;
-		color: var(--color-ink);
+		gap: 0.5rem;
+		color: var(--color-muted);
+		font-size: 0.875rem;
+	}
+	.note,
+	.foot p,
+	.confirm-text {
+		color: var(--color-subtle);
+		font-size: 0.875rem;
+	}
+	.confirm-text {
+		color: var(--color-muted);
 		font-size: 0.9375rem;
 	}
 	.text-action {
 		display: inline-flex;
 		flex: none;
 		align-items: center;
-		gap: 0.4rem;
-		color: var(--color-link);
-		font-size: 0.9375rem;
-	}
-	.add-card {
-		display: grid;
-		gap: 0.75rem;
-		padding: 1.25rem 1.5rem;
-		border: 1px solid var(--color-rule);
-		border-radius: var(--radius-md, 0.625rem);
-		background: var(--color-paper);
-	}
-	.table {
-		border: 1px solid var(--color-rule);
-		border-radius: var(--radius-md, 0.625rem);
-		background: var(--color-paper);
-		overflow: hidden;
-		container-type: inline-size;
-	}
-	.columns,
-	.row {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) 10rem 5rem 3rem;
-		align-items: center;
-	}
-	.columns {
+		justify-self: start;
+		gap: 0.35rem;
 		min-height: 2.75rem;
-		background: var(--color-canvas);
-		border-bottom: 1px solid var(--color-rule);
-		color: var(--color-lead);
-		font-size: 0.75rem;
-		font-weight: 600;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-	}
-	.columns > span {
-		padding: 0 1rem;
-	}
-	.columns > span + span:not(:last-child) {
-		align-self: stretch;
-		display: flex;
-		align-items: center;
-		border-left: 1px solid var(--color-rule);
-	}
-	.row {
-		position: relative;
-		min-height: 3.6rem;
-		cursor: pointer;
-	}
-	.table ul {
-		margin: 0;
-		padding: 0;
-		list-style: none;
-	}
-	.row + .row {
-		border-top: 1px solid var(--color-rule);
-	}
-	.row:hover {
-		background: var(--color-hover);
-	}
-	.row.selected {
-		background: var(--color-surface-2);
-		box-shadow: var(--shadow-ring);
-	}
-	.cell {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		min-width: 0;
-		align-self: stretch;
-		padding: 0 1rem;
-		color: var(--color-strong);
-	}
-	.cell + .cell:not(:last-child) {
-		border-left: 1px solid var(--color-rule);
-	}
-	.name {
-		padding-left: 1.25rem;
-	}
-	.hostname {
-		overflow: hidden;
-		padding: 0;
-		border: 0;
-		background: none;
-		color: var(--color-strong);
-		font: inherit;
-		font-size: 1rem;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		cursor: pointer;
-	}
-	.hostname:hover {
+		color: var(--color-link);
+		font-size: 0.875rem;
 		text-decoration: underline;
 		text-underline-offset: 3px;
-	}
-	.count {
-		font-variant-numeric: tabular-nums;
 	}
 	.foot {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
 		justify-content: space-between;
-		gap: 0.5rem 1rem;
-		margin-top: -0.75rem;
+		gap: 0 1rem;
+		margin-top: -0.5rem;
 	}
-	.confirm {
-		display: grid;
-		gap: 0.75rem;
-		width: min(100%, 40rem);
-		margin-inline: auto;
-		padding: 0.9rem 1rem;
-		border: 1px solid color-mix(in oklch, var(--color-danger) 30%, transparent);
-		border-radius: var(--radius-md, 0.625rem);
-		background: var(--color-danger-soft);
-		font-size: 0.9375rem;
-	}
-	.confirm p {
-		color: var(--color-ink);
-	}
+	/* Base: the confirm buttons share the width, as in a phone sheet. */
 	.confirm-actions {
-		display: flex;
-		justify-content: flex-end;
-		gap: 0.5rem;
-	}
-	.ready-bar {
 		display: grid;
-		grid-template-columns: auto minmax(0, 1fr) auto;
-		align-items: center;
-		gap: 1rem;
-		padding-top: 1.25rem;
-		border-top: 1px solid var(--color-rule);
-		color: var(--color-strong);
-	}
-	.ready-bar p {
-		color: var(--color-ink);
-		font-size: 0.9375rem;
-	}
-	.ready-bar strong {
-		color: var(--color-strong);
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.5rem;
+		margin-top: 1rem;
 	}
 	.visually-hidden {
 		position: absolute;
@@ -854,29 +498,20 @@
 		clip-path: inset(50%);
 		white-space: nowrap;
 	}
-	@container (max-width: 34rem) {
-		.columns {
-			display: none;
+	@media (min-width: 48rem) {
+		.wide-label {
+			position: static;
+			width: auto;
+			height: auto;
+			overflow: visible;
+			clip-path: none;
 		}
-		.row {
-			grid-template-columns: minmax(0, 1fr) auto 2.75rem;
-			padding: 0.5rem 0;
+		.first {
+			padding: 1.5rem;
 		}
-		.cell + .cell:not(:last-child) {
-			border-left: 0;
-		}
-		.included-badge {
-			display: none;
-		}
-		.count {
-			display: none;
-		}
-		.cell {
-			padding: 0 0.5rem;
-		}
-		.name {
-			gap: 0.6rem;
-			padding-left: 1rem;
+		.confirm-actions {
+			display: flex;
+			justify-content: flex-end;
 		}
 	}
 </style>
