@@ -12,7 +12,10 @@ html {
 	scroll-behavior: smooth;
 	scroll-padding-top: 6rem;
 }
+/* With viewport-fit=cover, a phone in landscape draws the page under its rounded corners and
+ * notch; the side safe areas keep the content clear of them. */
 body {
+	padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
 	background: var(--color-paper);
 	color: var(--color-ink);
 	font-family: var(--font-body);

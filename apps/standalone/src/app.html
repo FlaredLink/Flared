@@ -3,14 +3,21 @@
 	<head>
 		<meta charset="utf-8" />
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		<meta name="theme-color" content="#c94b00" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+		<meta name="theme-color" media="(prefers-color-scheme: light)" content="#fafafa" />
+		<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b0b0c" />
 		<meta name="robots" content="noindex, nofollow" />
-		<!-- Applies a saved Light or Dark choice before the first paint (@flared/ui/theme/ThemeControl.svelte). -->
+		<!-- Applies a saved Light or Dark choice and its browser bar colour before the first paint (@flared/ui/theme/ThemeControl.svelte). -->
 		<script>
 			try {
 				var m = document.cookie.match(/(?:^|;\s*)theme=(light|dark)(?:;|$)/);
-				if (m) document.documentElement.dataset.mode = m[1];
+				if (m) {
+					document.documentElement.dataset.mode = m[1];
+					var color = m[1] === 'dark' ? '#0b0b0c' : '#fafafa';
+					document.querySelectorAll('meta[name="theme-color"]').forEach(function (tag) {
+						tag.content = color;
+					});
+				}
 			} catch {}
 		</script>
 		%sveltekit.head%

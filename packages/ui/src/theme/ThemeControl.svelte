@@ -10,9 +10,21 @@
 		return saved === 'light' || saved === 'dark' ? saved : 'system';
 	}
 
+	// The browser bar colour of each theme: the canvas background. Each app.html has one
+	// theme-color tag per colour scheme; a viewer's own choice sets both to its colour.
+	export const themeColors = { light: '#fafafa', dark: '#0b0b0c' } as const;
+
+	function applyThemeColor(next: ThemeChoice): void {
+		for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
+			const scheme = meta.media.includes('dark') ? 'dark' : 'light';
+			meta.content = themeColors[next === 'system' ? scheme : next];
+		}
+	}
+
 	export function applyTheme(next: ThemeChoice): void {
 		const root = document.documentElement;
 		const secure = location.protocol === 'https:' ? '; secure' : '';
+		applyThemeColor(next);
 		if (next === 'system') {
 			delete root.dataset.mode;
 			document.cookie = `theme=; path=/; max-age=0; samesite=lax${secure}`;

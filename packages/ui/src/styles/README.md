@@ -26,6 +26,19 @@ The main area and panels are white (`--color-paper`, `--color-surface`). The fra
 - Elevation: `--shadow-ring` draws a card or field edge as a 1px ring with a short drop in light mode. `--shadow-raised` adds a longer soft drop in light mode only. `--shadow-lift` is for menus, dialogs, and panels over the page.
 - Layers: `--z-sidebar`, `--z-header`, `--z-panel`, and `--z-skip-link`. Native dialogs and popovers use the top layer and need no value.
 
+## Shell hooks
+
+An app shell sets these custom properties on its main area; the shared components read them and work without them.
+
+- `--page-bleed`: how far the `PageHeader` bar reaches past the content on each side, so it runs from edge to edge of the main area. Default 0.
+- `--page-top`: the main area's top padding, which the bar covers. Default 0.
+- `--page-bar-position`: `sticky` keeps the bar at the top while the page scrolls. Default `relative`.
+- `--page-background`: the colour behind the bar. Default `--color-paper`.
+- `[data-page-bar]` marks the bar, so a shell can tell whether a page has one (for example, to pad the top of a page without it).
+- A container (`container-type: inline-size`) narrower than 4.5rem, such as a collapsed sidebar, makes a `Menu` text trigger show only its lead.
+
+Below 48rem, `PageHeader` is a phone top bar (a back button on a pushed screen) and `Dialog` is a bottom sheet. Both clear the safe areas of `viewport-fit=cover`.
+
 ## Atomic layers
 
 - Atoms (`src/atoms/`, `src/icons/Glyph.svelte`): Button, IconButton, Badge, StatusDot, Kbd, Avatar, Checkbox, TextInput, Select, Meter. Each atom styles itself; it needs only the roles above.

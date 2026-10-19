@@ -229,6 +229,27 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
+	/* In a container narrower than 4.5rem, such as a collapsed sidebar, a text trigger shows only
+	   its lead. The text stays as the trigger's accessible name. */
+	@container (width < 4.5rem) {
+		.trigger.with-text {
+			position: relative;
+			justify-content: center;
+			gap: 0;
+			padding: 0;
+		}
+		.with-text .text {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			overflow: hidden;
+			clip-path: inset(50%);
+			white-space: nowrap;
+		}
+		.with-text > :global(svg:last-child) {
+			display: none;
+		}
+	}
 	.heading {
 		padding: 0.5rem 0.65rem 0.65rem;
 		margin-bottom: 0.25rem;

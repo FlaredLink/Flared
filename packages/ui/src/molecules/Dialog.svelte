@@ -18,6 +18,25 @@
 		if (open && !dialog.open) dialog.showModal();
 		if (!open && dialog.open) dialog.close();
 	});
+
+	// On a phone the soft keyboard covers the bottom of the layout viewport, so the sheet rises by
+	// the covered height while it is open.
+	$effect(() => {
+		const viewport = window.visualViewport;
+		if (!open || !dialog || !viewport) return;
+		const sheet = dialog;
+		const place = () => {
+			const covered = window.innerHeight - viewport.height - viewport.offsetTop;
+			sheet.style.setProperty('--keyboard-inset', `${Math.max(0, Math.round(covered))}px`);
+		};
+		place();
+		viewport.addEventListener('resize', place);
+		viewport.addEventListener('scroll', place);
+		return () => {
+			viewport.removeEventListener('resize', place);
+			viewport.removeEventListener('scroll', place);
+		};
+	});
 </script>
 
 <dialog
@@ -31,6 +50,7 @@
 		if (event.target === dialog) dialog?.close();
 	}}
 >
+	<span class="handle" aria-hidden="true"></span>
 	<div class="head">
 		<h2 {id}>{title}</h2>
 		<IconButton icon="x" label="Close" size="sm" onclick={() => dialog?.close()} />
@@ -39,12 +59,18 @@
 </dialog>
 
 <style>
+	/* Phone: a bottom sheet with a grab handle. From 48rem: a centred dialog. Esc, the close
+	   button, and a tap on the backdrop close both. */
 	dialog {
-		width: min(35rem, 100% - 2rem);
-		max-height: calc(100dvh - 2rem);
-		padding: 1.125rem;
+		inset: auto 0 var(--keyboard-inset, 0px);
+		width: 100%;
+		max-width: none;
+		max-height: calc(100dvh - 3.5rem - var(--keyboard-inset, 0px));
+		margin: 0;
+		padding: 0.5rem 1rem calc(1.5rem + env(safe-area-inset-bottom));
+		overflow: auto;
 		border: 0;
-		border-radius: 1rem;
+		border-radius: 1.375rem 1.375rem 0 0;
 		background: var(--color-surface);
 		color: var(--color-ink);
 		box-shadow: var(--shadow-lift);
@@ -52,7 +78,7 @@
 		/* Closing: the dialog fades and sinks a little, faster than it opens. overlay and display
 		   keep it in the top layer until the fade ends. */
 		opacity: 0;
-		transform: translateY(0.5rem) scale(0.98);
+		transform: translateY(1.5rem);
 		transition-property: opacity, transform, overlay, display;
 		transition-duration: calc(var(--dur-base) * 0.7);
 		transition-timing-function: var(--ease-out);
@@ -66,7 +92,34 @@
 	@starting-style {
 		dialog[open] {
 			opacity: 0;
+			transform: translateY(1.5rem);
+		}
+	}
+	.handle {
+		display: block;
+		width: 2.25rem;
+		height: 5px;
+		margin: 0 auto 0.5rem;
+		border-radius: 3px;
+		background: var(--color-faint);
+	}
+	@media (min-width: 48rem) {
+		dialog {
+			inset: 0;
+			width: min(35rem, 100% - 2rem);
+			max-height: calc(100dvh - 2rem);
+			margin: auto;
+			padding: 1.125rem;
+			border-radius: 1rem;
 			transform: translateY(0.5rem) scale(0.98);
+		}
+		@starting-style {
+			dialog[open] {
+				transform: translateY(0.5rem) scale(0.98);
+			}
+		}
+		.handle {
+			display: none;
 		}
 	}
 	dialog::backdrop {
@@ -96,8 +149,13 @@
 	}
 	h2 {
 		color: var(--color-strong);
-		font-size: 1rem;
+		font-size: 1.125rem;
 		font-weight: 600;
 		letter-spacing: -0.01em;
+	}
+	@media (min-width: 48rem) {
+		h2 {
+			font-size: 1rem;
+		}
 	}
 </style>
