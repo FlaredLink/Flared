@@ -658,6 +658,51 @@ export async function updateTransportEndpoint(
 	);
 }
 
+export interface TransportTargetChange {
+	targetKey: string;
+	target: string | null;
+	url: string;
+	now: number;
+}
+
+// Points an endpoint of a transport other than http at a new target, such as a renamed or
+// replaced channel link, and keeps its ID, so automations that post to it keep working. An
+// endpoint that Flared turned off as target_unavailable turns on again with no pause when its
+// target key changes, because a new key names a new target; with the same key (a rename) it
+// stays off. One the owner turned off stays off. Null when the tenant has no such endpoint on the transport; taken
+// when another of its endpoints on the transport has the target key.
+export async function updateTransportTarget(
+	db: D1Database,
+	tenantId: string,
+	transport: string,
+	endpointId: string,
+	change: TransportTargetChange
+): Promise<WebhookEndpointRow | 'taken' | null> {
+	const name = otherTransport(transport);
+	const key = targetKey(change.targetKey);
+	if (change.target !== null && change.target.length > 2048)
+		throw new Error('Invalid webhook target');
+	// OR IGNORE: a key another endpoint holds writes nothing, and the read below tells why.
+	const row = await db
+		.prepare(
+			`UPDATE OR IGNORE webhook_endpoints SET target_key = ?4, target = ?5, url = ?6, updated_at = ?7,
+				enabled = CASE WHEN off_reason = 'target_unavailable' AND target_key <> ?4 THEN 1 ELSE enabled END,
+				failure_count = CASE WHEN off_reason = 'target_unavailable' AND target_key <> ?4 THEN 0 ELSE failure_count END,
+				paused_until = CASE WHEN off_reason = 'target_unavailable' AND target_key <> ?4 THEN NULL ELSE paused_until END,
+				off_reason = CASE WHEN off_reason = 'target_unavailable' AND target_key <> ?4 THEN NULL ELSE off_reason END
+			WHERE tenant_id = ?1 AND id = ?2 AND transport = ?3
+			RETURNING ${endpointColumns}`
+		)
+		.bind(tenantId, endpointId, name, key, change.target, change.url, change.now)
+		.first<Record<string, unknown>>();
+	if (row) return toEndpoint(row);
+	const found = await db
+		.prepare('SELECT 1 FROM webhook_endpoints WHERE tenant_id = ?1 AND id = ?2 AND transport = ?3')
+		.bind(tenantId, endpointId, name)
+		.first();
+	return found ? 'taken' : null;
+}
+
 // Removes one endpoint of a transport other than http (with endpointId) or all of the tenant's
 // on that transport, deliveries first. Returns the endpoints removed.
 export async function deleteTransportEndpoints(

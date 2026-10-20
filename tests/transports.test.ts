@@ -29,6 +29,7 @@ import {
 	restoreTransportEndpoints,
 	stageIntegrationMessages,
 	updateTransportEndpoint,
+	updateTransportTarget,
 	type ClaimedDelivery,
 	type DeliveryResult,
 	type WebhookEndpointRow
@@ -522,6 +523,109 @@ describe('transport endpoints', () => {
 			await listTransportEndpoints(routing(), { transport: 'chat', tenantId: 't-ten', limit: 100 })
 		).toEqual([]);
 		expect((await endpointRow(other.id))?.enabled).toBe(1);
+	});
+
+	it('point an endpoint at a new target and keep its ID, only within the tenant and transport', async () => {
+		await addTenant('u-tgt', 't-tgt');
+		await addTenant('u-tgt2', 't-tgt2');
+		const a = await addTransport('t-tgt', 'alerts:A');
+		const b = await addTransport('t-tgt', 'alerts:B');
+		const elsewhere = await addTransport('t-tgt', 'alerts:X', { transport: 'other' });
+		const other = await addTransport('t-tgt2', 'alerts:A');
+		const http = await addHttp('u-tgt');
+		const change = (key: string) => ({
+			targetKey: key,
+			target: JSON.stringify({ channel: key }),
+			url: 'https://chat.example/open/new',
+			now: clock + 1
+		});
+		const moved = await updateTransportTarget(
+			routing(),
+			't-tgt',
+			'chat',
+			a.id,
+			change('alerts:A2')
+		);
+		expect(moved).toMatchObject({
+			id: a.id,
+			targetKey: 'alerts:A2',
+			target: JSON.stringify({ channel: 'alerts:A2' }),
+			url: 'https://chat.example/open/new'
+		});
+		expect(await updateTransportTarget(routing(), 't-tgt', 'chat', b.id, change('alerts:A2'))).toBe(
+			'taken'
+		);
+		expect(
+			await updateTransportTarget(routing(), 't-tgt', 'chat', other.id, change('alerts:N'))
+		).toBeNull();
+		expect(
+			await updateTransportTarget(routing(), 't-tgt', 'chat', elsewhere.id, change('alerts:N'))
+		).toBeNull();
+		expect(
+			await updateTransportTarget(routing(), 't-tgt', 'chat', http, change('alerts:N'))
+		).toBeNull();
+		const unchanged = await routing()
+			.prepare(
+				'SELECT id, target_key, target, url FROM webhook_endpoints WHERE id IN (?, ?, ?, ?) ORDER BY id'
+			)
+			.bind(b.id, elsewhere.id, other.id, http)
+			.all<{ id: string; target_key: string | null; target: string | null; url: string }>();
+		const target = (key: string) => JSON.stringify({ channel: key });
+		expect(unchanged.results).toEqual(
+			[
+				{ id: b.id, target_key: 'alerts:B', target: target('alerts:B'), url: chatUrl },
+				{ id: elsewhere.id, target_key: 'alerts:X', target: target('alerts:X'), url: chatUrl },
+				{ id: other.id, target_key: 'alerts:A', target: target('alerts:A'), url: chatUrl },
+				{ id: http, target_key: null, target: null, url: hookUrl }
+			].sort((x, y) => x.id.localeCompare(y.id))
+		);
+		// Flared turned b off for its target: a new target key turns it on with no pause.
+		await routing()
+			.prepare(
+				"UPDATE webhook_endpoints SET enabled = 0, off_reason = 'target_unavailable', failure_count = 3, paused_until = ? WHERE id = ?"
+			)
+			.bind(clock + 60 * minute, b.id)
+			.run();
+		// The same key is a rename of the same target: b stays off.
+		await updateTransportTarget(routing(), 't-tgt', 'chat', b.id, {
+			...change('alerts:B'),
+			target: JSON.stringify({ channel: 'alerts:B', label: 'Renamed' })
+		});
+		expect(await endpointRow(b.id)).toMatchObject({ enabled: 0, off_reason: 'target_unavailable' });
+		await updateTransportTarget(routing(), 't-tgt', 'chat', b.id, change('alerts:B2'));
+		expect(await endpointRow(b.id)).toEqual({
+			enabled: 1,
+			off_reason: null,
+			failure_count: 0,
+			paused_until: null
+		});
+		// The owner turned a off: a new target keeps it off.
+		await updateTransportEndpoint(routing(), 't-tgt', 'chat', a.id, { enabled: false, now: clock });
+		expect(
+			await updateTransportTarget(routing(), 't-tgt', 'chat', a.id, change('alerts:A3'))
+		).toMatchObject({ targetKey: 'alerts:A3', enabled: false });
+		expect(await endpointRow(a.id)).toMatchObject({ enabled: 0, off_reason: null });
+		// Refused before any write, as createTransportEndpoint refuses them.
+		const refused = [
+			['chat', { ...change('alerts:L'), target: 'x'.repeat(2049) }],
+			['chat', change('')],
+			['chat', change('k'.repeat(161))],
+			['http', change('alerts:L')],
+			['Bad', change('alerts:L')]
+		] as const;
+		for (const [transport, input] of refused)
+			await expect(
+				updateTransportTarget(routing(), 't-tgt', transport, a.id, input)
+			).rejects.toThrow();
+		expect(
+			(
+				await listTransportEndpoints(routing(), {
+					transport: 'chat',
+					tenantId: 't-tgt',
+					limit: 100
+				})
+			).map((row) => row.targetKey)
+		).toEqual(['alerts:A3', 'alerts:B2']);
 	});
 });
 
