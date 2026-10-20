@@ -9,7 +9,7 @@ flared link create https://example.com/launch --slug launch
 flared analytics launch
 ```
 
-Create an API token in the Flared app under Settings. `flared login` asks for it without showing it, checks it with the API, and saves it in `~/.config/flared/config.json` (or `$XDG_CONFIG_HOME/flared`; `%APPDATA%\flared` on Windows), readable only by you. In CI, set `FLARED_TOKEN` instead, or pipe the token to `flared login --token-stdin`.
+Create an API token in the Flared app: under Connections in Flared Cloud, or under Settings, API tokens in a self-hosted app. `flared login` asks for it without showing it, checks it with the API, and saves it in `~/.config/flared/config.json` (or `$XDG_CONFIG_HOME/flared`; `%APPDATA%\flared` on Windows), readable only by you. In CI, set `FLARED_TOKEN` instead, or pipe the token to `flared login --token-stdin`.
 
 ## Commands
 

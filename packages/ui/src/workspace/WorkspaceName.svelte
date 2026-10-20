@@ -75,7 +75,6 @@
 </script>
 
 <SettingRow
-	icon="user"
 	id="workspace-name-heading"
 	title="Workspace name"
 	description={editable

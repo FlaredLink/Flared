@@ -84,7 +84,6 @@
 
 <section class="passkeys" aria-labelledby="passkeys-heading">
 	<SettingRow
-		icon="key"
 		id="passkeys-heading"
 		title="Passkeys"
 		description="Sign in with your fingerprint, face, or device PIN."

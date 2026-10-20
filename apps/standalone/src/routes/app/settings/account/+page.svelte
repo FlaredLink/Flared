@@ -14,7 +14,7 @@
 </script>
 
 {#if account}
-	<SettingRow icon="user" title="Username" description="Used to sign in.">
+	<SettingRow title="Username" description="Used to sign in.">
 		<p class="value">{account}</p>
 	</SettingRow>
 {/if}

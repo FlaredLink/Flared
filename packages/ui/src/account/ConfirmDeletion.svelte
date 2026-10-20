@@ -83,7 +83,7 @@
 </script>
 
 <section class="delete" aria-labelledby="{id}-heading">
-	<SettingRow icon="trash" id="{id}-heading" {title} {description} danger>
+	<SettingRow id="{id}-heading" {title} {description}>
 		{#if blocked}
 			<p class="blocked">{blocked.message} <a href={blocked.href}>{blocked.action}</a></p>
 		{:else if !open}

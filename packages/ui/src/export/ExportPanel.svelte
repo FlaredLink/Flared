@@ -27,14 +27,12 @@
 	const files = $derived([
 		{
 			kind: 'csv' as const,
-			icon: 'file' as const,
 			title: 'Export links',
 			description: 'Download your links as a spreadsheet.',
 			label: 'Download CSV'
 		},
 		{
 			kind: 'json' as const,
-			icon: 'chart' as const,
 			title: 'Export links and clicks',
 			description: `Includes your links and ${history}.`,
 			label: 'Download JSON'
@@ -80,7 +78,7 @@
 <section class="export" aria-labelledby="export-heading">
 	<h3 id="export-heading" class="visually-hidden">Export your data</h3>
 	{#each files as file (file.kind)}
-		<SettingRow icon={file.icon} title={file.title} description={file.description}>
+		<SettingRow title={file.title} description={file.description}>
 			{#if pending === file.kind}
 				<Button onclick={() => controller?.abort()}>Cancel export</Button>
 			{:else}

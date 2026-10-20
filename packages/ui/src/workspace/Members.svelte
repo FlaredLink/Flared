@@ -346,7 +346,7 @@
 				</span>
 				<span class="badges">
 					{#if member.you}<Badge outlined>You</Badge>{/if}
-					<Badge tone={member.role === 'owner' ? 'accent' : 'neutral'}
+					<Badge tone={member.role === 'owner' ? 'ink' : 'neutral'}
 						>{member.role === 'owner' ? 'Owner' : 'Member'}</Badge
 					>
 				</span>

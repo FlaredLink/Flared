@@ -19,7 +19,6 @@
 	import Checkbox from '../atoms/Checkbox.svelte';
 	import Select from '../atoms/Select.svelte';
 	import TextInput from '../atoms/TextInput.svelte';
-	import SectionHeader from '../molecules/SectionHeader.svelte';
 	import SidePanel from '../molecules/SidePanel.svelte';
 	import SplitView from '../molecules/SplitView.svelte';
 	import Callout from '../molecules/Callout.svelte';
@@ -83,7 +82,7 @@
 
 	const dates = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 	const relative = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
-	// "2 hours ago" or "Yesterday" for recent use; the date after a week.
+	// "2 hours ago" or "yesterday" for recent use, after "Last used"; the date after a week.
 	function lastUsed(at: string): string {
 		const seconds = (Date.parse(at) - Date.now()) / 1000;
 		const steps: [Intl.RelativeTimeFormatUnit, number][] = [
@@ -91,11 +90,10 @@
 			['hour', 3600],
 			['day', 86400]
 		];
-		if (seconds > -60) return 'Just now';
+		if (seconds > -60) return 'just now';
 		if (seconds < -7 * 86400) return dates.format(new Date(at));
 		const [unit, size] = [...steps].reverse().find(([, step]) => -seconds >= step) ?? steps[0];
-		const text = relative.format(Math.round(seconds / size), unit);
-		return text.charAt(0).toLocaleUpperCase() + text.slice(1);
+		return relative.format(Math.round(seconds / size), unit);
 	}
 	// One sentence that names what the chosen scopes allow.
 	const summary = $derived.by(() => {
@@ -254,32 +252,27 @@
 <section class="tokens" aria-labelledby="tokens-heading">
 	<SplitView panel={creating ? createPanel : undefined}>
 		<div class="list">
-			<SectionHeader
-				id="tokens-heading"
-				title="API tokens"
-				lead={workspaceName
+			<div class="section-head">
+				<Glyph name="terminal" size={18} />
+				<h2 id="tokens-heading">API tokens</h2>
+				<Button
+					size="sm"
+					icon="plus"
+					disabled={full || creating}
+					onclick={() => {
+						creating = true;
+						created = null;
+						error = '';
+					}}>Create token</Button
+				>
+			</div>
+			<p class="lead">
+				{workspaceName
 					? `Tokens act only in ${workspaceName}. Give scripts and services only the access they need.`
 					: 'Give scripts and services only the access they need.'}
-			>
-				{#snippet actions()}
-					{#if !creating}
-						<Button
-							variant="primary"
-							icon="plus"
-							disabled={full}
-							onclick={() => {
-								creating = true;
-								created = null;
-								error = '';
-							}}>Create token</Button
-						>
-					{/if}
-				{/snippet}
-			</SectionHeader>
-			<p class="count">
 				{activeCount}
-				{activeCount === 1 ? 'active token' : 'active tokens'}{#if full}. You have {maxTokensPerUser}
-					tokens; revoke one before you create another.{/if}
+				{activeCount === 1 ? 'active token' : 'active tokens'}.{#if full}
+					You have {maxTokensPerUser} tokens; revoke one before you create another.{/if}
 			</p>
 			<p class="status" role="status" aria-live="polite">{status}</p>
 			{#if error && !creating}<p class="error" role="alert">{error}</p>{/if}
@@ -306,69 +299,57 @@
 			{#if page.tokens.length === 0}
 				<p class="empty">No tokens yet. Create one for the CLI, a script, or a service.</p>
 			{:else}
-				<div class="table" role="table" aria-labelledby="tokens-heading">
-					<div class="head" role="row">
-						<span role="columnheader">Name</span>
-						<span role="columnheader">Access</span>
-						<span role="columnheader">Last used</span>
-						<span role="columnheader" class="actions-head">Actions</span>
-					</div>
+				<ul class="items" aria-labelledby="tokens-heading">
 					{#each page.tokens as token (token.id)}
-						<div class="row" role="row">
-							<div class="name-cell" role="cell">
-								<Glyph name="key" size={22} />
-								<span class="name-text">
-									<span class="name">{token.name}</span>
-									<span class="meta"
-										>Created {dates.format(new Date(token.createdAt))} ·
-										{#if token.expiresAt}{expired(token) ? 'Expired' : 'Expires'}
-											<time datetime={token.expiresAt}
-												>{dates.format(new Date(token.expiresAt))}</time
-											>{:else}No expiry{/if}
-									</span>
-									<code>{token.start}…</code>
+						<li class="item" class:confirming={confirmingId === token.id}>
+							<span class="logo" aria-hidden="true"><Glyph name="key" size={17} /></span>
+							<div class="main">
+								<span class="name"
+									><span class="name-text">{token.name}</span>
+									<code>{token.start}…</code>{#if expired(token)}
+										<Badge tone="warning">Expired</Badge>{/if}</span
+								>
+								<span class="meta"
+									><span title={token.scopes.map((scope) => scopeLabels[scope]).join(', ')}
+										>{access(token.scopes)}</span
+									>
+									· {#if token.lastUsedAt}Last used <time datetime={token.lastUsedAt}
+											>{lastUsed(token.lastUsedAt)}</time
+										>{:else}Never used{/if}</span
+								>
+								<span class="meta"
+									>Created {dates.format(new Date(token.createdAt))} ·
+									{#if token.expiresAt}{expired(token) ? 'Expired' : 'Expires'}
+										<time datetime={token.expiresAt}>{dates.format(new Date(token.expiresAt))}</time
+										>{:else}No expiry{/if}
 								</span>
 							</div>
-							<div role="cell" class="access">
-								<span title={token.scopes.map((scope) => scopeLabels[scope]).join(', ')}
-									>{access(token.scopes)}</span
-								>
-								{#if expired(token)}<Badge tone="warning">Expired</Badge>{/if}
-							</div>
-							<div role="cell" class="used">
-								{#if token.lastUsedAt}<time datetime={token.lastUsedAt}
-										>{lastUsed(token.lastUsedAt)}</time
-									>{:else}Never{/if}
-							</div>
-							<div role="cell" class="actions">
+							<div class="actions">
 								{#if confirmingId === token.id}
-									<span class="confirm">Revoke?</span>
+									<span class="confirm">Revoke {token.name}?</span>
+									<Button size="sm" onclick={() => (confirmingId = null)}>Keep</Button>
 									<Button
 										size="sm"
 										variant="danger"
 										disabled={pending !== null}
 										onclick={() => void revoke(token.id, token.name)}>Revoke</Button
 									>
-									<Button size="sm" variant="ghost" onclick={() => (confirmingId = null)}
-										>Keep</Button
-									>
 								{:else}
 									<Button
 										size="sm"
-										variant="danger-soft"
 										disabled={pending !== null}
 										aria-label={`Revoke ${token.name}`}
 										onclick={() => (confirmingId = token.id)}>Revoke…</Button
 									>
 								{/if}
 							</div>
-						</div>
+						</li>
 					{/each}
-				</div>
+				</ul>
 			{/if}
 
 			<p class="foot">
-				<Glyph name="lock" size={20} />Keep tokens private. Revoking a token stops applications that
+				<Glyph name="lock" size={18} />Keep tokens private. Revoking a token stops applications that
 				use it.
 			</p>
 		</div>
@@ -378,18 +359,33 @@
 <style>
 	.list {
 		display: grid;
-		gap: 1rem;
+		gap: 0.625rem;
 		min-width: 0;
 	}
-	.count {
+	.section-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem 0.625rem;
 		color: var(--color-strong);
-		font-size: 0.9875rem;
 	}
+	.section-head h2 {
+		margin-right: auto;
+		color: var(--color-strong);
+		font-size: 0.9375rem;
+		font-weight: 600;
+	}
+	.lead,
 	.status,
 	.empty,
 	.meta,
-	.hint {
-		color: var(--color-lead);
+	.hint,
+	.foot {
+		color: var(--color-subtle);
+		font-size: 0.8125rem;
+	}
+	.lead,
+	.empty {
 		font-size: 0.875rem;
 	}
 	.status:empty {
@@ -404,7 +400,7 @@
 		gap: 0.6rem;
 		padding: 1rem 1.25rem;
 		border: 1px solid color-mix(in oklch, var(--color-positive) 35%, transparent);
-		border-radius: var(--radius-md, 0.625rem);
+		border-radius: 0.75rem;
 		background: var(--color-positive-soft);
 	}
 	.reveal h3 {
@@ -428,94 +424,85 @@
 		min-width: 0;
 		min-height: 2.75rem;
 		padding: 0 0.9rem;
-		border: 1px solid var(--color-rule);
-		border-radius: var(--radius-control, 0.5rem);
-		background: var(--color-paper);
+		border: 0;
+		border-radius: 0.5625rem;
+		background: var(--color-surface);
+		box-shadow: var(--shadow-ring);
 		color: var(--color-strong);
 		font-family: var(--font-mono);
-		font-size: 0.875rem;
+		/* 16px on a phone, so iOS does not zoom into the field. */
+		font-size: 1rem;
 	}
-	.table {
-		border: 1px solid var(--color-rule);
-		border-radius: var(--radius-md, 0.625rem);
-		background: var(--color-paper);
-		overflow: hidden;
-		container-type: inline-size;
-	}
-	.head,
-	.row {
+	.items {
 		display: grid;
-		grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.1fr) minmax(0, 0.9fr) auto;
-		align-items: center;
-		gap: 1rem;
-		padding: 0.85rem 1.1rem;
+		gap: 0.5rem;
+		margin: 0;
+		padding: 0;
+		list-style: none;
 	}
-	.head {
-		padding-block: 0.75rem;
-		border-bottom: 1px solid var(--color-rule);
-		background: var(--color-canvas);
-		color: var(--color-lead);
-		font-size: 0.8125rem;
-		font-weight: 600;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-	}
-	.actions-head {
-		min-width: 6.5rem;
-	}
-	.row + .row {
-		border-top: 1px solid var(--color-rule);
-	}
-	.name-cell {
-		display: flex;
-		align-items: center;
-		gap: 0.85rem;
-		min-width: 0;
-		color: var(--color-ink);
-	}
-	.name-text {
+	.item {
 		display: grid;
-		gap: 0.1rem;
+		grid-template-columns: auto minmax(0, 1fr) auto;
+		align-items: center;
+		gap: 0.625rem 0.75rem;
+		padding: 0.75rem 0.875rem;
+		border-radius: 0.75rem;
+		background: var(--color-surface);
+		box-shadow: var(--shadow-ring);
+	}
+	.logo {
+		display: grid;
+		place-items: center;
+		width: 2.125rem;
+		height: 2.125rem;
+		border-radius: 0.5625rem;
+		background: var(--color-surface-2);
+		box-shadow: var(--shadow-ring);
+		color: var(--color-strong);
+	}
+	.main {
+		display: grid;
+		gap: 0.125rem;
 		min-width: 0;
 	}
 	.name {
-		overflow: hidden;
-		color: var(--color-strong);
-		font-weight: 600;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	code {
-		color: var(--color-lead);
-		font-size: 0.8125rem;
-	}
-	.access,
-	.used {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 0.4rem;
-		color: var(--color-ink);
-		font-size: 0.9375rem;
+		gap: 0.25rem 0.5rem;
+		min-width: 0;
+	}
+	.name-text {
+		min-width: 0;
+		overflow-wrap: anywhere;
+		color: var(--color-strong);
+		font-weight: 500;
+	}
+	code {
+		color: var(--color-subtle);
+		font-size: 0.8125rem;
 	}
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
+		justify-content: flex-end;
+		gap: 0.5rem;
+	}
+	/* The question and its two buttons take a line of their own under the text. */
+	.confirming .actions {
+		grid-column: 1 / -1;
 		justify-content: flex-start;
-		gap: 0.4rem;
-		min-width: 6.5rem;
 	}
 	.confirm {
 		color: var(--color-strong);
-		font-size: 0.9375rem;
+		font-size: 0.875rem;
 	}
 	.foot {
 		display: flex;
 		align-items: center;
-		gap: 0.6rem;
-		color: var(--color-lead);
-		font-size: 0.875rem;
+		gap: 0.5rem;
+		margin-top: 0.25rem;
 	}
 	.create {
 		display: grid;
@@ -580,23 +567,5 @@
 		overflow: hidden;
 		clip-path: inset(50%);
 		white-space: nowrap;
-	}
-	/* Narrow tables stack each token: name, then access and use, then the action. */
-	@container (max-width: 36rem) {
-		.head {
-			display: none;
-		}
-		.row {
-			grid-template-columns: minmax(0, 1fr) auto;
-			gap: 0.4rem 1rem;
-		}
-		.name-cell {
-			grid-column: 1 / -1;
-		}
-		.actions {
-			grid-column: 2;
-			grid-row: 2 / 4;
-			justify-content: flex-end;
-		}
 	}
 </style>

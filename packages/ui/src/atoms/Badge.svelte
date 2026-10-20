@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts" module>
-	export type BadgeTone = 'neutral' | 'accent' | 'positive' | 'warning' | 'danger' | 'info';
+	export type BadgeTone = 'neutral' | 'ink' | 'accent' | 'positive' | 'warning' | 'danger' | 'info';
 </script>
 
 <script lang="ts">
@@ -35,6 +35,11 @@
 	.neutral {
 		background: var(--color-selected);
 		color: var(--color-ink);
+	}
+	/* A role that outranks the neutral one, such as Owner beside Member. */
+	.ink {
+		background: var(--color-strong);
+		color: var(--color-paper);
 	}
 	.accent {
 		background: var(--color-accent-soft);

@@ -1,35 +1,33 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
-	import { onMount, type Snippet } from 'svelte';
+	import { onMount } from 'svelte';
 	import { scopeDescriptions, type ConnectedAppPage } from '@flared/contracts/oauth';
 	import Glyph from '../icons/Glyph.svelte';
 	import Button from '../atoms/Button.svelte';
 	import SplitView from '../molecules/SplitView.svelte';
 	import SidePanel from '../molecules/SidePanel.svelte';
 	import Callout from '../molecules/Callout.svelte';
+	import CopyButton from '../molecules/CopyButton.svelte';
 	import { revokeConnectedApp } from './client';
 	import { shownWorkspace } from '../workspace/shown';
 	import { linkErrorMessage } from '../links/messages';
-	import AssistantMark from './AssistantMark.svelte';
-	import ConnectGuide from './ConnectGuide.svelte';
+	import AssistantTile from './AssistantTile.svelte';
 	import AssistantSetup from './AssistantSetup.svelte';
-	import type { AssistantId } from './assistants';
+	import { assistants, type AssistantId } from './assistants';
 
 	interface Props {
 		page: ConnectedAppPage;
 		// The path of the /v1 API for this browser, such as "/api/v1".
 		apiBase: string;
-		// The MCP endpoint that the setup steps show.
+		// The MCP endpoint that the section head and the setup steps show.
 		mcpUrl: string;
 		// Called after a removal succeeds, so the app reloads the list.
 		onChanged: () => void | Promise<void>;
-		// The page header, so the setup panel lines up with it.
-		header?: Snippet;
 		// Every step for each assistant, such as the edition's docs page.
 		guideHref?: string;
 	}
 
-	let { page, apiBase, mcpUrl, onChanged, header, guideHref }: Props = $props();
+	let { page, apiBase, mcpUrl, onChanged, guideHref }: Props = $props();
 	const workspace = shownWorkspace();
 	let pending = $state<string | null>(null);
 	let confirming = $state<string | null>(null);
@@ -42,6 +40,12 @@
 		parts
 			.map((part, index) => (index === 0 ? part : part[0].toLowerCase() + part.slice(1)))
 			.join(', ');
+	// The address without its scheme fits the section head; the copy button copies all of it.
+	const mcpAddress = $derived(mcpUrl.replace(/^https?:\/\//, ''));
+	// One list: the connected apps, then the setup of each assistant that is not connected yet.
+	const unconnected = $derived(
+		assistants.filter((assistant) => !page.apps.some((app) => app.assistant === assistant.id))
+	);
 
 	// With room for two columns and nothing connected yet, Claude's setup opens, as in the mockups.
 	onMount(() => {
@@ -65,7 +69,7 @@
 	}
 </script>
 
-<!-- The panel is passed only while a setup is open, so the lists keep the full width. -->
+<!-- The panel is passed only while a setup is open, so the list keeps the full width. -->
 {#snippet setup()}
 	{#if selected}
 		<SidePanel id="assistant-setup-label" label="Assistant setup" onclose={() => (selected = null)}>
@@ -75,144 +79,175 @@
 {/snippet}
 
 <SplitView panel={selected ? setup : undefined}>
-	{#if header}{@render header()}{/if}
-	<div class="connections">
-		<section class="apps" aria-labelledby="apps-heading">
-			<h2 id="apps-heading">Connected apps ({page.apps.length})</h2>
-			<p class="visually-hidden" role="status" aria-live="polite">{status}</p>
-			{#if error}<Callout tone="danger" role="alert"><p>{error}</p></Callout>{/if}
-			{#if page.apps.length > 0}
-				<ul class="app-list">
-					{#each page.apps as app (app.clientId)}
-						<li>
-							<span class="tile" aria-hidden="true"
-								>{#if app.assistant}<AssistantMark assistant={app.assistant} size={28} />{:else}{(
-										Array.from(app.name)[0] ?? '?'
-									).toLocaleUpperCase()}{/if}</span
-							>
-							<div class="main">
-								<span class="name">{app.name}</span>
-								<span class="meta"
-									>{sentence(app.scopes.map((scope) => scopeDescriptions[scope]))}</span
-								>
-								<span class="meta">
-									Connected <time datetime={app.connectedAt}
-										>{dates.format(new Date(app.connectedAt))}</time
-									>{' · '}{#if app.lastActiveAt}Last active <time datetime={app.lastActiveAt}
-											>{dates.format(new Date(app.lastActiveAt))}</time
-										>{:else}Not used yet{/if}{#if app.uri}{' · '}{app.uri}{/if}
-								</span>
-							</div>
-							<div class="actions">
-								{#if confirming === app.clientId}
-									<span class="confirm">Remove {app.name}?</span>
-									<Button size="sm" onclick={() => (confirming = null)}>Keep</Button>
-									<Button
-										size="sm"
-										variant="danger"
-										disabled={pending !== null}
-										onclick={() => void remove(app.clientId, app.name)}
-										>{pending === app.clientId ? 'Removing…' : 'Remove'}</Button
-									>
-								{:else}
-									<Button
-										size="sm"
-										variant="danger-soft"
-										disabled={pending !== null}
-										aria-label={`Remove ${app.name}`}
-										onclick={() => (confirming = app.clientId)}>Remove…</Button
-									>
-								{/if}
-							</div>
-						</li>
-					{/each}
-				</ul>
-				<p class="meta">Removing an app ends its access at once.</p>
-			{:else}
-				<p class="empty">No apps connected yet.</p>
-			{/if}
-		</section>
+	<section class="assistants" aria-labelledby="assistants-heading">
+		<div class="section-head">
+			<Glyph name="robot" size={18} />
+			<h2 id="assistants-heading">AI assistants</h2>
+			<span class="address">
+				<span class="visually-hidden">MCP server address: </span><code>{mcpAddress}</code>
+				<CopyButton text={mcpUrl} label="Copy the MCP server address" size="sm" />
+			</span>
+		</div>
+		<p class="visually-hidden" role="status" aria-live="polite">{status}</p>
+		{#if error}<Callout tone="danger" role="alert"><p>{error}</p></Callout>{/if}
 
-		<ConnectGuide
-			{selected}
-			onselect={(assistant) => (selected = selected === assistant ? null : assistant)}
-		/>
+		<ul class="items">
+			{#each page.apps as app (app.clientId)}
+				<li class="item" class:confirming={confirming === app.clientId}>
+					<span class="logo" aria-hidden="true"
+						>{#if app.assistant}<AssistantTile assistant={app.assistant} size={22} />{:else}{(
+								Array.from(app.name)[0] ?? '?'
+							).toLocaleUpperCase()}{/if}</span
+					>
+					<div class="main">
+						<span class="name">{app.name}</span>
+						<span class="meta">{sentence(app.scopes.map((scope) => scopeDescriptions[scope]))}</span
+						>
+						<span class="meta">
+							Connected <time datetime={app.connectedAt}
+								>{dates.format(new Date(app.connectedAt))}</time
+							>{' · '}{#if app.lastActiveAt}Last active <time datetime={app.lastActiveAt}
+									>{dates.format(new Date(app.lastActiveAt))}</time
+								>{:else}Not used yet{/if}{#if app.uri}{' · '}{app.uri}{/if}
+						</span>
+					</div>
+					<div class="actions">
+						{#if confirming === app.clientId}
+							<span class="confirm">Remove {app.name}?</span>
+							<Button size="sm" onclick={() => (confirming = null)}>Keep</Button>
+							<Button
+								size="sm"
+								variant="danger"
+								disabled={pending !== null}
+								onclick={() => void remove(app.clientId, app.name)}
+								>{pending === app.clientId ? 'Removing…' : 'Remove'}</Button
+							>
+						{:else}
+							<Button
+								size="sm"
+								disabled={pending !== null}
+								aria-label={`Remove ${app.name}`}
+								onclick={() => (confirming = app.clientId)}>Remove…</Button
+							>
+						{/if}
+					</div>
+				</li>
+			{/each}
+			{#each unconnected as assistant (assistant.id)}
+				<li class="item" class:selected={selected === assistant.id}>
+					<span class="logo" aria-hidden="true"
+						><AssistantTile assistant={assistant.id} size={22} /></span
+					>
+					<div class="main">
+						<span class="name">{assistant.label}</span>
+						<span class="meta">{assistant.line}</span>
+					</div>
+					<div class="actions">
+						<Button
+							size="sm"
+							aria-expanded={selected === assistant.id}
+							aria-controls="assistant-setup"
+							aria-label={`Set up ${assistant.label}`}
+							onclick={() => (selected = selected === assistant.id ? null : assistant.id)}
+							>{assistant.id === 'other' ? 'View setup' : 'Set up'}</Button
+						>
+					</div>
+				</li>
+			{/each}
+		</ul>
 
 		<p class="foot">
-			<Glyph name="lock" size={22} />
-			<span>Review requested access before connecting. Disconnect an app whenever you need.</span>
+			<Glyph name="lock" size={18} />
+			<span
+				>Review requested access before connecting. Removing an app ends its access at once.</span
+			>
 			{#if guideHref}<a href={guideHref}
 					>Read the connection guide<Glyph name="arrowUpRight" size={14} /></a
 				>{/if}
 		</p>
-	</div>
+	</section>
 </SplitView>
 
 <style>
-	.connections {
+	.assistants {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr);
-		gap: 2.25rem;
-		container-type: inline-size;
+		gap: 0.625rem;
 	}
-	.apps {
-		display: grid;
-		gap: 0.75rem;
-		padding-bottom: 2.25rem;
-		border-bottom: 1px solid var(--color-rule);
+	.section-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem 0.625rem;
+		color: var(--color-strong);
 	}
 	h2 {
 		color: var(--color-strong);
-		font-size: 1.25rem;
-		font-weight: 700;
-		letter-spacing: -0.02em;
-	}
-	.empty,
-	.meta {
-		color: var(--color-lead);
 		font-size: 0.9375rem;
+		font-weight: 600;
 	}
-	.app-list {
+	/* The address field: grey like a read-only field, with the copy button at its end. */
+	.address {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		min-width: 0;
+		max-width: 100%;
+		margin-left: auto;
+		padding: 0 0.125rem 0 0.625rem;
+		border-radius: 0.5625rem;
+		background: var(--color-surface-2);
+	}
+	.address code {
+		min-width: 0;
+		overflow-wrap: anywhere;
+		color: var(--color-ink);
+		font-size: 0.8125rem;
+	}
+	.items {
+		display: grid;
+		gap: 0.5rem;
 		margin: 0;
 		padding: 0;
 		list-style: none;
-		border: 1px solid var(--color-rule);
-		border-radius: var(--radius-md, 0.625rem);
-		background: var(--color-paper);
 	}
-	.app-list li {
+	.item {
 		display: grid;
 		grid-template-columns: auto minmax(0, 1fr) auto;
 		align-items: center;
-		gap: 1rem;
-		padding: 0.9rem 1.25rem;
+		gap: 0.625rem 0.75rem;
+		padding: 0.75rem 0.875rem;
+		border-radius: 0.75rem;
+		background: var(--color-surface);
+		box-shadow: var(--shadow-ring);
 	}
-	.app-list li + li {
-		border-top: 1px solid var(--color-rule);
+	.item.selected {
+		background: var(--color-surface-2);
 	}
-	.tile {
+	.logo {
 		display: grid;
+		flex: none;
 		place-items: center;
-		width: 2.75rem;
-		height: 2.75rem;
-		border: 1px solid var(--color-rule);
-		border-radius: var(--radius-md, 0.625rem);
-		background: var(--color-paper);
+		width: 2.125rem;
+		height: 2.125rem;
+		border-radius: 0.5625rem;
+		background: var(--color-surface-2);
+		box-shadow: var(--shadow-ring);
 		color: var(--color-strong);
-		font-weight: 700;
+		font-weight: 600;
 	}
 	.main {
 		display: grid;
-		gap: 0.1rem;
+		gap: 0.125rem;
 		min-width: 0;
 	}
 	.name {
 		color: var(--color-strong);
-		font-weight: 600;
+		font-weight: 500;
 	}
-	.main .meta {
+	.meta {
 		overflow-wrap: anywhere;
-		font-size: 0.875rem;
+		color: var(--color-subtle);
+		font-size: 0.8125rem;
 	}
 	.actions {
 		display: flex;
@@ -220,6 +255,11 @@
 		align-items: center;
 		justify-content: flex-end;
 		gap: 0.5rem;
+	}
+	/* The question and its two buttons take a line of their own under the text. */
+	.confirming .actions {
+		grid-column: 1 / -1;
+		justify-content: flex-start;
 	}
 	.confirm {
 		color: var(--color-strong);
@@ -229,13 +269,10 @@
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 0.5rem 0.85rem;
-		margin-top: -1rem;
-		color: var(--color-lead);
-		font-size: 0.875rem;
-	}
-	.foot :global(svg:first-child) {
-		color: var(--color-ink);
+		gap: 0.375rem 0.625rem;
+		margin-top: 0.25rem;
+		color: var(--color-subtle);
+		font-size: 0.8125rem;
 	}
 	.foot span {
 		flex: 1 1 18rem;
@@ -245,8 +282,6 @@
 		align-items: center;
 		gap: 0.3rem;
 		color: var(--color-link);
-	}
-	.foot a:hover {
 		text-decoration: underline;
 		text-underline-offset: 3px;
 	}
@@ -257,14 +292,5 @@
 		overflow: hidden;
 		clip-path: inset(50%);
 		white-space: nowrap;
-	}
-	@container (max-width: 34rem) {
-		.app-list li {
-			grid-template-columns: auto minmax(0, 1fr);
-		}
-		.actions {
-			grid-column: 1 / -1;
-			justify-content: flex-start;
-		}
 	}
 </style>

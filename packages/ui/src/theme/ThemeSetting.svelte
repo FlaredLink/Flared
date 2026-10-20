@@ -13,7 +13,7 @@
 	});
 </script>
 
-<SettingRow icon="monitor" title="Theme" description="Choose how Flared looks on this device.">
+<SettingRow title="Theme" description="Choose how Flared looks on this device.">
 	<div class="theme">
 		<SegmentedControl
 			name="theme"

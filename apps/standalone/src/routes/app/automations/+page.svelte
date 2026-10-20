@@ -11,7 +11,6 @@
 
 <svelte:head><title>Automations · Flared</title></svelte:head>
 
-<PageHeader title="Automations" lead="Templates you apply to links from the Links page." />
 {#if data.automations}
 	<AutomationList
 		page={data.automations}
@@ -28,6 +27,7 @@
 		{/snippet}
 	</AutomationList>
 {:else}
+	<PageHeader title="Automations" lead="Templates you apply to links from the Links page." />
 	<Callout tone="danger" role="alert" title="We couldn’t load your automations">
 		<p>Refresh the page to try again.</p>
 	</Callout>

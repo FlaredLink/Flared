@@ -66,16 +66,20 @@
 </label>
 
 <style>
+	/* Base: one select for every width below 64rem; the page puts its content under it. */
 	.sections {
-		position: sticky;
-		top: 1.5rem;
+		display: none;
+	}
+	.section-select {
 		display: grid;
-		gap: 0.35rem;
+	}
+	.section-select :global(.select) {
+		width: 100%;
 	}
 	.group-label {
 		display: grid;
-		padding: 0 0.75rem;
-		color: var(--color-lead);
+		padding: 0 0.625rem;
+		color: var(--color-subtle);
 		font-size: 0.8125rem;
 		font-weight: 600;
 	}
@@ -85,13 +89,13 @@
 	.group-detail {
 		overflow: hidden;
 		color: var(--color-strong);
-		font-size: 0.9375rem;
+		font-size: 0.875rem;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 	ul {
 		display: grid;
-		gap: 0.15rem;
+		gap: 0.125rem;
 		margin: 0;
 		padding: 0;
 		list-style: none;
@@ -99,24 +103,22 @@
 	a {
 		display: flex;
 		align-items: center;
-		gap: 0.65rem;
-		min-height: 2.5rem;
-		padding: 0 0.75rem;
-		border-radius: var(--radius-control);
-		color: var(--color-ink);
+		gap: 0.625rem;
+		min-height: 2.25rem;
+		padding: 0 0.625rem;
+		border-radius: 0.5625rem;
+		color: var(--color-muted);
 		font-size: 0.9375rem;
 	}
 	a:hover {
-		background: var(--color-selected);
 		color: var(--color-strong);
 	}
+	/* The open section is a raised surface with the ring, as in the app sidebar. */
 	a[aria-current='page'] {
-		background: var(--color-selected);
+		background: var(--color-surface);
+		box-shadow: var(--shadow-ring);
 		color: var(--color-strong);
-		font-weight: 600;
-	}
-	.section-select {
-		display: none;
+		font-weight: 500;
 	}
 	.visually-hidden {
 		position: absolute;
@@ -126,15 +128,16 @@
 		clip: rect(0 0 0 0);
 		white-space: nowrap;
 	}
-	@media (max-width: 64rem) {
+	@media (min-width: 64rem) {
 		.sections {
-			display: none;
+			position: sticky;
+			top: 5.25rem;
+			display: grid;
+			align-content: start;
+			gap: 0.35rem;
 		}
 		.section-select {
-			display: grid;
-		}
-		.section-select :global(.select) {
-			width: 100%;
+			display: none;
 		}
 	}
 </style>

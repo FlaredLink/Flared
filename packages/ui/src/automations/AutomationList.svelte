@@ -28,7 +28,7 @@
 	import Badge from '../atoms/Badge.svelte';
 	import Button from '../atoms/Button.svelte';
 	import Callout from '../molecules/Callout.svelte';
-	import SectionHeader from '../molecules/SectionHeader.svelte';
+	import PageHeader from '../molecules/PageHeader.svelte';
 	import SidePanel from '../molecules/SidePanel.svelte';
 	import SplitView from '../molecules/SplitView.svelte';
 
@@ -231,22 +231,24 @@
 	{/if}
 {/snippet}
 
-<section class="automations" aria-labelledby="automations-heading">
+<PageHeader title="Automations" lead="Templates you apply to links from the Links page.">
+	{#snippet aside()}
+		{#if canManage && page.limit > 0}
+			<Button
+				size="sm"
+				variant="primary"
+				icon="plus"
+				disabled={full || pending !== null || panel?.mode === 'add'}
+				onclick={() => openPanel({ mode: 'add' })}
+				>New<span class="wide-label">&nbsp;automation</span></Button
+			>
+		{/if}
+	{/snippet}
+</PageHeader>
+
+<div class="automations">
 	<SplitView panel={formPanel} open={editing !== undefined || panel?.mode === 'add'}>
 		<div class="list">
-			<SectionHeader id="automations-heading" title="Templates">
-				{#snippet actions()}
-					{#if canManage && page.limit > 0 && panel?.mode !== 'add'}
-						<Button
-							variant="primary"
-							icon="plus"
-							disabled={full || pending !== null}
-							onclick={() => openPanel({ mode: 'add' })}>New automation</Button
-						>
-					{/if}
-				{/snippet}
-			</SectionHeader>
-
 			{#if page.limit === 0}
 				<Callout tone="info" icon="lightning">
 					{#if limitNotice}{@render limitNotice()}{:else}<p>
@@ -279,7 +281,7 @@
 						: 'No automations.'}
 				</p>
 			{:else}
-				<ul class="templates" aria-labelledby="automations-heading">
+				<ul class="templates" aria-label="Automation templates">
 					{#each automations as automation (automation.id)}
 						{@const busy = pending !== null}
 						{@const runsId = `automation-runs-${automation.id}`}
@@ -383,21 +385,18 @@
 			{/if}
 		</div>
 	</SplitView>
-</section>
+</div>
 
 <style>
 	.list {
 		display: grid;
-		gap: 1rem;
+		gap: 0.75rem;
 		min-width: 0;
 	}
-	.count {
-		color: var(--color-strong);
-		font-size: 0.9375rem;
-	}
+	.count,
 	.status,
 	.empty {
-		color: var(--color-lead);
+		color: var(--color-subtle);
 		font-size: 0.875rem;
 	}
 	.status:empty {
@@ -407,9 +406,17 @@
 		color: var(--color-danger);
 		font-size: 0.875rem;
 	}
+	.wide-label {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+	}
 	.templates {
 		display: grid;
-		gap: 0.75rem;
+		gap: 0.625rem;
 		margin: 0;
 		padding: 0;
 		list-style: none;
@@ -417,15 +424,15 @@
 	.template {
 		display: grid;
 		gap: 0.75rem;
-		padding: 0.9rem 1rem;
-		border: 1px solid var(--color-rule);
-		border-radius: var(--radius-md, 0.625rem);
-		background: var(--color-paper);
+		padding: 0.875rem 1rem;
+		border-radius: 0.75rem;
+		background: var(--color-surface);
+		box-shadow: var(--shadow-ring);
+		transition: opacity var(--dur-fast, 140ms) var(--ease-out, ease);
 	}
-	/* An off template is dimmed; its controls stay at full strength so they read as usable. */
-	.off .name,
-	.off .applied,
-	.off .flow {
+	/* An off template dims as a whole. Pointing at it or moving focus into it brings it back to
+	   full strength, so its switch and buttons read as usable while the person uses them. */
+	.off:not(:hover, :focus-within) {
 		opacity: 0.55;
 	}
 	.top {
@@ -439,12 +446,12 @@
 		min-width: 0;
 		overflow-wrap: anywhere;
 		color: var(--color-strong);
-		font-size: 0.9875rem;
+		font-size: 0.9375rem;
 		font-weight: 600;
 	}
 	.applied {
 		flex: none;
-		color: var(--color-lead);
+		color: var(--color-subtle);
 		font-size: 0.8125rem;
 	}
 	.switch {
@@ -484,37 +491,35 @@
 	.switch:disabled {
 		cursor: progress;
 	}
+	/* Phone: one step per line, the label in a fixed column. From 48rem the steps run in a row
+	   with an arrow after the trigger. */
 	.flow {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.5rem;
+		display: grid;
+		gap: 0.375rem;
 		margin: 0;
 	}
 	.step {
-		display: inline-flex;
+		display: flex;
 		align-items: baseline;
-		gap: 0.4rem;
+		gap: 0.5rem;
 		min-width: 0;
-		padding: 0.375rem 0.625rem;
-		border-radius: var(--radius-sm, 0.375rem);
-		background: var(--color-selected);
+		padding: 0.5rem 0.625rem;
+		border-radius: 0.5625rem;
+		background: var(--color-surface-2);
 		color: var(--color-ink);
-		font-size: 0.8125rem;
+		font-size: 0.875rem;
 		overflow-wrap: anywhere;
 	}
 	.step b {
 		flex: none;
-		color: var(--color-lead);
-		font-size: 0.6875rem;
-		font-weight: 600;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
+		width: 2.5rem;
+		color: var(--color-subtle);
+		font-weight: 400;
 	}
 	.arrow {
-		display: inline-flex;
+		display: none;
 		flex: none;
-		color: var(--color-muted);
+		color: var(--color-faint);
 	}
 	.actions {
 		display: flex;
@@ -525,5 +530,36 @@
 	.confirm {
 		color: var(--color-strong);
 		font-size: 0.9375rem;
+	}
+	@media (min-width: 48rem) {
+		.wide-label {
+			position: static;
+			width: auto;
+			height: auto;
+			overflow: visible;
+			clip-path: none;
+		}
+		.flow {
+			display: flex;
+			flex-wrap: wrap;
+			align-items: center;
+			gap: 0.5rem;
+		}
+		.step {
+			display: inline-flex;
+			gap: 0.375rem;
+			padding: 0.375rem 0.625rem;
+			font-size: 0.8125rem;
+		}
+		.step b {
+			width: auto;
+			font-size: 0.6875rem;
+			font-weight: 600;
+			letter-spacing: 0.04em;
+			text-transform: uppercase;
+		}
+		.arrow {
+			display: inline-flex;
+		}
 	}
 </style>

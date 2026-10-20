@@ -168,7 +168,7 @@
 		{#if inWorkspace}
 			<span class="scope"
 				>{workspaceName}
-				{#if data.workspace}<Badge tone={owner ? 'accent' : 'neutral'}
+				{#if data.workspace}<Badge tone={owner ? 'ink' : 'neutral'}
 						>{owner ? 'Owner' : 'Member'}</Badge
 					>{/if}</span
 			>
@@ -237,9 +237,9 @@
 	}
 	.settings {
 		display: grid;
-		grid-template-columns: 13rem minmax(0, 1fr);
+		grid-template-columns: minmax(0, 1fr);
 		align-items: start;
-		gap: 2.5rem;
+		gap: 1.75rem;
 	}
 	.content {
 		display: grid;
@@ -254,11 +254,11 @@
 		border: var(--rule);
 		border-radius: var(--radius-md);
 	}
-	/* SettingsNav swaps its list for a select at the same width. */
-	@media (max-width: 64rem) {
+	/* SettingsNav swaps its select for a list at the same width. */
+	@media (min-width: 64rem) {
 		.settings {
-			grid-template-columns: minmax(0, 1fr);
-			gap: 1.75rem;
+			grid-template-columns: 13rem minmax(0, 1fr);
+			gap: 2.5rem;
 		}
 	}
 </style>
