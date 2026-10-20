@@ -27,11 +27,19 @@ import {
 	recentClickDays
 } from './links';
 import { tokenScopes, type TokenScope } from './tokens';
+import {
+	defaultMilestoneInterval,
+	maxMilestoneInterval,
+	maxWebhookUrlLength,
+	milestoneStep,
+	minMilestoneInterval,
+	subscribableWebhookEvents
+} from './webhooks';
 
 // Duplicated from the client's QR module, which this package cannot import.
 const qrSizes = { minimum: 128, maximum: 2048, default: 512 };
 
-export const openApiVersion = '1.8.0';
+export const openApiVersion = '1.9.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const dateTime = { type: 'string', format: 'date-time' };
@@ -480,6 +488,48 @@ const schemas = {
 	ApplyAutomationLinksResult: object({
 		results: { type: 'array', items: ref('ApplyAutomationLinkResult') }
 	}),
+	HookEvent: {
+		type: 'string',
+		enum: [...subscribableWebhookEvents],
+		description:
+			'link.disabled and link.enabled are edits that turn the link off or on; link.updated is any other edit.'
+	},
+	CreateHookInput: object(
+		{
+			event: ref('HookEvent'),
+			targetUrl: {
+				type: 'string',
+				format: 'uri',
+				maxLength: maxWebhookUrlLength,
+				description:
+					'An https URL on a host that this installation sends hooks to. Flared POSTs each event to it as one JSON object: the link fields, then clicks (milestones) or previous (edits), then event, eventId, and occurredAt. Answer 410 to end the hook.'
+			},
+			milestoneInterval: {
+				...nullable({
+					type: 'integer',
+					minimum: minMilestoneInterval,
+					maximum: maxMilestoneInterval,
+					multipleOf: milestoneStep
+				}),
+				description: `For link.click_milestone: the hook gets every milestone that this number divides. ${defaultMilestoneInterval} when left out.`
+			}
+		},
+		['event', 'targetUrl']
+	),
+	Hook: object({
+		id: { type: 'string' },
+		event: ref('HookEvent'),
+		milestoneInterval: nullable(count),
+		createdAt: dateTime,
+		renewAt: {
+			...dateTime,
+			description: 'Subscribe again after this time, then delete this hook.'
+		},
+		expiresAt: {
+			...dateTime,
+			description: 'The hook gets no event that happens at or after this time.'
+		}
+	}),
 	Workspace: object({
 		id: { type: 'string' },
 		name: { type: 'string' },
@@ -531,6 +581,13 @@ const cursor = {
 	in: 'query',
 	description: 'The nextCursor of the previous page.',
 	schema: { type: 'string' }
+};
+const hookId = {
+	name: 'id',
+	in: 'path',
+	required: true,
+	schema: { type: 'string' },
+	description: 'A hook ID from POST /v1/hooks.'
 };
 const domainResponse = (description: string) => ({
 	description,
@@ -819,6 +876,33 @@ export function openApiDocument(serverUrl: string) {
 					'domains:write',
 					{ '200': domainResponse('The domain after the check.') },
 					{ parameters: [domainId] }
+				)
+			},
+			'/hooks': {
+				post: operation(
+					'Subscribe a hook to a link event',
+					'links:read',
+					{
+						'201': {
+							description:
+								'The hook. A subscribe by the same person with the same event and target URL replaces their earlier hook. Workspaces without webhooks on their plan get WEBHOOK_LIMIT_REACHED, and so does the 51st live hook.',
+							content: json(object({ hook: ref('Hook') }))
+						}
+					},
+					{ requestBody: { required: true, content: json(ref('CreateHookInput')) } }
+				)
+			},
+			'/hooks/{id}': {
+				delete: operation(
+					'Delete a hook',
+					'links:read',
+					{
+						'204': {
+							description:
+								'Deleted. A member deletes their own hooks; the workspace owner deletes any.'
+						}
+					},
+					{ parameters: [hookId] }
 				)
 			},
 			'/usage': {

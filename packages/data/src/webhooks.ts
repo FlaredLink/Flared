@@ -77,6 +77,8 @@ export interface WebhookEndpointRow {
 	pausedUntil: number | null;
 	lastSuccessAt: number | null;
 	lastFailureAt: number | null;
+	// Set for a hook: it gets no event that happens at or after this time.
+	expiresAt: number | null;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -291,7 +293,7 @@ function deliveryError(value: unknown): WebhookDeliveryError | null {
 }
 
 const endpointColumns =
-	'id, tenant_id, transport, target_key, target, off_reason, url, events, milestone_interval, enabled, secret_version, previous_secret_until, key_id, failure_count, paused_until, last_success_at, last_failure_at, created_at, updated_at';
+	'id, tenant_id, transport, target_key, target, off_reason, url, events, milestone_interval, enabled, secret_version, previous_secret_until, key_id, failure_count, paused_until, last_success_at, last_failure_at, expires_at, created_at, updated_at';
 
 function toEndpoint(row: Record<string, unknown>): WebhookEndpointRow {
 	return {
@@ -312,6 +314,7 @@ function toEndpoint(row: Record<string, unknown>): WebhookEndpointRow {
 		pausedUntil: optionalCount(row.paused_until, 'pause'),
 		lastSuccessAt: optionalCount(row.last_success_at, 'success time'),
 		lastFailureAt: optionalCount(row.last_failure_at, 'failure time'),
+		expiresAt: optionalCount(row.expires_at, 'expiry time'),
 		createdAt: count(row.created_at, 'creation time'),
 		updatedAt: count(row.updated_at, 'update time')
 	};
@@ -698,6 +701,158 @@ export async function restoreTransportEndpoints(
 	return result.meta.changes;
 }
 
+// The transport of REST hooks: endpoints that a client such as Zapier subscribes through the API,
+// one event each, until expires_at.
+export const hookTransport = 'resthook';
+// Live hooks a workspace may hold. The webhook endpoint limit does not count them.
+export const maxHooksPerWorkspace = 50;
+
+// Who subscribed a hook and with which credential: token:<id>, oauth:<clientId>, or session. A
+// hook is deleted when its maker leaves the workspace or the credential is revoked.
+export interface HookMaker {
+	userId: string;
+	credential: string;
+}
+
+export interface NewHook {
+	id: string;
+	tenantId: string;
+	event: SubscribableWebhookEvent;
+	targetUrl: string;
+	milestoneInterval: number | null;
+	maker: HookMaker;
+	now: number;
+	expiresAt: number;
+}
+
+// limit: 0 while the workspace has webhooks off, else the hook cap.
+export type SubscribeHookResult =
+	| { status: 'created'; endpoint: WebhookEndpointRow }
+	| { status: 'limit'; limit: number }
+	| { status: 'no_workspace' };
+
+// The target key of a hook: one per workspace, maker, event, and target URL.
+async function hookKey(userId: string, event: string, targetUrl: string): Promise<string> {
+	const digest = await crypto.subtle.digest(
+		'SHA-256',
+		new TextEncoder().encode(JSON.stringify([userId, event, targetUrl]))
+	);
+	return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+// One batch deletes the maker's hook with the same event and target URL while the workspace
+// has webhooks on, then checks the plan, counts the live hooks, and inserts. A client that
+// subscribes again, before or after it unsubscribes the old hook, so never holds two hooks that
+// send the same event to one URL. Only when nothing is written, a second read says why.
+export async function subscribeHook(db: D1Database, hook: NewHook): Promise<SubscribeHookResult> {
+	const events = transportEvents([hook.event]);
+	const key = await hookKey(hook.maker.userId, hook.event, hook.targetUrl);
+	const hooksOn = `EXISTS (SELECT 1 FROM tenant_policy WHERE tenant_id = ?1 AND COALESCE(webhook_endpoint_limit, 0) > 0)`;
+	const [, , inserted] = await db.batch<Record<string, unknown>>([
+		db
+			.prepare(
+				`DELETE FROM webhook_deliveries WHERE tenant_id = ?1 AND endpoint_id IN
+				(SELECT id FROM webhook_endpoints WHERE tenant_id = ?1 AND transport = ?2 AND target_key = ?3)
+				AND ${hooksOn}`
+			)
+			.bind(hook.tenantId, hookTransport, key),
+		db
+			.prepare(
+				`DELETE FROM webhook_endpoints WHERE tenant_id = ?1 AND transport = ?2 AND target_key = ?3
+				AND ${hooksOn}`
+			)
+			.bind(hook.tenantId, hookTransport, key),
+		db
+			.prepare(
+				`INSERT INTO webhook_endpoints (id, tenant_id, transport, target_key, target, url, events, milestone_interval, key_id, expires_at, created_at, updated_at)
+				SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11 FROM tenant_policy p WHERE p.tenant_id = ?2
+				AND COALESCE(p.webhook_endpoint_limit, 0) > 0
+				AND (SELECT COUNT(*) FROM webhook_endpoints WHERE tenant_id = ?2 AND transport = ?3 AND expires_at > ?11) < ?12
+				RETURNING ${endpointColumns}`
+			)
+			.bind(
+				hook.id,
+				hook.tenantId,
+				hookTransport,
+				key,
+				JSON.stringify({ userId: hook.maker.userId, credential: hook.maker.credential }),
+				hook.targetUrl,
+				JSON.stringify(events),
+				transportInterval(events, hook.milestoneInterval),
+				transportKeyId,
+				hook.expiresAt,
+				hook.now,
+				maxHooksPerWorkspace
+			)
+	]);
+	const row = inserted.results[0];
+	if (row) return { status: 'created', endpoint: toEndpoint(row) };
+	const policy = await db
+		.prepare(
+			'SELECT COALESCE(webhook_endpoint_limit, 0) AS endpoint_limit FROM tenant_policy WHERE tenant_id = ?'
+		)
+		.bind(hook.tenantId)
+		.first<{ endpoint_limit: unknown }>();
+	if (!policy) return { status: 'no_workspace' };
+	if (count(policy.endpoint_limit, 'webhook endpoint limit') === 0)
+		return { status: 'limit', limit: 0 };
+	return { status: 'limit', limit: maxHooksPerWorkspace };
+}
+
+// Which of the workspace's hooks to delete: one hook (of one maker, with userId), or every hook of
+// a maker (made with one credential, with credential).
+export type HookMatch =
+	{ hookId: string; userId?: string } | { userId: string; credential?: string };
+
+// Deletes the workspace's matching hooks, deliveries first. Returns the hooks deleted.
+export async function deleteHooks(
+	db: D1Database,
+	tenantId: string,
+	match: HookMatch
+): Promise<number> {
+	const values: string[] = [tenantId, hookTransport];
+	const bound = (value: string) => `?${values.push(value)}`;
+	const conditions = [
+		'hookId' in match ? ` AND id = ${bound(match.hookId)}` : '',
+		match.userId === undefined
+			? ''
+			: ` AND json_extract(target, '$.userId') = ${bound(match.userId)}`,
+		'credential' in match && match.credential !== undefined
+			? ` AND json_extract(target, '$.credential') = ${bound(match.credential)}`
+			: ''
+	].join('');
+	const [, endpoints] = await db.batch([
+		db
+			.prepare(
+				`DELETE FROM webhook_deliveries WHERE tenant_id = ?1 AND endpoint_id IN
+				(SELECT id FROM webhook_endpoints WHERE tenant_id = ?1 AND transport = ?2${conditions})`
+			)
+			.bind(...values),
+		db
+			.prepare(`DELETE FROM webhook_endpoints WHERE tenant_id = ?1 AND transport = ?2${conditions}`)
+			.bind(...values)
+	]);
+	return endpoints.meta.changes;
+}
+
+// Deletes at most limit hooks that have ended: past expires_at, or turned off because the
+// receiver said the subscription is gone. Deliveries first. Returns the hooks deleted.
+export async function deleteEndedHooks(
+	db: D1Database,
+	now: number,
+	limit: number
+): Promise<number> {
+	const ended = `SELECT id FROM webhook_endpoints WHERE transport = ?1
+		AND (expires_at <= ?2 OR (enabled = 0 AND off_reason = 'target_unavailable'))
+		ORDER BY id LIMIT ?3`;
+	const values = [hookTransport, now, batchSize(limit, 1000)];
+	const [, endpoints] = await db.batch([
+		db.prepare(`DELETE FROM webhook_deliveries WHERE endpoint_id IN (${ended})`).bind(...values),
+		db.prepare(`DELETE FROM webhook_endpoints WHERE id IN (${ended})`).bind(...values)
+	]);
+	return endpoints.meta.changes;
+}
+
 function toEvent(row: Record<string, unknown>): WebhookEventRow {
 	return {
 		id: text(row.id, 'event'),
@@ -802,7 +957,8 @@ export async function stageIntegrationMessages(
 // milestone, with an interval that divides the clicks), or only to its target: a test to the
 // target enabled or not, an automation event or an integration message only while the target is
 // enabled, and an integration message never to an http endpoint. Nothing goes to a
-// workspace at limit 0 or suspended. The same ordered set is marked in the same batch, and a
+// workspace at limit 0 or suspended, or to a hook that had expired when the event happened.
+// The same ordered set is marked in the same batch, and a
 // pair that already has a delivery is left alone, so a repeat creates no second delivery.
 // With tenantId, only that workspace's events and deliveries.
 export async function fanOutWebhookEvents(
@@ -831,6 +987,7 @@ export async function fanOutWebhookEvents(
 				JOIN tenant_policy p ON p.tenant_id = e.tenant_id
 				JOIN webhook_endpoints w ON w.tenant_id = e.tenant_id
 				WHERE COALESCE(p.webhook_endpoint_limit, 0) > 0 AND p.suspended_at IS NULL
+				AND (w.expires_at IS NULL OR w.expires_at > e.created_at)
 				AND ((w.id = e.target_endpoint_id AND (w.enabled = 1 OR e.type = 'webhook.test')
 					AND (e.type <> 'integration.message' OR w.transport <> 'http')) OR (
 					e.target_endpoint_id IS NULL AND w.enabled = 1 AND w.created_at <= e.created_at

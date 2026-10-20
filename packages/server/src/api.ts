@@ -98,10 +98,13 @@ import {
 import { iconHostname } from '@flared/contracts/icons';
 import {
 	newWebhookEventId,
+	parseCreateHook,
 	parseCreateWebhook,
 	parseUpdateWebhook,
 	subscribableWebhookEvents,
+	type CreatedHook,
 	type CreatedWebhookEndpoint,
+	type Hook,
 	type WebhookDelivery,
 	type WebhookDeliveryPage,
 	type WebhookEndpoint,
@@ -109,13 +112,16 @@ import {
 } from '@flared/contracts/webhooks';
 import {
 	createWebhookEndpoint,
+	deleteHooks,
 	deleteWebhookEndpoint,
 	insertTestEvent,
 	listEndpointDeliveries,
 	listWebhookEndpoints,
 	readWebhookEndpoint,
 	rotateWebhookSecret,
+	subscribeHook,
 	updateWebhookEndpoint,
+	type HookMatch,
 	type WebhookDeliveryRow,
 	type WebhookEndpointRow
 } from '@flared/data/webhooks';
@@ -299,7 +305,16 @@ export interface WebhookSettings {
 	// The edition's senders for endpoints of other transports than http, by transport name. The
 	// webhook routes manage only http endpoints; the edition manages its own.
 	transports?: Readonly<Record<string, WebhookTransport>>;
+	// REST hooks, which POST /v1/hooks subscribes. Their sender (hookSender from
+	// ./webhooks/hooks) goes in transports under 'resthook' with the same hosts. Without them,
+	// the hook routes answer 404.
+	hooks?: { allowedHosts: readonly string[] };
 }
+
+// A client subscribes a hook again after 7 days; a hook gets events for 14 days, so a late
+// renewal misses none.
+const hookRenewMs = 7 * 86400000;
+const hookLifetimeMs = 14 * 86400000;
 
 // The limit that each plan-limit error stands for, for the limit_reached event.
 const limitOfError: Partial<Record<ErrorCode, 'links' | 'members' | 'domains'>> = {
@@ -512,6 +527,22 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	function webhookSettings(): WebhookSettings {
 		if (!dependencies.webhooks) throw new ApiError('NOT_FOUND', 'Route not found.');
 		return dependencies.webhooks;
+	}
+
+	function hookSettings(): NonNullable<WebhookSettings['hooks']> {
+		const settings = webhookSettings().hooks;
+		if (!settings) throw new ApiError('NOT_FOUND', 'Route not found.');
+		return settings;
+	}
+
+	// Deletes the hooks made with access that has just ended. The access is already gone, so a
+	// failure is logged, and each hook stops at its expiry.
+	async function endHooks(tenantId: string, match: HookMatch, requestId: string): Promise<void> {
+		try {
+			await deleteHooks(routing, tenantId, match);
+		} catch {
+			console.error(JSON.stringify({ event: 'hooks_end_failed', requestId }));
+		}
 	}
 
 	function webhookKeyId(settings: WebhookSettings): Promise<string> {
@@ -1114,6 +1145,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		const id = context.req.param('id');
 		if (!(await revokeToken(identity, principal.userId, tenantId, id)))
 			throw new ApiError('NOT_FOUND', 'Token not found.');
+		await endHooks(tenantId, { userId: principal.userId, credential: `token:${id}` }, requestId);
 		console.log(JSON.stringify({ event: 'api_token_revoked', requestId, tokenId: id }));
 		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
 	});
@@ -1143,6 +1175,11 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		const clientId = context.req.param('clientId');
 		if (!(await deleteGrant(identity, principal.userId, tenantId, clientId)))
 			throw new ApiError('NOT_FOUND', 'Connected app not found.');
+		await endHooks(
+			tenantId,
+			{ userId: principal.userId, credential: `oauth:${clientId}` },
+			requestId
+		);
 		console.log(JSON.stringify({ event: 'oauth_grant_revoked', requestId }));
 		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
 	});
@@ -1295,6 +1332,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			}))
 		)
 			throw new ApiError('NOT_FOUND', 'Member not found.');
+		await endHooks(context.var.tenantId, { userId }, context.var.requestId);
 		console.log(JSON.stringify({ event: 'member_removed', requestId: context.var.requestId }));
 		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
 	});
@@ -1319,6 +1357,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			}))
 		)
 			throw new ApiError('NOT_FOUND', 'Workspace not found.');
+		await endHooks(tenantId, { userId: principal.userId }, requestId);
 		console.log(JSON.stringify({ event: 'workspace_left', requestId }));
 		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
 	});
@@ -1659,6 +1698,59 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			deliveries: (await listEndpointDeliveries(routing, tenantId, endpointId)).map(deliverySummary)
 		};
 		return respond({ status: 200, body: JSON.stringify(page) });
+	});
+
+	// A client such as Zapier subscribes a target URL for one event. Any member may: a hook carries
+	// only link data that every member can read. The workspace needs webhooks on its plan.
+	app.post('/hooks', requireScope('links:read'), async (context) => {
+		const { allowedHosts } = hookSettings();
+		const { tenantId, requestId, principal } = context.var;
+		const input = parseCreateHook(await readJson(context.req.raw), allowedHosts);
+		const time = now();
+		const id = `hok_${crypto.randomUUID().replaceAll('-', '')}`;
+		const result = await subscribeHook(routing, {
+			id,
+			tenantId,
+			event: input.event,
+			targetUrl: input.targetUrl,
+			milestoneInterval: input.milestoneInterval,
+			maker: { userId: principal.userId, credential: hookCredential(principal) },
+			now: time,
+			expiresAt: time + hookLifetimeMs
+		});
+		if (result.status === 'no_workspace') throw new ApiError('NOT_FOUND', 'Workspace not found.');
+		if (result.status === 'limit')
+			throw new ApiError(
+				'WEBHOOK_LIMIT_REACHED',
+				result.limit === 0
+					? 'Hooks are not available for this workspace.'
+					: `This workspace has room for ${result.limit} hooks. Delete a hook first.`
+			);
+		console.log(JSON.stringify({ event: 'hook_created', requestId, hookId: id }));
+		const { endpoint } = result;
+		const hook: Hook = {
+			id: endpoint.id,
+			event: input.event,
+			milestoneInterval: endpoint.milestoneInterval,
+			createdAt: new Date(endpoint.createdAt).toISOString(),
+			renewAt: new Date(endpoint.createdAt + hookRenewMs).toISOString(),
+			expiresAt: new Date(endpoint.expiresAt ?? time + hookLifetimeMs).toISOString()
+		};
+		const body: CreatedHook = { hook };
+		return respond({ status: 201, body: JSON.stringify(body) });
+	});
+
+	// A member deletes their own hooks; the owner deletes any of the workspace. Allowed while the
+	// workspace is suspended.
+	app.delete('/hooks/:id', requireScope('links:read'), async (context) => {
+		hookSettings();
+		const { tenantId, requestId, principal, role } = context.var;
+		const hookId = context.req.param('id');
+		const match: HookMatch = role === 'owner' ? { hookId } : { hookId, userId: principal.userId };
+		if ((await deleteHooks(routing, tenantId, match)) === 0)
+			throw new ApiError('NOT_FOUND', 'Hook not found.');
+		console.log(JSON.stringify({ event: 'hook_deleted', requestId, hookId }));
+		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
 	});
 
 	function automationFeatures(): AutomationFeatures {
@@ -2013,6 +2105,8 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	app.all('/webhooks/:id/secret', (context) => methodNotAllowed(context, 'POST'));
 	app.all('/webhooks/:id/test', (context) => methodNotAllowed(context, 'POST'));
 	app.all('/webhooks/:id/deliveries', (context) => methodNotAllowed(context, 'GET'));
+	app.all('/hooks', (context) => methodNotAllowed(context, 'POST'));
+	app.all('/hooks/:id', (context) => methodNotAllowed(context, 'DELETE'));
 	app.all('/automations', (context) => methodNotAllowed(context, 'GET, POST'));
 	app.all('/automations/:id', (context) => methodNotAllowed(context, 'PATCH, DELETE'));
 	app.all('/automations/:id/links', (context) => methodNotAllowed(context, 'POST'));
@@ -2026,19 +2120,29 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 
 // A suspended workspace keeps what takes nothing new: the dashboard reads its data, a person
 // may end a token or connected app, the owner may remove a member, a webhook endpoint, or an
-// automation, a member may take an automation off a link, and a member may leave. A token or
-// connected app may only export.
+// automation, a member may take an automation off a link or delete a hook, and a member may
+// leave. A token or connected app may only export and delete a hook.
 function allowedWhileSuspended(principal: ApiPrincipal, method: string, path: string): boolean {
 	const read = method === 'GET' || method === 'HEAD';
 	if (principal.kind === 'session')
 		return (
 			read ||
 			(method === 'DELETE' &&
-				(/^\/v1\/(?:tokens|connected-apps|members|webhooks|automations)\/[^/]+$/.test(path) ||
+				(/^\/v1\/(?:tokens|connected-apps|members|webhooks|automations|hooks)\/[^/]+$/.test(path) ||
 					/^\/v1\/links\/[^/]+\/automations\/[^/]+$/.test(path))) ||
 			(method === 'POST' && path === '/v1/workspace/leave')
 		);
-	return read && (path.startsWith('/v1/export/') || path === '/v1/me');
+	return (
+		(read && (path.startsWith('/v1/export/') || path === '/v1/me')) ||
+		(method === 'DELETE' && /^\/v1\/hooks\/[^/]+$/.test(path))
+	);
+}
+
+// The credential a hook was made with, so revoking it deletes the hook.
+function hookCredential(principal: ApiPrincipal): string {
+	if (principal.kind === 'token') return `token:${principal.token.id}`;
+	if (principal.kind === 'oauth') return `oauth:${principal.clientId}`;
+	return 'session';
 }
 
 // A session holds every scope; a token or connected app must hold the route's scope. Each

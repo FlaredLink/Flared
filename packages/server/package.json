@@ -43,6 +43,7 @@
 		"./icons": "./src/icons.ts",
 		"./events": "./src/events.ts",
 		"./webhooks": "./src/webhooks/deliver.ts",
+		"./webhooks/hooks": "./src/webhooks/hooks.ts",
 		"./webhooks/signing": "./src/webhooks/signing.ts",
 		"./automations": "./src/automations/jobs.ts",
 		"./automations/notices": "./src/automations/notices.ts"

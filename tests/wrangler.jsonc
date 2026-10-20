@@ -447,6 +447,26 @@
 			"binding": "FORWARDING_ANALYTICS",
 			"database_name": "forwarding-analytics",
 			"database_id": "00000000-0000-0000-0000-000000000112"
+		},
+		{
+			"binding": "HOOKS_IDENTITY",
+			"database_name": "hooks-identity",
+			"database_id": "00000000-0000-0000-0000-000000000113"
+		},
+		{
+			"binding": "HOOKS_ROUTING",
+			"database_name": "hooks-routing",
+			"database_id": "00000000-0000-0000-0000-000000000114"
+		},
+		{
+			"binding": "HOOKS_ANALYTICS",
+			"database_name": "hooks-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000115"
+		},
+		{
+			"binding": "HOOKS_MIGRATION",
+			"database_name": "hooks-migration",
+			"database_id": "00000000-0000-0000-0000-000000000116"
 		}
 	]
 }

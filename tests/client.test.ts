@@ -57,6 +57,10 @@ function api() {
 			reservedHostnames: ['brand.dev']
 		},
 		automations: { email: false, destinationChecks: false },
+		webhooks: {
+			secret: 'test-only-client-webhook-secret',
+			hooks: { allowedHosts: ['hooks.zapier.com'] }
+		},
 		authenticate: async (request) => {
 			if (request.headers.has('authorization'))
 				return authenticateBearer(auth, identity(), request);
@@ -201,7 +205,8 @@ beforeAll(async () => {
 			monthlyClickLimit: 5000,
 			retentionDays: 30,
 			domainLimit: 1,
-			automationLimit: 5
+			automationLimit: 5,
+			webhookEndpointLimit: 5
 		},
 		now: 1
 	});
@@ -291,6 +296,39 @@ describe('API client', () => {
 		expect(again).toEqual(run);
 		const refused = await failureOf(client(readOnly).importLinks({ dryRun: true, items }));
 		expect(refused.code).toBe('INSUFFICIENT_SCOPE');
+	});
+
+	it('subscribes a hook and deletes it', async () => {
+		const headers = { authorization: `Bearer ${full}`, 'content-type': 'application/json' };
+		const created = await inProcess(`${baseUrl}/hooks`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify({
+				event: 'link.created',
+				targetUrl: 'https://hooks.zapier.com/hooks/standard/1/client/'
+			})
+		});
+		expect(created.status).toBe(201);
+		const { hook } = (await created.json()) as { hook: { id: string } };
+		// The hook names the token's ID, the one DELETE /v1/tokens/{id} takes.
+		const me = await client().me();
+		if (me.kind !== 'token') throw new Error('Expected a token identity');
+		const row = await routing()
+			.prepare('SELECT target FROM webhook_endpoints WHERE id = ?')
+			.bind(hook.id)
+			.first<{ target: string }>();
+		expect(JSON.parse(row?.target ?? 'null')).toEqual({
+			userId: 'user-1',
+			credential: `token:${me.token.id}`
+		});
+		const listed = await api().fetch(
+			new Request(`${baseUrl}/tokens`, { headers: { 'x-test-user': 'user-1' } })
+		);
+		const tokens = ((await listed.json()) as { tokens: { id: string }[] }).tokens;
+		expect(tokens.map((item) => item.id)).toContain(me.token.id);
+		const path = `${baseUrl}/hooks/${hook.id}`;
+		expect((await inProcess(path, { method: 'DELETE', headers })).status).toBe(204);
+		expect((await inProcess(path, { method: 'DELETE', headers })).status).toBe(404);
 	});
 
 	it('lists automations, applies one to links, and takes it off again', async () => {

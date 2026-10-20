@@ -63,6 +63,10 @@ declare namespace Cloudflare {
 		FORWARDING_IDENTITY: D1Database;
 		FORWARDING_ROUTING: D1Database;
 		FORWARDING_ANALYTICS: D1Database;
+		HOOKS_IDENTITY: D1Database;
+		HOOKS_ROUTING: D1Database;
+		HOOKS_ANALYTICS: D1Database;
+		HOOKS_MIGRATION: D1Database;
 		ICONS_IDENTITY: D1Database;
 		ICONS_ROUTING: D1Database;
 		ICONS_ANALYTICS: D1Database;

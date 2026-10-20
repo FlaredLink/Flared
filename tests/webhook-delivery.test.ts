@@ -902,7 +902,7 @@ describe('scheduled job', () => {
 
 		counter.queries = 0;
 		await cleanupWebhooks(counting(routing(), counter), clock);
-		expect(counter.queries).toBe(3);
+		expect(counter.queries).toBe(5);
 	});
 
 	it('leaves click milestones on the shards when the automation job moves them', async () => {

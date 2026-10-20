@@ -581,6 +581,8 @@ describe('roles', () => {
 		['POST', '/webhooks/:id/test', 'owner'],
 		['GET', '/webhooks/:id/deliveries', 'owner'],
 		['GET', '/automations', 'member'],
+		['POST', '/hooks', 'member'],
+		['DELETE', '/hooks/:id', 'member'],
 		['POST', '/automations', 'owner'],
 		['PATCH', '/automations/:id', 'owner'],
 		['DELETE', '/automations/:id', 'owner'],

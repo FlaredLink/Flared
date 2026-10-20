@@ -119,6 +119,28 @@ export interface WebhookDeliveryPage {
 	deliveries: WebhookDelivery[];
 }
 
+// A REST hook as the API returns it. Subscribe again after renewAt; the hook gets no event that
+// happens at or after expiresAt.
+export interface Hook {
+	id: string;
+	event: SubscribableWebhookEvent;
+	// Set for link.click_milestone: the hook gets every milestone that this number divides.
+	milestoneInterval: number | null;
+	createdAt: string;
+	renewAt: string;
+	expiresAt: string;
+}
+
+export interface CreatedHook {
+	hook: Hook;
+}
+
+export interface CreateHookInput {
+	event: SubscribableWebhookEvent;
+	targetUrl: string;
+	milestoneInterval: number | null;
+}
+
 // The body of each delivery. id is the webhook-id header; timestamp is when the event happened.
 export interface WebhookEnvelope<Data = WebhookEventData> {
 	id: string;
@@ -224,6 +246,18 @@ export function parseWebhookUrl(
 	return url.href;
 }
 
+// A hook target: a webhook URL whose hostname is one the installation accepts hooks for.
+export function parseHookUrl(
+	value: unknown,
+	allowedHosts: readonly string[],
+	field = 'targetUrl'
+): string {
+	const href = parseWebhookUrl(value, [], field);
+	if (!allowedHosts.includes(new URL(href).hostname))
+		throw new LinkInputError(field, 'Use a target URL on a host that Flared sends hooks to.');
+	return href;
+}
+
 export function parseMilestoneInterval(value: unknown): number {
 	if (
 		typeof value !== 'number' ||
@@ -312,6 +346,24 @@ export function parseCreateWebhook(
 		url: parseWebhookUrl(body.url, reservedHostnames),
 		events,
 		milestoneInterval: events.includes('link.click_milestone') ? interval : null
+	};
+}
+
+// A hook for link.click_milestone without an interval gets the default one; another event keeps
+// none.
+export function parseCreateHook(value: unknown, allowedHosts: readonly string[]): CreateHookInput {
+	const body = record(value);
+	onlyFields(body, ['event', 'targetUrl', 'milestoneInterval']);
+	if (!isSubscribableWebhookEvent(body.event))
+		throw new LinkInputError('event', `Use one of: ${subscribableWebhookEvents.join(', ')}.`);
+	const interval =
+		body.milestoneInterval === undefined || body.milestoneInterval === null
+			? defaultMilestoneInterval
+			: parseMilestoneInterval(body.milestoneInterval);
+	return {
+		event: body.event,
+		targetUrl: parseHookUrl(body.targetUrl, allowedHosts),
+		milestoneInterval: body.event === 'link.click_milestone' ? interval : null
 	};
 }
 

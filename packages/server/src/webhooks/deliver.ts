@@ -13,6 +13,7 @@ import {
 } from '@flared/contracts/webhooks';
 import {
 	claimWebhookDeliveries,
+	deleteEndedHooks,
 	deleteOldWebhookRecords,
 	expireWebhookDeliveries,
 	fanOutWebhookEvents,
@@ -419,13 +420,14 @@ export async function runWebhookJob(
 	return { ...summarize(results), milestones, events: fanned.events };
 }
 
-// The daily run: deliveries pending past 72 hours fail as expired, and deliveries and events
-// past 30 days are deleted. 3 statements.
+// The daily run: deliveries pending past 72 hours fail as expired, deliveries and events past 30
+// days are deleted, and so are hooks that have ended. 5 statements.
 export async function cleanupWebhooks(
 	routing: D1Database,
 	now: number
-): Promise<{ expired: number; deleted: number }> {
+): Promise<{ expired: number; deleted: number; hooks: number }> {
 	const expired = await expireWebhookDeliveries(routing, now, cleanupBatch);
 	const deleted = await deleteOldWebhookRecords(routing, now, cleanupBatch);
-	return { expired, deleted };
+	const hooks = await deleteEndedHooks(routing, now, cleanupBatch);
+	return { expired, deleted, hooks };
 }
