@@ -28,6 +28,7 @@
 		"./oauth": "./src/oauth/routes.ts",
 		"./oauth/provider": "./src/oauth/provider.ts",
 		"./oauth/handler": "./src/oauth/handler.ts",
+		"./oauth/clients": "./src/oauth/clients.ts",
 		"./mcp": "./src/mcp.ts",
 		"./domains": "./src/domains.ts",
 		"./worker-domains": "./src/worker-domains.ts",

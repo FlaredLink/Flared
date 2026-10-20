@@ -9,10 +9,30 @@ import { setLinkBlock } from '../packages/data/src/links';
 import { createWebhookEndpoint } from '../packages/data/src/webhooks';
 import { createAutomation } from '../packages/data/src/automations';
 import { keyId } from '../packages/server/src/webhooks/signing';
-import { deleteGrant, deleteExpiredOAuthRecords } from '../packages/data/src/oauth';
+import {
+	deleteGrant,
+	deleteExpiredOAuthRecords,
+	disableOperatorClient,
+	listOperatorClients
+} from '../packages/data/src/oauth';
 import { projectPolicy } from '../packages/server/src/tenancy';
 import { reinstateTenant, suspendTenant } from '../packages/server/src/operator';
-import { createApi, type ApiPrincipal } from '../packages/server/src/api';
+import {
+	authenticateBearer,
+	createApi,
+	oauthApiCallsPerMinute,
+	type ApiPrincipal
+} from '../packages/server/src/api';
+import { bearerChallenge } from '../packages/server/src/api/compose';
+import { createTokenAuth } from '../packages/server/src/auth/api-tokens';
+import { apiProtectedResourceDocument } from '../packages/server/src/oauth/handler';
+import {
+	registerOperatorClient,
+	type OperatorClientAuthMethod,
+	type RegisteredClient
+} from '../packages/server/src/oauth/clients';
+import { openApiDocument } from '../packages/contracts/src/openapi';
+import { tokenScopes } from '../packages/contracts/src/tokens';
 import type { DomainProvider } from '../packages/server/src/domains';
 import { qrPng } from '../packages/client/src/qr';
 import type { ProductEvent } from '../packages/server/src/events';
@@ -30,6 +50,7 @@ import { counting } from './support/d1-count';
 
 const origin = 'https://app.example';
 const resource = 'https://api.example/mcp';
+const apiResource = 'https://api.example/v1';
 const secret = 'test-only-auth-secret-at-least-thirty-two-characters';
 const identity = () => env.OAUTH_IDENTITY;
 const routing = () => env.OAUTH_ROUTING;
@@ -62,6 +83,7 @@ const config: OAuthServerConfig = {
 	origin,
 	secret,
 	resource,
+	apiResource,
 	loginPath: '/app/login',
 	consentPath: '/app/oauth/consent',
 	async fetchClientMetadata(input) {
@@ -867,6 +889,7 @@ describe('connected apps API', () => {
 		expect(foreign.status).toBe(404);
 		const fromApp = await api({
 			kind: 'oauth',
+			channel: 'mcp' as const,
 			userId: 'user-3',
 			tenantId: 'tenant-3',
 			scopes: ['links:read'],
@@ -1907,5 +1930,357 @@ describe('MCP endpoint', () => {
 			.bind(unused, kept.clientId)
 			.all<{ clientId: string }>();
 		expect(remaining.results.map((row) => row.clientId)).toEqual([kept.clientId]);
+	});
+});
+
+describe('REST API with OAuth', () => {
+	beforeAll(async () => {
+		for (let n = 1; n <= 6; n += 1) await addTenant(`user-api-${n}`, `tenant-api-${n}`);
+	});
+	const apiRedirect = 'https://automation.example/oauth/return';
+	const restApi = () =>
+		createApi({
+			identity: identity(),
+			routing: routing(),
+			analytics: { 'analytics-1': env.OAUTH_ANALYTICS },
+			appOrigin: origin,
+			authenticate: (request) =>
+				authenticateBearer(createTokenAuth(identity(), origin, secret), identity(), request, {
+					resource: apiResource
+				}),
+			challenge: bearerChallenge(apiResource),
+			events
+		});
+	const v1 = (token: string, path: string, init: RequestInit = {}) =>
+		restApi().fetch(
+			new Request(`${apiResource}${path}`, {
+				...init,
+				headers: { authorization: `Bearer ${token}`, ...init.headers }
+			})
+		);
+
+	const registerApiClient = (authMethod: OperatorClientAuthMethod = 'client_secret_post') =>
+		registerOperatorClient(identity(), config, {
+			name: 'Automation',
+			redirectUri: apiRedirect,
+			authMethod
+		});
+
+	// A token request that authenticates the client with its method.
+	function tokenRequest(
+		client: RegisteredClient,
+		method: OperatorClientAuthMethod,
+		fields: Record<string, string>,
+		secretValue = client.clientSecret
+	): Request {
+		const headers: Record<string, string> = {
+			'content-type': 'application/x-www-form-urlencoded'
+		};
+		const body = new URLSearchParams(fields);
+		if (method === 'client_secret_basic')
+			headers.authorization = `Basic ${btoa(`${client.clientId}:${secretValue}`)}`;
+		else {
+			body.set('client_id', client.clientId);
+			body.set('client_secret', secretValue);
+		}
+		return new Request(`${origin}/oauth2/token`, { method: 'POST', headers, body });
+	}
+
+	async function apiFlow(userId: string, client: RegisteredClient, scope?: string): Promise<Flow> {
+		const flow = await startFlow(userId, {
+			clientId: client.clientId,
+			redirect: apiRedirect,
+			scope
+		});
+		flow.query.set('resource', apiResource);
+		return flow;
+	}
+
+	async function connectApi(
+		userId: string,
+		options: { method?: OperatorClientAuthMethod; scope?: string; client?: RegisteredClient } = {}
+	) {
+		const method = options.method ?? 'client_secret_post';
+		const client = options.client ?? (await registerApiClient(method));
+		const flow = await apiFlow(userId, client, options.scope);
+		const code = (await approve(flow)).searchParams.get('code') ?? '';
+		const response = await oauth().fetch(
+			tokenRequest(client, method, {
+				grant_type: 'authorization_code',
+				code,
+				code_verifier: flow.verifier,
+				redirect_uri: apiRedirect
+			})
+		);
+		expect(response.status).toBe(200);
+		return { client, method, flow, tokens: (await response.json()) as Tokens };
+	}
+
+	it('registers a confidential client linked to the REST API only', async () => {
+		const client = await registerApiClient('client_secret_basic');
+		expect(client.clientSecret.length).toBeGreaterThanOrEqual(32);
+		const stored = await identity()
+			.prepare('SELECT clientSecret FROM oauthClient WHERE clientId = ?')
+			.bind(client.clientId)
+			.first<{ clientSecret: string }>();
+		expect(stored?.clientSecret).not.toContain(client.clientSecret);
+		const listed = (await listOperatorClients(identity())).find(
+			(entry) => entry.clientId === client.clientId
+		);
+		expect(listed).toMatchObject({
+			name: 'Automation',
+			redirectUris: [apiRedirect],
+			authMethod: 'client_secret_basic',
+			resources: [apiResource],
+			disabled: false
+		});
+	});
+
+	for (const method of ['client_secret_post', 'client_secret_basic'] as const)
+		it(`connects with ${method}, reads /v1/me, and refreshes`, async () => {
+			const { client, tokens } = await connectApi('user-api-1', { method });
+			const me = await v1(tokens.access_token, '/me');
+			expect(me.status).toBe(200);
+			expect(await me.json()).toMatchObject({
+				kind: 'oauth',
+				workspace: { id: 'tenant-api-1', role: 'owner' },
+				scopes: ['links:read', 'links:write', 'analytics:read', 'usage:read']
+			});
+			const refreshed = await oauth().fetch(
+				tokenRequest(client, method, {
+					grant_type: 'refresh_token',
+					refresh_token: tokens.refresh_token
+				})
+			);
+			expect(refreshed.status).toBe(200);
+			const next = (await refreshed.json()) as Tokens;
+			expect((await v1(next.access_token, '/me')).status).toBe(200);
+		});
+
+	it('refuses a wrong or missing client secret and an authorization without PKCE', async () => {
+		const client = await registerApiClient();
+		// A fresh code for each attempt: a refused exchange may use up its code.
+		const codeFields = async () => {
+			const flow = await apiFlow('user-api-1', client);
+			return {
+				grant_type: 'authorization_code',
+				code: (await approve(flow)).searchParams.get('code') ?? '',
+				code_verifier: flow.verifier,
+				redirect_uri: apiRedirect
+			};
+		};
+		const wrong = await oauth().fetch(
+			tokenRequest(client, 'client_secret_post', await codeFields(), 'x'.repeat(32))
+		);
+		expect(wrong.status).toBe(400);
+		expect(await wrong.json()).toMatchObject({ error: 'invalid_client' });
+		const missing = await oauth().fetch(
+			form({ ...(await codeFields()), client_id: client.clientId })
+		);
+		expect(missing.status).toBe(400);
+		expect(await missing.json()).toMatchObject({ error: 'invalid_client' });
+		const unproven = await apiFlow('user-api-1', client);
+		unproven.query.delete('code_challenge');
+		unproven.query.delete('code_challenge_method');
+		const location = new URL((await authorize(unproven)).headers.get('location') ?? '', origin);
+		expect(location.origin + location.pathname).toBe(apiRedirect);
+		expect(location.searchParams.get('error')).toBe('invalid_request');
+		expect(location.searchParams.has('code')).toBe(false);
+	});
+
+	it('applies the granted scopes on /v1', async () => {
+		const { tokens } = await connectApi('user-api-1', { scope: 'links:read offline_access' });
+		expect((await v1(tokens.access_token, '/links')).status).toBe(200);
+		const write = await v1(tokens.access_token, '/links', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json', 'idempotency-key': 'scope-check' },
+			body: JSON.stringify({ destination: 'https://example.com/scope' })
+		});
+		expect(write.status).toBe(403);
+		expect(await write.json()).toMatchObject({ error: { code: 'INSUFFICIENT_SCOPE' } });
+	});
+
+	it('acts only in the granted workspace and records links under the api channel', async () => {
+		const own = await connectApi('user-api-2');
+		const created = await v1(own.tokens.access_token, '/links', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json', 'idempotency-key': 'isolation-1' },
+			body: JSON.stringify({ destination: 'https://example.com/isolation' })
+		});
+		expect(created.status).toBe(201);
+		const { link } = (await created.json()) as { link: { id: string } };
+		expect(productEvents).toContainEqual({
+			type: 'link_created',
+			userId: 'user-api-2',
+			tenantId: 'tenant-api-2',
+			channel: 'api'
+		});
+		const other = await connectApi('user-api-1');
+		expect((await v1(other.tokens.access_token, `/links/${link.id}`)).status).toBe(404);
+		const change = await v1(other.tokens.access_token, `/links/${link.id}`, {
+			method: 'PATCH',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ destination: 'https://example.com/taken' })
+		});
+		expect(change.status).toBe(404);
+		expect((await v1(own.tokens.access_token, `/links/${link.id}`)).status).toBe(200);
+	});
+
+	it('answers 401 with the metadata challenge after revocation, expiry, or leaving the workspace', async () => {
+		const challenge = `Bearer resource_metadata="https://api.example/.well-known/oauth-protected-resource/v1"`;
+		const revoked = await connectApi('user-api-3');
+		expect((await v1(revoked.tokens.access_token, '/me')).status).toBe(200);
+		await deleteGrant(identity(), 'user-api-3', 'tenant-api-3', revoked.client.clientId);
+		const afterRevoke = await v1(revoked.tokens.access_token, '/me');
+		expect(afterRevoke.status).toBe(401);
+		expect(afterRevoke.headers.get('www-authenticate')).toBe(challenge);
+
+		const expired = await connectApi('user-api-3');
+		await identity()
+			.prepare('UPDATE oauthAccessToken SET expiresAt = 0 WHERE clientId = ?')
+			.bind(expired.client.clientId)
+			.run();
+		expect((await v1(expired.tokens.access_token, '/me')).status).toBe(401);
+
+		const departed = await connectApi('user-api-5');
+		expect((await v1(departed.tokens.access_token, '/me')).status).toBe(200);
+		await identity().prepare("DELETE FROM tenant_memberships WHERE user_id = 'user-api-5'").run();
+		expect((await v1(departed.tokens.access_token, '/me')).status).toBe(401);
+	});
+
+	it('answers a suspended workspace as for an API token', async () => {
+		const { tokens } = await connectApi('user-api-4');
+		const operator = { kind: 'operator', id: 'test-operator' } as const;
+		const stores = { routing: routing(), analytics: { 'analytics-1': env.OAUTH_ANALYTICS } };
+		await suspendTenant(identity(), stores, operator, {
+			tenantId: 'tenant-api-4',
+			reason: 'spam',
+			now: Date.now()
+		});
+		const links = await v1(tokens.access_token, '/links');
+		expect(links.status).toBe(403);
+		expect(await links.json()).toMatchObject({ error: { code: 'WORKSPACE_SUSPENDED' } });
+		expect((await v1(tokens.access_token, '/me')).status).toBe(200);
+		await reinstateTenant(identity(), stores, operator, {
+			tenantId: 'tenant-api-4',
+			now: Date.now()
+		});
+		expect((await v1(tokens.access_token, '/links')).status).toBe(200);
+	});
+
+	it('keeps MCP tokens and REST API tokens apart', async () => {
+		const assistant = await connect('user-api-6');
+		expect((await call(assistant.tokens.access_token, 'get_usage')).status).toBe(200);
+		expect((await v1(assistant.tokens.access_token, '/me')).status).toBe(401);
+		const automation = await connectApi('user-api-6');
+		expect((await v1(automation.tokens.access_token, '/me')).status).toBe(200);
+		expect((await call(automation.tokens.access_token, 'get_usage')).status).toBe(401);
+	});
+
+	it('refuses the REST API resource to an openly registered client', async () => {
+		const flow = await startFlow('user-api-6');
+		flow.query.set('resource', apiResource);
+		const location = new URL((await authorize(flow)).headers.get('location') ?? '', origin);
+		expect(location.origin + location.pathname).toBe(redirectUri);
+		expect(location.searchParams.get('error')).toBe('invalid_target');
+		expect(location.searchParams.has('code')).toBe(false);
+	});
+
+	it('limits calls per grant', async () => {
+		const { tokens } = await connectApi('user-api-6');
+		const responses = await Promise.all(
+			Array.from({ length: oauthApiCallsPerMinute + 5 }, () => v1(tokens.access_token, '/me'))
+		);
+		const limited = responses.filter((response) => response.status === 429);
+		expect(limited.length).toBeGreaterThanOrEqual(5);
+		expect(Number(limited[0].headers.get('retry-after'))).toBeGreaterThan(0);
+		expect(responses.filter((response) => response.status === 200)).toHaveLength(
+			responses.length - limited.length
+		);
+	});
+
+	it('stops a disabled client at once and refuses its refresh', async () => {
+		const { client, method, tokens } = await connectApi('user-api-1');
+		expect(await disableOperatorClient(identity(), client.clientId)).toBe(true);
+		expect((await v1(tokens.access_token, '/me')).status).toBe(401);
+		const refresh = await oauth().fetch(
+			tokenRequest(client, method, {
+				grant_type: 'refresh_token',
+				refresh_token: tokens.refresh_token
+			})
+		);
+		expect(refresh.status).toBeGreaterThanOrEqual(400);
+		expect(refresh.status).toBeLessThan(500);
+		expect(await disableOperatorClient(identity(), 'not-an-operator-client')).toBe(false);
+	});
+
+	it('rotates once for 10 concurrent refreshes and replays the answer to a retry', async () => {
+		const { client, method, tokens } = await connectApi('user-api-1');
+		const refresh = () =>
+			oauth().fetch(
+				tokenRequest(client, method, {
+					grant_type: 'refresh_token',
+					refresh_token: tokens.refresh_token
+				})
+			);
+		const responses = await Promise.all(Array.from({ length: 10 }, refresh));
+		const issued = new Set<string>();
+		for (const response of responses)
+			if (response.status === 200) issued.add(((await response.json()) as Tokens).refresh_token);
+			else expect(response.status).toBe(400);
+		expect(issued.size).toBe(1);
+		const retry = await refresh();
+		expect(retry.status).toBe(200);
+		expect(((await retry.json()) as Tokens).refresh_token).toBe([...issued][0]);
+	});
+
+	it('keeps operator clients through cleanup while nobody has connected', async () => {
+		const client = await registerApiClient();
+		// An open registration cannot mark itself as the operator's.
+		const registered = await oauth().fetch(
+			new Request(`${origin}/oauth2/register`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json', 'x-test-source': 'source-marker' },
+				body: JSON.stringify({
+					redirect_uris: [redirectUri],
+					token_endpoint_auth_method: 'none',
+					client_name: 'Marker',
+					metadata: { registration: 'operator' }
+				})
+			})
+		);
+		expect(registered.status).toBe(201);
+		const open = String(((await registered.json()) as Record<string, unknown>).client_id);
+		expect((await listOperatorClients(identity())).map((entry) => entry.clientId)).not.toContain(
+			open
+		);
+		await identity()
+			.prepare('UPDATE oauthClient SET createdAt = 0 WHERE clientId IN (?, ?)')
+			.bind(client.clientId, open)
+			.run();
+		await deleteExpiredOAuthRecords(identity(), Date.now(), 1000);
+		const remaining = await identity()
+			.prepare('SELECT clientId FROM oauthClient WHERE clientId IN (?, ?)')
+			.bind(client.clientId, open)
+			.all<{ clientId: string }>();
+		expect(remaining.results.map((row) => row.clientId)).toEqual([client.clientId]);
+	});
+
+	it('publishes RFC 9728 metadata for /v1 and describes the oauth identity in OpenAPI 1.8.0', async () => {
+		const response = apiProtectedResourceDocument(
+			new Request('https://api.example/.well-known/oauth-protected-resource/v1'),
+			apiResource,
+			origin
+		);
+		expect(await response.json()).toEqual({
+			resource: apiResource,
+			authorization_servers: [origin],
+			scopes_supported: [...tokenScopes],
+			bearer_methods_supported: ['header'],
+			resource_name: 'Flared'
+		});
+		const document = openApiDocument('https://api.example/v1');
+		expect(document.info.version).toBe('1.8.0');
+		expect(JSON.stringify(document.components.schemas.Identity)).toContain('"oauth"');
 	});
 });

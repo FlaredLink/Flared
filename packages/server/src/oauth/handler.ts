@@ -9,10 +9,11 @@ import {
 	protectedResourceMetadata,
 	type McpEndpointOptions
 } from '../mcp';
+import { tokenScopes } from '@flared/contracts/tokens';
 import { authResponseHeaders } from '../web/forward';
 import { keyedHash } from '../auth/limits';
 import type { IdentityRule } from '../auth/session';
-import { createMetadataFetch } from './provider';
+import { createMetadataFetch, type OAuthServerConfig } from './provider';
 import { createOAuthRoutes } from './routes';
 import type { ProductEvents } from '../events';
 
@@ -27,6 +28,9 @@ export interface OAuthSite {
 	rateLimitSecret: string;
 	// The MCP endpoint URL that tokens are bound to.
 	resource: string;
+	// The REST API URL, such as https://api.flared.page/v1, for clients the operator registers.
+	// Without it, no client can get a token for the REST API.
+	apiResource?: string;
 	// Who may hold a session in this edition.
 	identityRule: IdentityRule;
 	// The edition's product analytics. Without it, no event is recorded.
@@ -50,18 +54,24 @@ async function sourceKey(secret: string, request: Request): Promise<string | nul
 	return keyedHash(secret, `oauth-source:${address}`);
 }
 
+// The authorization server configuration of an edition.
+export function oauthServerConfig(site: OAuthSite): OAuthServerConfig {
+	return {
+		origin: site.origin,
+		secret: site.secret,
+		resource: site.resource,
+		apiResource: site.apiResource,
+		loginPath,
+		consentPath,
+		fetchClientMetadata: createMetadataFetch()
+	};
+}
+
 // The authorization server routes on the app origin.
 export function handleOAuth(request: Request, site: OAuthSite, identity: D1Database) {
 	return createOAuthRoutes({
 		db: identity,
-		config: {
-			origin: site.origin,
-			secret: site.secret,
-			resource: site.resource,
-			loginPath,
-			consentPath,
-			fetchClientMetadata: createMetadataFetch()
-		},
+		config: oauthServerConfig(site),
 		sourceKey: (incoming) => sourceKey(site.rateLimitSecret, incoming),
 		identityRule: site.identityRule,
 		events: site.events
@@ -87,6 +97,15 @@ export function protectedResourceDocument(
 	issuer: string
 ): Response {
 	return discoveryDocument(request, protectedResourceMetadata(resource, issuer));
+}
+
+// RFC 9728 metadata of the REST API, with every token scope.
+export function apiProtectedResourceDocument(
+	request: Request,
+	apiResource: string,
+	issuer: string
+): Response {
+	return discoveryDocument(request, protectedResourceMetadata(apiResource, issuer, tokenScopes));
 }
 
 // /.well-known/mcp/server-card.json

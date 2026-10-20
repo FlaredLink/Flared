@@ -187,8 +187,83 @@ export function countMcpCall(
 	return countWindow(db, 'mcp_call_windows', 'grant_key', grantKey, now, 60_000, limit);
 }
 
+// Counts one REST API call for a grant per minute, in the same table under its own key.
+export function countApiCall(
+	db: D1Database,
+	grantKey: string,
+	now: number,
+	limit: number
+): Promise<WindowCount> {
+	return countWindow(db, 'mcp_call_windows', 'grant_key', `v1:${grantKey}`, now, 60_000, limit);
+}
+
+export interface OperatorClient {
+	clientId: string;
+	name: string;
+	redirectUris: string[];
+	authMethod: string;
+	resources: string[];
+	disabled: boolean;
+	createdAt: number;
+}
+
+// Records a just-registered client as the operator's and links it to the given resource only.
+export async function claimOperatorClient(
+	db: D1Database,
+	clientId: string,
+	resource: string,
+	now: number
+): Promise<void> {
+	await db.batch([
+		db
+			.prepare('INSERT INTO oauth_operator_clients (client_id, created_at) VALUES (?, ?)')
+			.bind(clientId, now),
+		db.prepare('DELETE FROM "oauthClientResource" WHERE "clientId" = ?').bind(clientId),
+		db
+			.prepare(
+				'INSERT INTO "oauthClientResource" ("id", "clientId", "resourceId", "createdAt") VALUES (?, ?, ?, ?)'
+			)
+			.bind(crypto.randomUUID(), clientId, resource, now)
+	]);
+}
+
+// The operator's clients, newest first.
+export async function listOperatorClients(db: D1Database): Promise<OperatorClient[]> {
+	const { results } = await db
+		.prepare(
+			`SELECT c."clientId", c."name", c."redirectUris", c."tokenEndpointAuthMethod", c."disabled",
+			c."createdAt", (SELECT json_group_array(r."resourceId") FROM "oauthClientResource" r
+				WHERE r."clientId" = c."clientId") AS "resources"
+			FROM "oauthClient" c JOIN oauth_operator_clients o ON o.client_id = c."clientId"
+			ORDER BY o.created_at DESC, c."id" DESC LIMIT 100`
+		)
+		.all<Record<string, unknown>>();
+	return results.map((row) => ({
+		clientId: text(row.clientId, 'client'),
+		name: typeof row.name === 'string' ? row.name : '',
+		redirectUris: list(row.redirectUris),
+		authMethod: text(row.tokenEndpointAuthMethod, 'auth method'),
+		resources: list(row.resources),
+		disabled: row.disabled === 1,
+		createdAt: number(row.createdAt, 'client time')
+	}));
+}
+
+// Turns off an operator client: its tokens stop working at once, and it cannot get new ones.
+// Returns false when no operator client has the ID.
+export async function disableOperatorClient(db: D1Database, clientId: string): Promise<boolean> {
+	const result = await db
+		.prepare(
+			'UPDATE "oauthClient" SET "disabled" = 1 WHERE "clientId" = ? AND "clientId" IN (SELECT client_id FROM oauth_operator_clients)'
+		)
+		.bind(clientId)
+		.run();
+	return result.meta.changes > 0;
+}
+
 // Removes expired tokens and assertions, request windows older than a day, and clients that
-// nobody consented to within a week of registration. Each statement deletes at most `limit`.
+// nobody consented to within a week of registration, except the operator's. Each statement
+// deletes at most `limit`.
 export async function deleteExpiredOAuthRecords(
 	db: D1Database,
 	now: number,
@@ -214,6 +289,7 @@ export async function deleteExpiredOAuthRecords(
 			.prepare(
 				`DELETE FROM "oauthClient" WHERE "id" IN (SELECT c."id" FROM "oauthClient" c
 				WHERE c."createdAt" <= ?
+				AND NOT EXISTS (SELECT 1 FROM oauth_operator_clients o WHERE o.client_id = c."clientId")
 				AND NOT EXISTS (SELECT 1 FROM "oauthConsent" g WHERE g."clientId" = c."clientId")
 				AND NOT EXISTS (SELECT 1 FROM "oauthRefreshToken" r WHERE r."clientId" = c."clientId")
 				AND NOT EXISTS (SELECT 1 FROM "oauthAccessToken" t WHERE t."clientId" = c."clientId")

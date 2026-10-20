@@ -17,13 +17,18 @@ export const accessTokenPrefix = 'flo_at_';
 export const refreshTokenPrefix = 'flo_rt_';
 export const accessTokenSeconds = 3600;
 export const refreshTokenSeconds = 30 * 86_400;
+export const refreshReuseSeconds = 30;
 
 export interface OAuthServerConfig {
 	// The exact application origin. It is the issuer, and the sign-in session lives there.
 	origin: string;
 	secret: string;
-	// The MCP endpoint, such as https://api.flared.page/mcp. Every token is bound to it.
+	// The MCP endpoint, such as https://api.flared.page/mcp. Open registration and client
+	// metadata documents link every new client to it.
 	resource: string;
+	// The REST API, such as https://api.flared.page/v1. Only clients that the operator registers
+	// are linked to it, so no other app can get a token for it.
+	apiResource?: string;
 	// Application pages, as paths on the origin.
 	loginPath: string;
 	consentPath: string;
@@ -93,6 +98,7 @@ export function createOAuthServer(
 		plugins: [
 			mcp({
 				resource: config.resource,
+				resources: config.apiResource ? [config.apiResource] : [],
 				loginPage: config.loginPath,
 				consentPage: config.consentPath,
 				scopes: [...oauthScopes],
@@ -100,6 +106,9 @@ export function createOAuthServer(
 				disableJwtPlugin: true,
 				accessTokenExpiresIn: accessTokenSeconds,
 				refreshTokenExpiresIn: refreshTokenSeconds,
+				// A retry of a refresh within this many seconds gets the same answer, so a client
+				// that sends two refreshes at once keeps its connection.
+				refreshTokenReuseInterval: refreshReuseSeconds,
 				codeExpiresIn: 300,
 				storeTokens: { hash: hashOAuthToken },
 				prefix: { opaqueAccessToken: accessTokenPrefix, refreshToken: refreshTokenPrefix },

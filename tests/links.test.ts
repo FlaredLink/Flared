@@ -243,7 +243,8 @@ describe('link creation', () => {
 						scopes,
 						token: { id: 'token-1', name: 'Test', start: 'flr_', expiresAt: null }
 					};
-				if (kind === 'oauth') return { kind: 'oauth', userId, tenantId, scopes, clientId: 'app-1' };
+				if (kind === 'oauth')
+					return { kind: 'oauth', userId, tenantId, scopes, clientId: 'app-1', channel: 'mcp' };
 				return {
 					kind: 'session',
 					sessionId: 'session-test',

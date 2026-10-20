@@ -116,7 +116,9 @@ export function identityReport(identity: ApiIdentity, apiUrl: string): string {
 					['Token', `${identity.token.name} (${identity.token.start}…)`],
 					['Expires', identity.token.expiresAt ? utc(identity.token.expiresAt) : 'never']
 				]
-			: [['Session', 'browser session']];
+			: identity.kind === 'oauth'
+				? [['Credential', 'OAuth access token']]
+				: [['Session', 'browser session']];
 	const workspace = identity.workspace
 		? [['Workspace', `${identity.workspace.name} (${identity.workspace.role})`]]
 		: [];

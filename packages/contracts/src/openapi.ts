@@ -31,7 +31,7 @@ import { tokenScopes, type TokenScope } from './tokens';
 // Duplicated from the client's QR module, which this package cannot import.
 const qrSizes = { minimum: 128, maximum: 2048, default: 512 };
 
-export const openApiVersion = '1.7.0';
+export const openApiVersion = '1.8.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const dateTime = { type: 'string', format: 'date-time' };
@@ -502,6 +502,14 @@ const schemas = {
 					start: { type: 'string', description: 'The prefix and first characters.' },
 					expiresAt: nullable(dateTime)
 				})
+			}),
+			object({
+				kind: { const: 'oauth' },
+				scopes: { type: 'array', items: ref('Scope') },
+				workspace: {
+					...ref('Workspace'),
+					description: 'The workspace the person chose when they connected the app.'
+				}
 			})
 		]
 	}
@@ -911,7 +919,11 @@ export function openApiDocument(serverUrl: string) {
 		},
 		components: {
 			securitySchemes: {
-				bearerAuth: { type: 'http', scheme: 'bearer', description: 'An API token (flr_…).' }
+				bearerAuth: {
+					type: 'http',
+					scheme: 'bearer',
+					description: 'An API token (flr_…), or an OAuth access token issued for this API.'
+				}
 			},
 			schemas
 		}

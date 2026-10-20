@@ -61,8 +61,9 @@ export interface ApiTokenIdentity {
 }
 // The workspace the credential acts in. Servers before this field omit it, so clients accept
 // an identity without it.
+// oauth: an app that the person connected through OAuth, acting in the workspace they chose.
 export type ApiIdentity = { scopes: TokenScope[]; workspace?: Workspace } & (
-	{ kind: 'session' } | { kind: 'token'; token: ApiTokenIdentity }
+	{ kind: 'session' } | { kind: 'token'; token: ApiTokenIdentity } | { kind: 'oauth' }
 );
 
 export interface ApiTokenPage {
@@ -132,7 +133,7 @@ export function isApiIdentity(value: unknown): value is ApiIdentity {
 	const identity = value as Record<string, unknown>;
 	if (!Array.isArray(identity.scopes) || !identity.scopes.every(isTokenScope)) return false;
 	if (identity.workspace !== undefined && !isWorkspace(identity.workspace)) return false;
-	if (identity.kind === 'session') return true;
+	if (identity.kind === 'session' || identity.kind === 'oauth') return true;
 	if (identity.kind !== 'token' || typeof identity.token !== 'object' || identity.token === null)
 		return false;
 	const token = identity.token as Record<string, unknown>;

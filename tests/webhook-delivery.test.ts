@@ -149,6 +149,7 @@ function api(
 			if (request.headers.has('x-test-oauth'))
 				return {
 					kind: 'oauth',
+					channel: 'mcp' as const,
 					userId,
 					tenantId: tenantOf[userId],
 					scopes: scopePresets.full,

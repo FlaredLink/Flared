@@ -5,6 +5,7 @@ import type { D1Database } from '@cloudflare/workers-types/index.ts';
 import { authenticateBearer, type ApiAuthentication } from '../api';
 import type { ApiTokenAuth } from '../auth/api-tokens';
 import type { AuthService } from '../web/forward';
+import { protectedResourceMetadataUrl } from '../mcp';
 
 export type ApiMode = 'session' | 'bearer';
 
@@ -58,14 +59,27 @@ export async function sessionPrincipal(
 	return { kind: 'session', userId, sessionId, signedInAt };
 }
 
-// The authenticate function of an API mode.
+// The authenticate function of an API mode. With apiResource, the bearer API also takes OAuth
+// access tokens bound to it.
 export function apiAuthenticator(
 	mode: ApiMode,
-	dependencies: { identity: D1Database; tokenAuth: ApiTokenAuth; auth: AuthService; origin: string }
+	dependencies: {
+		identity: D1Database;
+		tokenAuth: ApiTokenAuth;
+		auth: AuthService;
+		origin: string;
+		apiResource?: string;
+	}
 ): (request: Request) => Promise<ApiAuthentication> {
-	const { identity, tokenAuth, auth, origin } = dependencies;
+	const { identity, tokenAuth, auth, origin, apiResource } = dependencies;
+	const oauth = apiResource ? { resource: apiResource } : undefined;
 	return (request) =>
 		mode === 'bearer'
-			? authenticateBearer(tokenAuth, identity, request)
+			? authenticateBearer(tokenAuth, identity, request, oauth)
 			: sessionPrincipal(request, auth, origin);
+}
+
+// The WWW-Authenticate value of a 401 from the bearer API: where its RFC 9728 metadata is.
+export function bearerChallenge(apiResource: string): string {
+	return `Bearer resource_metadata="${protectedResourceMetadataUrl(apiResource)}"`;
 }

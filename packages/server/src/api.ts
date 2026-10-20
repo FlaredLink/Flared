@@ -88,7 +88,8 @@ import {
 import { defaultQrSize, maxQrSize, minQrSize, qrPng, qrSvg } from '@flared/client/qr';
 import { knownAssistant, type ConnectedApp, type ConnectedAppPage } from '@flared/contracts/oauth';
 import { accountDeletionRunning } from '@flared/data/deletions';
-import { deleteGrant, listGrants } from '@flared/data/oauth';
+import { countApiCall, deleteGrant, findAccessToken, listGrants } from '@flared/data/oauth';
+import { accessTokenPrefix, hashOAuthToken } from './oauth/provider';
 import {
 	countCreationAttempt,
 	releaseCreationWindow,
@@ -205,13 +206,15 @@ export type ApiPrincipal =
 			scopes: readonly TokenScope[];
 			token: ApiTokenIdentity;
 	  }
-	// An app connected through OAuth, such as an assistant calling the MCP endpoint in process.
+	// An app connected through OAuth: an assistant calling the MCP endpoint in process (mcp), or
+	// a client the operator registered calling the REST API (api).
 	| {
 			kind: 'oauth';
 			userId: string;
 			tenantId: string;
 			scopes: readonly TokenScope[];
 			clientId: string;
+			channel: 'mcp' | 'api';
 	  };
 
 export type ApiAuthentication =
@@ -226,6 +229,9 @@ export interface ApiDependencies {
 	appOrigin: string;
 	// Returns the request's principal, or null when it carries no valid credential.
 	authenticate(request: Request): Promise<ApiAuthentication>;
+	// The WWW-Authenticate value of a 401 answer, such as the bearer API's pointer to its RFC 9728
+	// metadata. Without it, a 401 has no challenge.
+	challenge?: string;
 	// Creates API tokens. Without it, token creation answers 503.
 	tokenAuth?: ApiTokenAuth;
 	// The public URL of this API from deployment configuration, such as
@@ -321,15 +327,53 @@ export interface IconSettings {
 	fetchesPerMinute?: number;
 }
 
+// REST API calls per OAuth grant and minute, as for an API token.
+export const oauthApiCallsPerMinute = 60;
+
+// An OAuth access token bound to the REST API resource. The API checks on every request that
+// the person still belongs to the grant's workspace.
+async function oauthPrincipal(
+	identity: D1Database,
+	token: string,
+	resource: string,
+	now: number
+): Promise<ApiAuthentication> {
+	if (token.length > 128) return null;
+	const stored = await findAccessToken(
+		identity,
+		await hashOAuthToken(token.slice(accessTokenPrefix.length), 'access_token'),
+		now
+	);
+	// The audience check: a token for the MCP endpoint does not work here.
+	if (!stored || !stored.resources.includes(resource)) return null;
+	const grantKey = `${stored.clientId}\u0000${stored.userId}\u0000${stored.tenantId}`;
+	const budget = await countApiCall(identity, grantKey, now, oauthApiCallsPerMinute);
+	if (!budget.allowed) return { kind: 'rate_limited', retryAfterSeconds: budget.retryAfterSeconds };
+	return {
+		kind: 'oauth',
+		userId: stored.userId,
+		tenantId: stored.tenantId,
+		scopes: stored.scopes.filter(isTokenScope),
+		clientId: stored.clientId,
+		channel: 'api'
+	};
+}
+
 // Reads "Authorization: Bearer <token>" only. Applications that accept tokens use this as
-// their authenticate function; cookies on the same request are ignored.
+// their authenticate function; cookies on the same request are ignored. With oauth, OAuth
+// access tokens bound to that REST API resource work too.
 export async function authenticateBearer(
 	tokenAuth: ApiTokenAuth,
 	identity: D1Database,
-	request: Request
+	request: Request,
+	oauth?: { resource: string; now?: () => number }
 ): Promise<ApiAuthentication> {
 	const match = /^Bearer +(\S+)$/i.exec(request.headers.get('authorization') ?? '');
 	if (!match) return null;
+	if (match[1].startsWith(accessTokenPrefix))
+		return oauth
+			? oauthPrincipal(identity, match[1], oauth.resource, (oauth.now ?? Date.now)())
+			: null;
 	const result = await verifyToken(tokenAuth, identity, match[1]);
 	if (result.status === 'valid') return { kind: 'token', ...result.principal };
 	if (result.status === 'rate_limited')
@@ -504,12 +548,12 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		const limit = error instanceof ApiError ? limitOfError[error.code] : undefined;
 		if (limit) await recordLimit(context, limit);
 		if (error instanceof ApiError)
-			return failure(
-				error.code,
-				error.message,
-				requestId,
-				error.retryAfterSeconds ? { 'retry-after': String(error.retryAfterSeconds) } : {}
-			);
+			return failure(error.code, error.message, requestId, {
+				...(error.retryAfterSeconds ? { 'retry-after': String(error.retryAfterSeconds) } : {}),
+				...(error.code === 'UNAUTHENTICATED' && dependencies.challenge
+					? { 'www-authenticate': dependencies.challenge }
+					: {})
+			});
 		if (error instanceof LinkInputError)
 			return failure('INVALID_INPUT', error.message, requestId, {}, error.field);
 		if (error instanceof AnalyticsRangeError)
@@ -890,15 +934,15 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	// Who is calling. Needs no scope, so a client can check any token.
 	app.get('/me', async (context) => {
 		const { principal, tenantId, role } = context.var;
-		if (principal.kind === 'oauth')
-			throw new ApiError('INSUFFICIENT_SCOPE', 'Connected apps cannot read this.');
 		const name = await readTenantName(identity, tenantId);
 		if (name === null) throw new ApiError('NOT_FOUND', 'Workspace not found.');
 		const workspace: Workspace = { id: tenantId, name, role };
 		const me: ApiIdentity =
 			principal.kind === 'token'
 				? { kind: 'token', scopes: [...principal.scopes], token: principal.token, workspace }
-				: { kind: 'session', scopes: [...roleScopes[role]], workspace };
+				: principal.kind === 'oauth'
+					? { kind: 'oauth', scopes: [...principal.scopes], workspace }
+					: { kind: 'session', scopes: [...roleScopes[role]], workspace };
 		return respond({ status: 200, body: JSON.stringify(me) });
 	});
 

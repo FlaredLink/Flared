@@ -45,6 +45,6 @@ export async function recordProductEvent(
 // The CLI names itself in its user agent (packages/cli). Any other token is an API client.
 export function linkChannel(principal: ApiPrincipal, userAgent: string | null): LinkChannel {
 	if (principal.kind === 'session') return 'web';
-	if (principal.kind === 'oauth') return 'mcp';
+	if (principal.kind === 'oauth') return principal.channel;
 	return userAgent?.startsWith('flared-cli/') ? 'cli' : 'api';
 }

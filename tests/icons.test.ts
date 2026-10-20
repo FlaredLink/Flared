@@ -375,6 +375,7 @@ describe('icon route', () => {
 						}
 					: {
 							kind: 'oauth',
+							channel: 'mcp' as const,
 							userId: 'icon-user',
 							tenantId: 'icon-tenant',
 							scopes: ['links:read'],

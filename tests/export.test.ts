@@ -100,6 +100,7 @@ const api = (scopes: TokenScope[] | null = null) =>
 				};
 			return {
 				kind: 'oauth',
+				channel: 'mcp' as const,
 				userId: `user-${name}`,
 				tenantId: `t-${name}`,
 				scopes,
