@@ -1938,6 +1938,8 @@ describe('REST API with OAuth', () => {
 		for (let n = 1; n <= 6; n += 1) await addTenant(`user-api-${n}`, `tenant-api-${n}`);
 	});
 	const apiRedirect = 'https://automation.example/oauth/return';
+	// A desktop app's redirect page, with a query as the Raycast one has.
+	const appRedirect = 'https://launcher.example/redirect?packageName=Extension';
 	const restApi = () =>
 		createApi({
 			identity: identity(),
@@ -1959,25 +1961,29 @@ describe('REST API with OAuth', () => {
 			})
 		);
 
+	const redirectFor = (method: OperatorClientAuthMethod) =>
+		method === 'none' ? appRedirect : apiRedirect;
 	const registerApiClient = (authMethod: OperatorClientAuthMethod = 'client_secret_post') =>
 		registerOperatorClient(identity(), config, {
-			name: 'Automation',
-			redirectUri: apiRedirect,
+			name: authMethod === 'none' ? 'Launcher' : 'Automation',
+			redirectUri: redirectFor(authMethod),
 			authMethod
 		});
 
-	// A token request that authenticates the client with its method.
+	// A token request that authenticates the client with its method. A public client sends only
+	// its ID.
 	function tokenRequest(
 		client: RegisteredClient,
 		method: OperatorClientAuthMethod,
 		fields: Record<string, string>,
-		secretValue = client.clientSecret
+		secretValue = client.clientSecret ?? ''
 	): Request {
 		const headers: Record<string, string> = {
 			'content-type': 'application/x-www-form-urlencoded'
 		};
 		const body = new URLSearchParams(fields);
-		if (method === 'client_secret_basic')
+		if (method === 'none') body.set('client_id', client.clientId);
+		else if (method === 'client_secret_basic')
 			headers.authorization = `Basic ${btoa(`${client.clientId}:${secretValue}`)}`;
 		else {
 			body.set('client_id', client.clientId);
@@ -1986,12 +1992,13 @@ describe('REST API with OAuth', () => {
 		return new Request(`${origin}/oauth2/token`, { method: 'POST', headers, body });
 	}
 
-	async function apiFlow(userId: string, client: RegisteredClient, scope?: string): Promise<Flow> {
-		const flow = await startFlow(userId, {
-			clientId: client.clientId,
-			redirect: apiRedirect,
-			scope
-		});
+	async function apiFlow(
+		userId: string,
+		client: RegisteredClient,
+		scope?: string,
+		redirect = apiRedirect
+	): Promise<Flow> {
+		const flow = await startFlow(userId, { clientId: client.clientId, redirect, scope });
 		flow.query.set('resource', apiResource);
 		return flow;
 	}
@@ -2002,14 +2009,15 @@ describe('REST API with OAuth', () => {
 	) {
 		const method = options.method ?? 'client_secret_post';
 		const client = options.client ?? (await registerApiClient(method));
-		const flow = await apiFlow(userId, client, options.scope);
+		const redirect = redirectFor(method);
+		const flow = await apiFlow(userId, client, options.scope, redirect);
 		const code = (await approve(flow)).searchParams.get('code') ?? '';
 		const response = await oauth().fetch(
 			tokenRequest(client, method, {
 				grant_type: 'authorization_code',
 				code,
 				code_verifier: flow.verifier,
-				redirect_uri: apiRedirect
+				redirect_uri: redirect
 			})
 		);
 		expect(response.status).toBe(200);
@@ -2018,12 +2026,13 @@ describe('REST API with OAuth', () => {
 
 	it('registers a confidential client linked to the REST API only', async () => {
 		const client = await registerApiClient('client_secret_basic');
-		expect(client.clientSecret.length).toBeGreaterThanOrEqual(32);
+		const clientSecret = client.clientSecret ?? '';
+		expect(clientSecret.length).toBeGreaterThanOrEqual(32);
 		const stored = await identity()
 			.prepare('SELECT clientSecret FROM oauthClient WHERE clientId = ?')
 			.bind(client.clientId)
 			.first<{ clientSecret: string }>();
-		expect(stored?.clientSecret).not.toContain(client.clientSecret);
+		expect(stored?.clientSecret).not.toContain(clientSecret);
 		const listed = (await listOperatorClients(identity())).find(
 			(entry) => entry.clientId === client.clientId
 		);
@@ -2036,7 +2045,27 @@ describe('REST API with OAuth', () => {
 		});
 	});
 
-	for (const method of ['client_secret_post', 'client_secret_basic'] as const)
+	it('registers a public client without a secret, linked to the REST API only', async () => {
+		const client = await registerApiClient('none');
+		expect(client.clientSecret).toBeNull();
+		const stored = await identity()
+			.prepare('SELECT clientSecret FROM oauthClient WHERE clientId = ?')
+			.bind(client.clientId)
+			.first<{ clientSecret: string | null }>();
+		expect(stored?.clientSecret ?? null).toBeNull();
+		const listed = (await listOperatorClients(identity())).find(
+			(entry) => entry.clientId === client.clientId
+		);
+		expect(listed).toMatchObject({
+			name: 'Launcher',
+			redirectUris: [appRedirect],
+			authMethod: 'none',
+			resources: [apiResource],
+			disabled: false
+		});
+	});
+
+	for (const method of ['client_secret_post', 'client_secret_basic', 'none'] as const)
 		it(`connects with ${method}, reads /v1/me, and refreshes`, async () => {
 			const { client, tokens } = await connectApi('user-api-1', { method });
 			const me = await v1(tokens.access_token, '/me');
@@ -2086,6 +2115,55 @@ describe('REST API with OAuth', () => {
 		expect(location.origin + location.pathname).toBe(apiRedirect);
 		expect(location.searchParams.get('error')).toBe('invalid_request');
 		expect(location.searchParams.has('code')).toBe(false);
+	});
+
+	it('returns the code to a public client on its redirect with its query, and needs the verifier', async () => {
+		const client = await registerApiClient('none');
+		const codeFields = async () => {
+			const flow = await apiFlow('user-api-1', client, undefined, appRedirect);
+			const callback = await approve(flow);
+			expect(callback.origin + callback.pathname).toBe('https://launcher.example/redirect');
+			expect(callback.searchParams.get('packageName')).toBe('Extension');
+			return {
+				grant_type: 'authorization_code',
+				code: callback.searchParams.get('code') ?? '',
+				code_verifier: flow.verifier,
+				redirect_uri: appRedirect
+			};
+		};
+		const unverified: Record<string, string> = await codeFields();
+		delete unverified.code_verifier;
+		// The library answers 400 or 401 by the check that fails; either way no token is issued.
+		const refused = (response: Response) => {
+			expect(response.status).toBeGreaterThanOrEqual(400);
+			expect(response.status).toBeLessThan(500);
+		};
+		refused(await oauth().fetch(tokenRequest(client, 'none', unverified)));
+		refused(
+			await oauth().fetch(
+				tokenRequest(client, 'none', { ...(await codeFields()), code_verifier: 'x'.repeat(64) })
+			)
+		);
+		refused(
+			await oauth().fetch(
+				tokenRequest(client, 'none', { ...(await codeFields()), redirect_uri: apiRedirect })
+			)
+		);
+		const unproven = await apiFlow('user-api-1', client, undefined, appRedirect);
+		unproven.query.delete('code_challenge');
+		unproven.query.delete('code_challenge_method');
+		const location = new URL((await authorize(unproven)).headers.get('location') ?? '', origin);
+		expect(location.origin + location.pathname).toBe('https://launcher.example/redirect');
+		expect(location.searchParams.get('error')).toBe('invalid_request');
+		expect(location.searchParams.has('code')).toBe(false);
+		const plain = await apiFlow('user-api-1', client, undefined, appRedirect);
+		plain.query.set('code_challenge', plain.verifier);
+		plain.query.set('code_challenge_method', 'plain');
+		const plainLocation = new URL((await authorize(plain)).headers.get('location') ?? '', origin);
+		expect(plainLocation.searchParams.has('code')).toBe(false);
+		const { tokens } = await connectApi('user-api-1', { method: 'none', client });
+		expect((await v1(tokens.access_token, '/me')).status).toBe(200);
+		expect((await call(tokens.access_token, 'get_usage')).status).toBe(401);
 	});
 
 	it('applies the granted scopes on /v1', async () => {
@@ -2214,25 +2292,26 @@ describe('REST API with OAuth', () => {
 		expect(await disableOperatorClient(identity(), 'not-an-operator-client')).toBe(false);
 	});
 
-	it('rotates once for 10 concurrent refreshes and replays the answer to a retry', async () => {
-		const { client, method, tokens } = await connectApi('user-api-1');
-		const refresh = () =>
-			oauth().fetch(
-				tokenRequest(client, method, {
-					grant_type: 'refresh_token',
-					refresh_token: tokens.refresh_token
-				})
-			);
-		const responses = await Promise.all(Array.from({ length: 10 }, refresh));
-		const issued = new Set<string>();
-		for (const response of responses)
-			if (response.status === 200) issued.add(((await response.json()) as Tokens).refresh_token);
-			else expect(response.status).toBe(400);
-		expect(issued.size).toBe(1);
-		const retry = await refresh();
-		expect(retry.status).toBe(200);
-		expect(((await retry.json()) as Tokens).refresh_token).toBe([...issued][0]);
-	});
+	for (const kind of ['client_secret_post', 'none'] as const)
+		it(`rotates once for 10 concurrent refreshes of a ${kind} client and replays the answer to a retry`, async () => {
+			const { client, method, tokens } = await connectApi('user-api-1', { method: kind });
+			const refresh = () =>
+				oauth().fetch(
+					tokenRequest(client, method, {
+						grant_type: 'refresh_token',
+						refresh_token: tokens.refresh_token
+					})
+				);
+			const responses = await Promise.all(Array.from({ length: 10 }, refresh));
+			const issued = new Set<string>();
+			for (const response of responses)
+				if (response.status === 200) issued.add(((await response.json()) as Tokens).refresh_token);
+				else expect(response.status).toBe(400);
+			expect(issued.size).toBe(1);
+			const retry = await refresh();
+			expect(retry.status).toBe(200);
+			expect(((await retry.json()) as Tokens).refresh_token).toBe([...issued][0]);
+		});
 
 	it('keeps operator clients through cleanup while nobody has connected', async () => {
 		const client = await registerApiClient();

@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Clients that the operator registers for the REST API, such as an automation platform. Each
-// gets a client secret and is linked to the REST API resource only. Open registration and
-// client metadata documents never link a client to that resource.
+// Clients that the operator registers for the REST API, such as an automation platform or a
+// desktop app. A confidential client gets a client secret; a public client (auth method none)
+// gets none, so it can live in an app that cannot keep a secret, and PKCE proves each of its
+// authorizations. Each is linked to the REST API resource only. Open registration and client
+// metadata documents never link a client to that resource.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
 import { claimOperatorClient } from '@flared/data/oauth';
 import { createOAuthServer, type OAuthServerConfig } from './provider';
 
-export const operatorClientAuthMethods = ['client_secret_post', 'client_secret_basic'] as const;
+export const operatorClientAuthMethods = [
+	'client_secret_post',
+	'client_secret_basic',
+	'none'
+] as const;
 export type OperatorClientAuthMethod = (typeof operatorClientAuthMethods)[number];
 
 export interface OperatorClientInput {
@@ -17,10 +23,11 @@ export interface OperatorClientInput {
 
 export class OperatorClientInputError extends Error {}
 
-// The client ID and the secret. The secret is stored encrypted and is shown only here.
+// The client ID and the secret. The secret is stored encrypted and is shown only here. A public
+// client has none.
 export interface RegisteredClient {
 	clientId: string;
-	clientSecret: string;
+	clientSecret: string | null;
 }
 
 export function parseOperatorClientInput(value: unknown): OperatorClientInput {
@@ -69,8 +76,10 @@ export async function registerOperatorClient(
 	if (response.status !== 200 && response.status !== 201)
 		throw new Error('Client registration failed');
 	const body = (await response.json()) as Record<string, unknown>;
-	if (typeof body.client_id !== 'string' || typeof body.client_secret !== 'string')
-		throw new Error('Client registration returned no secret');
+	if (typeof body.client_id !== 'string') throw new Error('Client registration returned no ID');
+	const clientSecret = typeof body.client_secret === 'string' ? body.client_secret : null;
+	if ((clientSecret === null) !== (input.authMethod === 'none'))
+		throw new Error('Client registration returned the wrong kind of client');
 	await claimOperatorClient(db, body.client_id, config.apiResource, now);
-	return { clientId: body.client_id, clientSecret: body.client_secret };
+	return { clientId: body.client_id, clientSecret };
 }
