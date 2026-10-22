@@ -875,6 +875,7 @@ describe('connected apps API', () => {
 		const page = (await list.json()) as { apps: Record<string, unknown>[] };
 		expect(page.apps.find((app) => app.clientId === clientId)).toMatchObject({
 			name: 'Test client',
+			kind: 'assistant',
 			assistant: null,
 			uri: null,
 			scopes: ['links:read', 'links:write', 'analytics:read', 'usage:read'],
@@ -1935,7 +1936,7 @@ describe('MCP endpoint', () => {
 
 describe('REST API with OAuth', () => {
 	beforeAll(async () => {
-		for (let n = 1; n <= 6; n += 1) await addTenant(`user-api-${n}`, `tenant-api-${n}`);
+		for (let n = 1; n <= 7; n += 1) await addTenant(`user-api-${n}`, `tenant-api-${n}`);
 	});
 	const apiRedirect = 'https://automation.example/oauth/return';
 	// A desktop app's redirect page, with a query as the Raycast one has.
@@ -2023,6 +2024,23 @@ describe('REST API with OAuth', () => {
 		expect(response.status).toBe(200);
 		return { client, method, flow, tokens: (await response.json()) as Tokens };
 	}
+
+	it('lists a client registered for the REST API as an app, not as an assistant', async () => {
+		const { client } = await connectApi('user-api-7', { method: 'none' });
+		const list = await api({
+			kind: 'session',
+			userId: 'user-api-7',
+			sessionId: 'session-test',
+			signedInAt: new Date().toISOString()
+		}).fetch(new Request(`${origin}/v1/connected-apps`));
+		expect(list.status).toBe(200);
+		const page = (await list.json()) as { apps: Record<string, unknown>[] };
+		expect(page.apps.find((app) => app.clientId === client.clientId)).toMatchObject({
+			name: 'Launcher',
+			kind: 'app',
+			assistant: null
+		});
+	});
 
 	it('registers a confidential client linked to the REST API only', async () => {
 		const client = await registerApiClient('client_secret_basic');

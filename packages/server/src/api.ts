@@ -1158,6 +1158,7 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		).map((grant) => ({
 			clientId: grant.clientId,
 			name: grant.name?.trim() || appHost(grant.clientId, grant.uri),
+			kind: grant.operator ? 'app' : 'assistant',
 			assistant: knownAssistant(grant.redirectUris),
 			uri: grant.uri,
 			scopes: grant.scopes.filter(isTokenScope),

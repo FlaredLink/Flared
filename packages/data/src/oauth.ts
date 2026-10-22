@@ -21,6 +21,8 @@ export interface StoredGrant {
 	scopes: string[];
 	connectedAt: number;
 	lastActiveAt: number | null;
+	// The operator registered the client. Such clients are linked to the REST API only.
+	operator: boolean;
 }
 
 function text(value: unknown, field: string): string {
@@ -86,7 +88,8 @@ export async function listGrants(
 		.prepare(
 			`SELECT g."clientId", c."name", c."uri", c."redirectUris", g."scopes", g."createdAt",
 			(SELECT MAX(t."createdAt") FROM "oauthAccessToken" t WHERE t."clientId" = g."clientId"
-				AND t."userId" = g."userId" AND t."referenceId" = g."referenceId") AS "lastActiveAt"
+				AND t."userId" = g."userId" AND t."referenceId" = g."referenceId") AS "lastActiveAt",
+			EXISTS (SELECT 1 FROM oauth_operator_clients o WHERE o.client_id = g."clientId") AS "operator"
 			FROM "oauthConsent" g JOIN "oauthClient" c ON c."clientId" = g."clientId"
 			WHERE g."userId" = ? AND g."referenceId" = ?
 			ORDER BY g."createdAt" DESC, g."id" DESC LIMIT 100`
@@ -100,7 +103,8 @@ export async function listGrants(
 		redirectUris: list(row.redirectUris),
 		scopes: list(row.scopes),
 		connectedAt: number(row.createdAt, 'consent time'),
-		lastActiveAt: row.lastActiveAt === null ? null : number(row.lastActiveAt, 'activity time')
+		lastActiveAt: row.lastActiveAt === null ? null : number(row.lastActiveAt, 'activity time'),
+		operator: row.operator === 1
 	}));
 }
 

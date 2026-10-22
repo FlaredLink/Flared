@@ -72,6 +72,9 @@ export function knownAssistant(redirectUris: readonly string[]): KnownAssistant 
 export interface ConnectedApp {
 	clientId: string;
 	name: string;
+	// An app that the operator registered for the REST API, such as Zapier or a browser extension,
+	// or an assistant that connected to the MCP endpoint.
+	kind: 'assistant' | 'app';
 	// Set only when knownAssistant matches the app's redirect URIs.
 	assistant: KnownAssistant | null;
 	uri: string | null;
@@ -144,6 +147,7 @@ export function isConnectedAppPage(value: unknown): value is ConnectedAppPage {
 			return (
 				typeof entry.clientId === 'string' &&
 				typeof entry.name === 'string' &&
+				(entry.kind === 'assistant' || entry.kind === 'app') &&
 				(entry.assistant === null ||
 					entry.assistant === 'claude' ||
 					entry.assistant === 'chatgpt' ||

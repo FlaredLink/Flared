@@ -1,7 +1,11 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { scopeDescriptions, type ConnectedAppPage } from '@flared/contracts/oauth';
+	import {
+		scopeDescriptions,
+		type ConnectedApp,
+		type ConnectedAppPage
+	} from '@flared/contracts/oauth';
 	import Glyph from '../icons/Glyph.svelte';
 	import Button from '../atoms/Button.svelte';
 	import SplitView from '../molecules/SplitView.svelte';
@@ -42,14 +46,20 @@
 			.join(', ');
 	// The address without its scheme fits the section head; the copy button copies all of it.
 	const mcpAddress = $derived(mcpUrl.replace(/^https?:\/\//, ''));
-	// One list: the connected apps, then the setup of each assistant that is not connected yet.
+	// Assistants use the MCP endpoint. Apps that the operator registered, such as Zapier or the
+	// browser extension, use the REST API and get a list of their own.
+	const connectedAssistants = $derived(page.apps.filter((app) => app.kind === 'assistant'));
+	const connectedApps = $derived(page.apps.filter((app) => app.kind === 'app'));
+	// One list: the connected assistants, then the setup of each assistant not connected yet.
 	const unconnected = $derived(
-		assistants.filter((assistant) => !page.apps.some((app) => app.assistant === assistant.id))
+		assistants.filter(
+			(assistant) => !connectedAssistants.some((app) => app.assistant === assistant.id)
+		)
 	);
 
 	// With room for two columns and nothing connected yet, Claude's setup opens, as in the mockups.
 	onMount(() => {
-		if (page.apps.length === 0 && window.matchMedia('(min-width: 75rem)').matches)
+		if (connectedAssistants.length === 0 && window.matchMedia('(min-width: 75rem)').matches)
 			selected = 'claude';
 	});
 
@@ -78,83 +88,103 @@
 	{/if}
 {/snippet}
 
-<SplitView panel={selected ? setup : undefined}>
-	<section class="assistants" aria-labelledby="assistants-heading">
-		<div class="section-head">
-			<Glyph name="robot" size={18} />
-			<h2 id="assistants-heading">AI assistants</h2>
-			<span class="address">
-				<span class="visually-hidden">MCP server address: </span><code>{mcpAddress}</code>
-				<CopyButton text={mcpUrl} label="Copy the MCP server address" size="sm" />
+{#snippet connected(app: ConnectedApp)}
+	<li class="item" class:confirming={confirming === app.clientId}>
+		<span class="logo" aria-hidden="true"
+			>{#if app.assistant}<AssistantTile assistant={app.assistant} size={22} />{:else}{(
+					Array.from(app.name)[0] ?? '?'
+				).toLocaleUpperCase()}{/if}</span
+		>
+		<div class="main">
+			<span class="name">{app.name}</span>
+			<span class="meta">{sentence(app.scopes.map((scope) => scopeDescriptions[scope]))}</span>
+			<span class="meta">
+				Connected <time datetime={app.connectedAt}>{dates.format(new Date(app.connectedAt))}</time
+				>{' · '}{#if app.lastActiveAt}Last active <time datetime={app.lastActiveAt}
+						>{dates.format(new Date(app.lastActiveAt))}</time
+					>{:else}Not used yet{/if}{#if app.uri}{' · '}{app.uri}{/if}
 			</span>
 		</div>
+		<div class="actions">
+			{#if confirming === app.clientId}
+				<span class="confirm">Remove {app.name}?</span>
+				<Button size="sm" onclick={() => (confirming = null)}>Keep</Button>
+				<Button
+					size="sm"
+					variant="danger"
+					disabled={pending !== null}
+					onclick={() => void remove(app.clientId, app.name)}
+					>{pending === app.clientId ? 'Removing…' : 'Remove'}</Button
+				>
+			{:else}
+				<Button
+					size="sm"
+					disabled={pending !== null}
+					aria-label={`Remove ${app.name}`}
+					onclick={() => (confirming = app.clientId)}>Remove…</Button
+				>
+			{/if}
+		</div>
+	</li>
+{/snippet}
+
+<SplitView panel={selected ? setup : undefined}>
+	<div class="lists">
 		<p class="visually-hidden" role="status" aria-live="polite">{status}</p>
 		{#if error}<Callout tone="danger" role="alert"><p>{error}</p></Callout>{/if}
 
-		<ul class="items">
-			{#each page.apps as app (app.clientId)}
-				<li class="item" class:confirming={confirming === app.clientId}>
-					<span class="logo" aria-hidden="true"
-						>{#if app.assistant}<AssistantTile assistant={app.assistant} size={22} />{:else}{(
-								Array.from(app.name)[0] ?? '?'
-							).toLocaleUpperCase()}{/if}</span
-					>
-					<div class="main">
-						<span class="name">{app.name}</span>
-						<span class="meta">{sentence(app.scopes.map((scope) => scopeDescriptions[scope]))}</span
+		<section class="group" aria-labelledby="assistants-heading">
+			<div class="section-head">
+				<Glyph name="robot" size={18} />
+				<h2 id="assistants-heading">AI assistants</h2>
+				<span class="address">
+					<span class="visually-hidden">MCP server address: </span><code>{mcpAddress}</code>
+					<CopyButton text={mcpUrl} label="Copy the MCP server address" size="sm" />
+				</span>
+			</div>
+
+			<ul class="items">
+				{#each connectedAssistants as app (app.clientId)}
+					{@render connected(app)}
+				{/each}
+				{#each unconnected as assistant (assistant.id)}
+					<li class="item" class:selected={selected === assistant.id}>
+						<span class="logo" aria-hidden="true"
+							><AssistantTile assistant={assistant.id} size={22} /></span
 						>
-						<span class="meta">
-							Connected <time datetime={app.connectedAt}
-								>{dates.format(new Date(app.connectedAt))}</time
-							>{' · '}{#if app.lastActiveAt}Last active <time datetime={app.lastActiveAt}
-									>{dates.format(new Date(app.lastActiveAt))}</time
-								>{:else}Not used yet{/if}{#if app.uri}{' · '}{app.uri}{/if}
-						</span>
-					</div>
-					<div class="actions">
-						{#if confirming === app.clientId}
-							<span class="confirm">Remove {app.name}?</span>
-							<Button size="sm" onclick={() => (confirming = null)}>Keep</Button>
+						<div class="main">
+							<span class="name">{assistant.label}</span>
+							<span class="meta">{assistant.line}</span>
+						</div>
+						<div class="actions">
 							<Button
 								size="sm"
-								variant="danger"
-								disabled={pending !== null}
-								onclick={() => void remove(app.clientId, app.name)}
-								>{pending === app.clientId ? 'Removing…' : 'Remove'}</Button
+								aria-expanded={selected === assistant.id}
+								aria-controls="assistant-setup"
+								aria-label={`Set up ${assistant.label}`}
+								onclick={() => (selected = selected === assistant.id ? null : assistant.id)}
+								>{assistant.id === 'other' ? 'View setup' : 'Set up'}</Button
 							>
-						{:else}
-							<Button
-								size="sm"
-								disabled={pending !== null}
-								aria-label={`Remove ${app.name}`}
-								onclick={() => (confirming = app.clientId)}>Remove…</Button
-							>
-						{/if}
-					</div>
-				</li>
-			{/each}
-			{#each unconnected as assistant (assistant.id)}
-				<li class="item" class:selected={selected === assistant.id}>
-					<span class="logo" aria-hidden="true"
-						><AssistantTile assistant={assistant.id} size={22} /></span
-					>
-					<div class="main">
-						<span class="name">{assistant.label}</span>
-						<span class="meta">{assistant.line}</span>
-					</div>
-					<div class="actions">
-						<Button
-							size="sm"
-							aria-expanded={selected === assistant.id}
-							aria-controls="assistant-setup"
-							aria-label={`Set up ${assistant.label}`}
-							onclick={() => (selected = selected === assistant.id ? null : assistant.id)}
-							>{assistant.id === 'other' ? 'View setup' : 'Set up'}</Button
-						>
-					</div>
-				</li>
-			{/each}
-		</ul>
+						</div>
+					</li>
+				{/each}
+			</ul>
+		</section>
+
+		{#if connectedApps.length > 0}
+			<section class="group" aria-labelledby="apps-heading">
+				<div class="section-head">
+					<Glyph name="plugs" size={18} />
+					<h2 id="apps-heading">Apps</h2>
+				</div>
+				<p class="lead">Apps you signed in to with your Flared account, such as Zapier.</p>
+				<ul class="items">
+					{#each connectedApps as app (app.clientId)}
+						{@render connected(app)}
+					{/each}
+				</ul>
+			</section>
+		{/if}
 
 		<p class="foot">
 			<Glyph name="lock" size={18} />
@@ -165,13 +195,21 @@
 					>Read the connection guide<Glyph name="arrowUpRight" size={14} /></a
 				>{/if}
 		</p>
-	</section>
+	</div>
 </SplitView>
 
 <style>
-	.assistants {
+	.lists {
+		display: grid;
+		gap: 1.5rem;
+	}
+	.group {
 		display: grid;
 		gap: 0.625rem;
+	}
+	.lead {
+		color: var(--color-subtle);
+		font-size: 0.8125rem;
 	}
 	.section-head {
 		display: flex;
