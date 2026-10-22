@@ -36,7 +36,8 @@ jobs:
       - run: bun run test:cli
       - run: bun run build:cli
       # The bundle contains the workspace packages, so their workspace: specifiers are not published.
-      - run: npm pkg delete devDependencies scripts
+      # The test script stays: it runs the tests in a checkout of this repository.
+      - run: npm pkg delete devDependencies scripts.build scripts.smoke
         working-directory: packages/cli
       - run: npm publish --access public
         working-directory: packages/cli

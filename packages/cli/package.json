@@ -1,6 +1,6 @@
 {
 	"name": "@flaredlink/cli",
-	"version": "0.5.0",
+	"version": "1.0.0",
 	"description": "Create, edit, and measure Flared short links from your terminal.",
 	"license": "AGPL-3.0-only",
 	"type": "module",
@@ -23,7 +23,8 @@
 	},
 	"scripts": {
 		"build": "bun build src/main.ts --target=node --outfile dist/flared.js && cp ../../LICENSE.md LICENSE.md",
-		"smoke": "node dist/flared.js --version && node dist/flared.js --help"
+		"smoke": "node dist/flared.js --version && node dist/flared.js --help",
+		"test": "vitest run --config vitest.config.ts"
 	},
 	"devDependencies": {
 		"@flared/client": "workspace:*",

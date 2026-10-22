@@ -84,6 +84,10 @@ Point the CLI at your instance's API with `--api-url` or `FLARED_API_URL`, for e
 
 With `--json`, errors go to standard error as `{ "error": { "code", "message", "requestId" } }`.
 
+## Versions
+
+The CLI follows semantic versioning from 1.0.0. Within 1.x, commands, flags, exit codes, and `--json` output stay compatible: new releases only add to them.
+
 ## License
 
 AGPL-3.0-only. The source is in [FlaredLink/Flared](https://github.com/FlaredLink/Flared/tree/main/packages/cli).
