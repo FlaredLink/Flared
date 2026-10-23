@@ -6,7 +6,8 @@
 // own token and never touches Cloudflare. It lives here, not in the workflow file, so each
 // upgrade also updates it, and so it can be tested.
 import { spawnSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
+import { realpathSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const upstreamUrl = 'https://github.com/FlaredLink/Flared.git';
@@ -167,6 +168,85 @@ function startedAt(git: Git, tag: string): boolean {
 	});
 }
 
+// The Worker configuration that Deploy on Cloudflare rewrites in each copy.
+export const deployConfig = 'wrangler.jsonc';
+// The keys whose values Deploy sets for the copy's own resources: the Worker name, the database
+// names and IDs, and the queue names. A second copy in an account gets new names, such as
+// flared-clicks-2, next to settings that a release may change.
+const deployKeys = new Set([
+	'name',
+	'database_name',
+	'database_id',
+	'queue',
+	'dead_letter_queue',
+	'id',
+	'preview_id',
+	'bucket_name'
+]);
+
+type Segment = { string: boolean; text: string };
+
+// Splits JSONC into string literals and everything else, so comments never count as strings.
+function segments(text: string): Segment[] {
+	const out: Segment[] = [];
+	let start = 0;
+	let index = 0;
+	const flush = (string: boolean, end: number) => {
+		if (end > start) out.push({ string, text: text.slice(start, end) });
+		start = end;
+	};
+	while (index < text.length) {
+		const char = text[index];
+		if (char === '"') {
+			flush(false, index);
+			index += 1;
+			while (index < text.length && text[index] !== '"') index += text[index] === '\\' ? 2 : 1;
+			index += 1;
+			flush(true, index);
+		} else if (text.startsWith('//', index)) {
+			const end = text.indexOf('\n', index);
+			index = end === -1 ? text.length : end;
+		} else if (text.startsWith('/*', index)) {
+			const end = text.indexOf('*/', index + 2);
+			index = end === -1 ? text.length : end + 2;
+		} else index += 1;
+	}
+	flush(false, text.length);
+	return out;
+}
+
+// The key of a string value, as in "key": "value", or null when the string is not such a value.
+function keyOf(parts: Segment[], index: number): string | null {
+	const colon = parts[index - 1];
+	const key = parts[index - 2];
+	if (!colon || colon.string || !/^\s*:\s*$/.test(colon.text)) return null;
+	return key?.string ? key.text.slice(1, -1) : null;
+}
+
+// The release's Worker configuration with the copy's own names and IDs, when the copy changed
+// nothing else in the file it started from; null otherwise, so a person merges it.
+export function keepDeployNames(start: string, copy: string, release: string): string | null {
+	const from = segments(start);
+	const own = segments(copy);
+	if (from.length !== own.length) return null;
+	const names = new Map<string, string>();
+	for (let index = 0; index < from.length; index += 1) {
+		if (from[index].text === own[index].text) continue;
+		const key = keyOf(from, index);
+		if (!from[index].string || !own[index].string || !key || !deployKeys.has(key)) return null;
+		if (keyOf(own, index) !== key) return null;
+		const name = `${key}\u0000${from[index].text}`;
+		if (names.has(name) && names.get(name) !== own[index].text) return null;
+		names.set(name, own[index].text);
+	}
+	return segments(release)
+		.map((part, index, parts) => {
+			const key = part.string ? keyOf(parts, index) : null;
+			return (key && names.get(`${key}\u0000${part.text}`)) ?? part.text;
+		})
+		.join('');
+}
+
 function issueBody(lines: string[]): string {
 	return [
 		...lines,
@@ -194,10 +274,16 @@ async function pullRequestBody(
 	tags: string[],
 	breaking: string[],
 	migrations: string[],
-	auto: boolean
+	auto: boolean,
+	keptNames: boolean
 ): Promise<string> {
 	const target = tags[tags.length - 1];
 	const lines = [`This pull request merges Flared ${target} into your copy.`, ''];
+	if (keptNames)
+		lines.push(
+			`**${deployConfig}:** the release changed lines next to this copy's own names and IDs. The pull request has the release's file with this copy's Worker, database, and queue names and IDs.`,
+			''
+		);
 	if (!isRelease(target))
 		lines.push(
 			`**Pre-release:** ${target} is for testing. The workflow merges it only because you asked for it.`,
@@ -328,6 +414,21 @@ export async function upgrade(options: UpgradeOptions): Promise<UpgradeResult> {
 	git.out(['rm', '-r', '-q', '--cached', '--ignore-unmatch', '--', '.github/workflows']);
 	git.run(['checkout', 'HEAD', '--', '.github/workflows'], true);
 	git.out(['clean', '-f', '-q', '--', '.github/workflows']);
+	// A release that changes lines next to the copy's own names in wrangler.jsonc conflicts with
+	// them. When the copy changed nothing else there, take the release's file with those names.
+	let keptNames = false;
+	if (git.lines(['diff', '--name-only', '--diff-filter=U']).includes(deployConfig)) {
+		const read = (ref: string) => git.run(['show', `${ref}:${deployConfig}`], true);
+		const [start, copy, release] = [read(tagRef(current)), read('HEAD'), read(tagRef(target))];
+		const merged =
+			start.ok && copy.ok && release.ok ? keepDeployNames(start.out, copy.out, release.out) : null;
+		if (merged !== null) {
+			writeFileSync(join(options.cwd, deployConfig), `${merged}\n`);
+			git.out(['add', '--', deployConfig]);
+			keptNames = true;
+			log(`Took the release's ${deployConfig} with this copy's names and IDs.`);
+		}
+	}
 	const conflicts = git.lines(['diff', '--name-only', '--diff-filter=U']);
 	if (conflicts.length > 0) {
 		git.run(['merge', '--abort'], true);
@@ -361,7 +462,14 @@ export async function upgrade(options: UpgradeOptions): Promise<UpgradeResult> {
 	git.out(['checkout', base]);
 
 	const title = `Upgrade to Flared ${target}`;
-	const body = await pullRequestBody(github, included, breaking, migrations, options.auto ?? false);
+	const body = await pullRequestBody(
+		github,
+		included,
+		breaking,
+		migrations,
+		options.auto ?? false,
+		keptNames
+	);
 	const open = await github.upgradePullRequests();
 	const existing = open.find((pull) => pull.branch === branch);
 	const pullRequest = existing ?? (await github.createPullRequest({ title, branch, base, body }));

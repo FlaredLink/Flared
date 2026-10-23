@@ -20,6 +20,8 @@ The workflow uses only your repository's own token. It keeps your `.github/workf
 
 It opens one issue, and no pull request, when you must act: when a release does not merge cleanly into your changes, when your copy has no Flared history and the workflow cannot prove which release it came from, or when GitHub does not let it open pull requests (step 2). In the last case the issue links the pull request for you to open. A copy made before 13 October 2026 needs the first upgrade by hand (below). The issue names the steps; the workflow closes it when a pull request opens.
 
+Deploy on Cloudflare writes your copy's own Worker name, database names and IDs, and queue names into `wrangler.jsonc`. When a release changes lines next to them, the workflow takes the release's `wrangler.jsonc` with your names and IDs, and the pull request says so. If you changed anything else in that file, it opens an issue instead.
+
 GitHub turns off scheduled workflows in a repository with no activity for 60 days. Turn it on again in the **Actions** tab.
 
 ## Upgrade by hand

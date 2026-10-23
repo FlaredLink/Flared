@@ -7,7 +7,14 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { breakingTrailer, issueTitle, upgrade, type GitHub, type PullRequest } from '../upgrade';
+import {
+	breakingTrailer,
+	issueTitle,
+	keepDeployNames,
+	upgrade,
+	type GitHub,
+	type PullRequest
+} from '../upgrade';
 
 const committer = { name: 'Test', email: 'test@example.com' };
 const made: string[] = [];
@@ -399,5 +406,120 @@ describe('the upgrade workflow', () => {
 		expect(issueTitle).toBe('Flared upgrade needs attention');
 		expect(git(copy, 'ls-files', '.github')).toBe('');
 		expect(readFileSync(join(copy, 'wrangler.jsonc'), 'utf8')).toContain('real-id');
+	});
+});
+
+// The Worker configuration of a release, shaped like the real wrangler.jsonc: names and IDs next
+// to settings that a release may change.
+function workerConfig(batch: number, names = { suffix: '', id: '00000000' }): string {
+	const { suffix, id } = names;
+	return `{
+	// Deploy on Cloudflare creates the "databases" and queues below.
+	"name": "flared${suffix}",
+	"d1_databases": [
+		{
+			"binding": "ROUTING",
+			"database_name": "flared-routing${suffix}",
+			"database_id": "${id}",
+			"migrations_dir": "packages/data/migrations/routing"
+		}
+	],
+	"queues": {
+		"producers": [{ "binding": "CLICKS", "queue": "flared-clicks${suffix}" }],
+		// max_batch_size ${batch} keeps one run within the D1 query limit.
+		"consumers": [
+			{
+				"queue": "flared-clicks${suffix}",
+				"max_batch_size": ${batch},
+				"dead_letter_queue": "flared-clicks-dlq"
+			},
+			{ "queue": "flared-clicks-dlq${suffix}", "max_batch_size": 5 }
+		]
+	}
+}
+`;
+}
+
+// Flared v0.1.0 and v0.2.0, which changes the click batch size next to the queue names.
+function configUpstream(): string {
+	const root = directory();
+	git(root, 'init', '-q', '-b', 'main');
+	for (const [version, batch] of [
+		['0.1.0', 5],
+		['0.2.0', 3]
+	] as const) {
+		write(root, {
+			'wrangler.jsonc': workerConfig(batch),
+			'package.json': manifest('flared-core', version),
+			'src/app.ts': `export const batch = ${batch};\n`
+		});
+		git(root, 'add', '-A');
+		git(root, 'commit', '-q', '-m', `release ${version}`);
+		git(root, 'tag', '-a', `v${version}`, '-m', `Flared ${version}`);
+	}
+	return root;
+}
+
+describe("the copy's own names in wrangler.jsonc", () => {
+	const renamed = { suffix: '-2', id: 'copy-id' };
+
+	it("takes the release's settings with the copy's names and IDs", () => {
+		const merged = keepDeployNames(workerConfig(5), workerConfig(5, renamed), workerConfig(3));
+		expect(merged).toBe(workerConfig(3, renamed));
+	});
+
+	it('keeps a name the release has that the copy never renamed', () => {
+		// The copy kept "flared-clicks-dlq" as its dead letter queue, so the release's stays too.
+		const merged = keepDeployNames(workerConfig(5), workerConfig(5, renamed), workerConfig(3));
+		expect(merged).toContain('"dead_letter_queue": "flared-clicks-dlq"');
+		expect(merged).toContain('"queue": "flared-clicks-dlq-2"');
+	});
+
+	it('ignores quotes in comments and refuses any other change of the copy', () => {
+		const start = workerConfig(5);
+		const comment = start.replace('below.', 'below, such as "flared".');
+		expect(keepDeployNames(comment, comment, workerConfig(3))).toBe(workerConfig(3));
+		// A changed binding is the operator's own change, so a person merges it.
+		const binding = workerConfig(5, renamed).replace('"ROUTING"', '"ROUTES"');
+		expect(keepDeployNames(start, binding, workerConfig(3))).toBeNull();
+		const added = workerConfig(5, renamed).replace('"queues"', '"vars": { "A": "1" },\n\t"queues"');
+		expect(keepDeployNames(start, added, workerConfig(3))).toBeNull();
+		// One name of the release cannot become two names in the copy.
+		const split = workerConfig(5, renamed).replace(
+			'"queue": "flared-clicks-2",\n\t\t\t\t"max',
+			'"queue": "flared-clicks-3",\n\t\t\t\t"max'
+		);
+		expect(split).not.toBe(workerConfig(5, renamed));
+		expect(keepDeployNames(start, split, workerConfig(3))).toBeNull();
+	});
+
+	it("opens the pull request when the release changes lines next to the copy's names", async () => {
+		const source = configUpstream();
+		const copy = copyOf(source, 'v0.1.0', { 'wrangler.jsonc': workerConfig(5, renamed) });
+		const github = fakeGitHub();
+		const result = await upgrade({ cwd: copy, github, upstream: source, committer, auto: true });
+		expect(result).toEqual({ outcome: 'merged', tag: 'v0.2.0', pullRequest: 1 });
+		git(copy, 'fetch', '-q', 'origin');
+		const ref = 'origin/flared-upgrade/v0.2.0';
+		expect(`${show(copy, ref, 'wrangler.jsonc')}\n`).toBe(workerConfig(3, renamed));
+		expect(show(copy, ref, 'src/app.ts')).toBe('export const batch = 3;');
+		expect(github.pulls[0].body).toContain('**wrangler.jsonc:**');
+	});
+
+	it('asks a person when the copy also changed its own settings there', async () => {
+		const source = configUpstream();
+		const own = workerConfig(5, renamed).replace(
+			'"max_batch_size": 5,\n\t\t\t\t"dead',
+			'"max_batch_size": 4,\n\t\t\t\t"dead'
+		);
+		expect(own).not.toBe(workerConfig(5, renamed));
+		const copy = copyOf(source, 'v0.1.0', { 'wrangler.jsonc': own });
+		const github = fakeGitHub();
+		expect(await upgrade({ cwd: copy, github, upstream: source, committer })).toEqual({
+			outcome: 'attention',
+			issue: 1
+		});
+		expect(github.issues[0].body).toContain('- `wrangler.jsonc`');
+		expect(remoteBranches(copy)).toBe('main');
 	});
 });
