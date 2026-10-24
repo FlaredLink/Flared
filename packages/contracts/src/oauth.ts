@@ -4,9 +4,9 @@
 import { isTokenScope, type TokenScope } from './tokens';
 
 export const scopeDescriptions: Record<TokenScope, string> = {
-	'links:read': 'See your links',
-	'links:write': 'Create, edit, and turn off links',
-	'analytics:read': 'See click analytics',
+	'links:read': 'See your links and pages',
+	'links:write': 'Create, edit, and turn off links, and manage pages',
+	'analytics:read': 'See click and page analytics',
 	'domains:read': 'See your domains',
 	'domains:write': 'Add and remove domains',
 	'usage:read': 'See your plan usage'

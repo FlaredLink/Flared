@@ -50,8 +50,8 @@
 	const workspace = shownWorkspace();
 
 	const scopeLabels: Record<TokenScope, string> = {
-		'links:read': 'Read links',
-		'links:write': 'Create and edit links',
+		'links:read': 'Read links and pages',
+		'links:write': 'Create and edit links and pages',
 		'analytics:read': 'Read analytics',
 		'domains:read': 'Read domains',
 		'domains:write': 'Add and remove domains',
