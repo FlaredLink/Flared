@@ -28,6 +28,28 @@ import {
 	type ImportLinksResult,
 	type Link
 } from '@flared/contracts/links';
+import {
+	buttonShapes,
+	buttonStyles,
+	embedProviders,
+	handlePattern,
+	maxBlockLabelLength,
+	maxPageBioLength,
+	maxPageBlocks,
+	maxPageTitleLength,
+	maxPaymentDescriptionLength,
+	maxPriceLength,
+	maxSocialLinks,
+	pageFonts,
+	paymentProviders,
+	socialNetworks,
+	themePresets,
+	type CreatePageBody,
+	type EmbedProvider,
+	type PageBlockBody,
+	type PaymentProvider,
+	type SocialNetwork
+} from '@flared/contracts/pages';
 import { tokenScopes, type TokenScope } from '@flared/contracts/tokens';
 import { countMcpCall, findAccessToken } from '@flared/data/oauth';
 import { defaultImportItemsPerRequest, type ApiPrincipal } from './api';
@@ -95,7 +117,7 @@ export function mcpIcons(appOrigin: string) {
 export function mcpServerCard(resource: string, appOrigin: string) {
 	return {
 		serverInfo: { name: 'flared', title: 'Flared', version: '1.0.0', icons: mcpIcons(appOrigin) },
-		description: 'Create, edit, and measure Flared short links.',
+		description: 'Create, edit, and measure Flared short links and link pages.',
 		transport: { type: 'streamable-http', endpoint: resource },
 		protocolVersions: ['2026-07-28', '2025-11-25'],
 		capabilities: { tools: { listChanged: false } },
@@ -119,13 +141,17 @@ const toolScopes: Record<string, TokenScope> = {
 	list_domains: 'domains:read',
 	export_links: 'links:read',
 	list_automations: 'links:read',
+	list_pages: 'links:read',
+	get_page: 'links:read',
 	create_link: 'links:write',
 	import_links: 'links:write',
 	update_link: 'links:write',
 	disable_link: 'links:write',
 	enable_link: 'links:write',
 	apply_automation: 'links:write',
-	remove_automation: 'links:write'
+	remove_automation: 'links:write',
+	create_page: 'links:write',
+	update_page: 'links:write'
 };
 
 const deviceDestination = (os: string, extra = '') =>
@@ -519,6 +545,135 @@ function activeDomain(domains: Domain[], hostname: string, field: string): Domai
 	return match;
 }
 
+const ids = <T extends string>(values: Record<T, unknown>) => Object.keys(values) as [T, ...T[]];
+const pageTime = (moment: string) =>
+	z
+		.string()
+		.max(40)
+		.nullable()
+		.optional()
+		.describe(
+			`When the block ${moment}: ISO 8601 with Z or an offset, such as 2026-11-01T09:00:00Z. null or absent for no limit.`
+		);
+const blockLabel = z.string().min(1).max(maxBlockLabelLength);
+const blockLinkId = z
+	.string()
+	.min(1)
+	.max(64)
+	.describe('A link ID from list_links or create_link. Create the link first.');
+const blockSchedule = { startsAt: pageTime('shows'), endsAt: pageTime('stops showing') };
+
+// Sign-up blocks are left out: entries have no storage yet, so the page does not show them.
+const pageBlockInput = z.discriminatedUnion('kind', [
+	z.object({
+		kind: z.literal('button'),
+		linkId: blockLinkId,
+		label: blockLabel.describe('The button text.'),
+		...blockSchedule
+	}),
+	z.object({ kind: z.literal('header'), label: blockLabel, ...blockSchedule }),
+	z.object({
+		kind: z.literal('social'),
+		links: z
+			.array(
+				z.object({
+					network: z.enum(ids<SocialNetwork>(socialNetworks)),
+					address: z
+						.string()
+						.min(1)
+						.max(2048)
+						.describe(
+							"The https profile address on the network's own site, or an email address for email."
+						)
+				})
+			)
+			.min(1)
+			.max(maxSocialLinks),
+		...blockSchedule
+	}),
+	z.object({
+		kind: z.literal('payment'),
+		linkId: blockLinkId.describe(
+			"A link ID from list_links or create_link whose destination is the provider's checkout page, such as https://buy.stripe.com/…"
+		),
+		provider: z.enum(ids<PaymentProvider>(paymentProviders)),
+		label: blockLabel.describe('The product name.'),
+		price: z
+			.string()
+			.max(maxPriceLength)
+			.nullable()
+			.optional()
+			.describe('Price text, such as $20.'),
+		description: z.string().max(maxPaymentDescriptionLength).nullable().optional(),
+		...blockSchedule
+	}),
+	z.object({
+		kind: z.literal('embed'),
+		provider: z.enum(ids<EmbedProvider>(embedProviders)),
+		address: z
+			.string()
+			.min(1)
+			.max(2048)
+			.describe('The address of the video, track, or booking page on the provider.'),
+		...blockSchedule
+	})
+]);
+const pageBlocksInput = z
+	.array(pageBlockInput)
+	.max(maxPageBlocks)
+	.describe(
+		'The blocks from top to bottom. Payment and embed blocks need a plan that includes them.'
+	);
+
+const colour = z.string().regex(/^#[0-9a-fA-F]{6}$/);
+const pageThemeInput = z
+	.object({
+		id: z.enum(themePresets.map((preset) => preset.id) as [string, ...string[]]),
+		background: colour.optional(),
+		text: colour.optional(),
+		buttonBackground: colour.optional(),
+		buttonText: colour.optional(),
+		font: z.enum(pageFonts).optional(),
+		buttonShape: z.enum(buttonShapes).optional(),
+		buttonStyle: z.enum(buttonStyles).optional()
+	})
+	.describe(
+		`A theme ID and optional changes to its colours, font, and buttons. Themes: ${themePresets.map((preset) => `${preset.id} (${preset.name})`).join(', ')}.`
+	);
+
+const pageDomain = z
+	.string()
+	.min(1)
+	.max(253)
+	.describe(
+		'An active workspace hostname from list_domains: the page shows at its root. Needs a plan that includes it.'
+	);
+
+const pageBlockOutput = z.looseObject({
+	kind: z.string(),
+	startsAt: z.string().nullable(),
+	endsAt: z.string().nullable(),
+	visible: z.boolean()
+});
+const pageSummaryOutput = z.looseObject({
+	id: z.string(),
+	handle: z.string(),
+	url: z.string().nullable(),
+	domainUrl: z.string().nullable(),
+	title: z.string(),
+	enabled: z.boolean(),
+	blocked: z.looseObject({ reason: z.enum(blockReasons) }).nullable(),
+	createdAt: z.string(),
+	updatedAt: z.string()
+});
+const pageOutput = pageSummaryOutput.extend({
+	bio: z.string().nullable(),
+	avatarImage: z.string().nullable(),
+	backgroundImage: z.string().nullable(),
+	theme: z.looseObject({ id: z.string() }),
+	blocks: z.array(pageBlockOutput)
+});
+
 function createTools(
 	client: FlaredClient,
 	grantKey: string,
@@ -550,6 +705,26 @@ function createTools(
 
 	async function findActiveDomain(hostname: string): Promise<Domain> {
 		return activeDomain((await client.listDomains()).domains, hostname, 'domain');
+	}
+
+	// A page ID is a UUID, longer than any handle, so a value that fits the handle rule is a
+	// handle.
+	async function findPageId(idOrHandle: string): Promise<string> {
+		if (!handlePattern.test(idOrHandle)) return idOrHandle;
+		let cursor: string | undefined;
+		do {
+			const page = await client.listPages(cursor);
+			const match = page.pages.find((summary) => summary.handle === idOrHandle);
+			if (match) return match.id;
+			cursor = page.nextCursor ?? undefined;
+		} while (cursor);
+		throw new FlaredApiError('NOT_FOUND', 'Page not found.', 404, null, null, 'page');
+	}
+
+	async function pageDomainId(domain: string | null | undefined) {
+		if (domain === undefined) return {};
+		if (domain === null) return { domainId: null };
+		return { domainId: (await findActiveDomain(hostnameOf(domain))).id };
 	}
 
 	server.registerTool(
@@ -826,6 +1001,53 @@ function createTools(
 	);
 
 	server.registerTool(
+		'list_pages',
+		{
+			title: 'List pages',
+			description:
+				'Lists the link pages in the workspace, newest first: a page shows a profile and buttons that open short links, at its address on the page host or at the root of a workspace domain.',
+			inputSchema: z.object({
+				cursor: z.string().max(500).optional().describe('nextCursor from the previous page.')
+			}),
+			outputSchema: z.looseObject({
+				pages: z.array(pageSummaryOutput),
+				nextCursor: z.string().nullable()
+			}),
+			annotations: {
+				title: 'List pages',
+				readOnlyHint: true,
+				destructiveHint: false,
+				openWorldHint: false
+			}
+		},
+		({ cursor }) =>
+			attempt(async () => {
+				const { pages, nextCursor } = await client.listPages(cursor);
+				return { pages, nextCursor };
+			})
+	);
+
+	server.registerTool(
+		'get_page',
+		{
+			title: 'Get a page',
+			description:
+				"Gets one link page by its ID or handle, with its theme and every block. A block with startsAt or endsAt shows only between those times. A block with visible false does not show: its link is off or blocked, or a payment link no longer opens the provider's checkout.",
+			inputSchema: z.object({
+				page: z.string().min(1).max(100).describe('The page ID or handle.')
+			}),
+			outputSchema: z.looseObject({ page: pageOutput }),
+			annotations: {
+				title: 'Get a page',
+				readOnlyHint: true,
+				destructiveHint: false,
+				openWorldHint: false
+			}
+		},
+		({ page }) => attempt(async () => ({ page: await client.getPage(await findPageId(page)) }))
+	);
+
+	server.registerTool(
 		'create_link',
 		{
 			title: 'Create a link',
@@ -1072,6 +1294,97 @@ function createTools(
 						return { removed: false };
 					throw error;
 				}
+			})
+	);
+
+	server.registerTool(
+		'create_page',
+		{
+			title: 'Create a page',
+			description:
+				'Creates a public link page with a handle, a title, an optional bio, a theme, and blocks. A button or payment block opens a link of the workspace: create the link with create_link first and pass its ID. Images are added in the Flared app or with the API. The result has the page address (url).',
+			inputSchema: z.object({
+				handle: z
+					.string()
+					.min(3)
+					.max(30)
+					.describe(
+						'The page address: 3 to 30 lowercase letters, digits, and single hyphens, not at the start or end.'
+					),
+				title: z
+					.string()
+					.min(1)
+					.max(maxPageTitleLength)
+					.describe('The name at the top of the page.'),
+				bio: z.string().max(maxPageBioLength).optional(),
+				theme: pageThemeInput.optional(),
+				blocks: pageBlocksInput.optional(),
+				domain: pageDomain.optional()
+			}),
+			outputSchema: z.looseObject({ page: pageOutput }),
+			annotations: {
+				title: 'Create a page',
+				readOnlyHint: false,
+				destructiveHint: true,
+				// A repeated call finds the handle taken and creates nothing.
+				idempotentHint: true,
+				openWorldHint: true
+			}
+		},
+		({ domain, blocks, ...fields }) =>
+			attempt(async () => {
+				const body: CreatePageBody = {
+					...fields,
+					...(blocks ? { blocks: blocks satisfies PageBlockBody[] } : {}),
+					...(await pageDomainId(domain))
+				};
+				return { page: await client.createPage(body) };
+			})
+	);
+
+	server.registerTool(
+		'update_page',
+		{
+			title: 'Update a page',
+			description:
+				'Changes the handle, title, bio, theme, blocks, or domain of a link page, or turns it off or on. blocks replaces the whole list: call get_page first and send every block to keep, in order. After a handle change, the old address forwards to the new one for 90 days.',
+			inputSchema: z.object({
+				page: z.string().min(1).max(100).describe('The page ID or handle.'),
+				handle: z.string().min(3).max(30).optional().describe('A new page address.'),
+				title: z.string().min(1).max(maxPageTitleLength).optional(),
+				bio: z
+					.string()
+					.max(maxPageBioLength)
+					.nullable()
+					.optional()
+					.describe('null removes the bio.'),
+				theme: pageThemeInput.optional(),
+				blocks: pageBlocksInput.optional(),
+				domain: pageDomain.nullable().optional().describe('null takes the page off the domain.'),
+				enabled: z
+					.boolean()
+					.optional()
+					.describe('false takes the page offline; true shows it again.')
+			}),
+			outputSchema: z.looseObject({ page: pageOutput }),
+			annotations: {
+				title: 'Update a page',
+				readOnlyHint: false,
+				destructiveHint: true,
+				idempotentHint: true,
+				openWorldHint: true
+			}
+		},
+		({ page, domain, blocks, ...change }) =>
+			attempt(async () => {
+				const id = await findPageId(page);
+				return {
+					page: await client.updatePage(id, {
+						...change,
+						...(blocks ? { blocks: blocks satisfies PageBlockBody[] } : {}),
+						...(await pageDomainId(domain))
+					})
+				};
 			})
 	);
 

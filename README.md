@@ -122,7 +122,7 @@ https://api.flared.page/mcp          # Flared Cloud
 https://YOUR-APP-ADDRESS/mcp         # Self-hosted
 ```
 
-15 tools: create, edit, and turn off links, read analytics and QR codes, import and export links, and apply automations. Setup for each assistant: [flared.page/docs/assistants](https://flared.page/docs/assistants).
+19 tools: create, edit, and turn off links, read analytics and QR codes, import and export links, apply automations, and create and edit link pages. Setup for each assistant: [flared.page/docs/assistants](https://flared.page/docs/assistants).
 
 ## ⌨️ Use the CLI
 

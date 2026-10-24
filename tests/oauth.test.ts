@@ -124,6 +124,7 @@ function api(principal: ApiPrincipal) {
 		appOrigin: origin,
 		domains: { provider: domainProvider, reservedHostnames: ['short.example'] },
 		automations: { email: true, destinationChecks: false },
+		pages: { host: 'pages.example' },
 		authenticate: async () => principal
 	});
 }
@@ -956,16 +957,20 @@ describe('MCP endpoint', () => {
 			'list_domains',
 			'export_links',
 			'list_automations',
+			'list_pages',
+			'get_page',
 			'create_link',
 			'import_links',
 			'update_link',
 			'disable_link',
 			'enable_link',
 			'apply_automation',
-			'remove_automation'
+			'remove_automation',
+			'create_page',
+			'update_page'
 		]);
-		// Eight tools only read; seven change links.
-		expect(listed.result.tools.filter((tool) => tool.annotations.readOnlyHint)).toHaveLength(8);
+		// Ten tools only read; nine change links or pages.
+		expect(listed.result.tools.filter((tool) => tool.annotations.readOnlyHint)).toHaveLength(10);
 		for (const tool of listed.result.tools) {
 			expect(tool.title).toEqual(expect.any(String));
 			expect(tool.outputSchema).toEqual(expect.any(Object));
@@ -1720,6 +1725,102 @@ describe('MCP endpoint', () => {
 		});
 		expect(write.status).toBe(403);
 		expect(write.headers.get('www-authenticate')).toContain('scope="links:read links:write"');
+	});
+
+	it('creates, reads, and changes a page, and keeps extras to plans that include them', async () => {
+		await addTenant('user-40', 'tenant-40');
+		await routing()
+			.prepare(
+				"UPDATE tenant_policy SET page_limit = 1, page_extras = 0 WHERE tenant_id = 'tenant-40'"
+			)
+			.run();
+		const { tokens } = await connect('user-40');
+		const token = tokens.access_token;
+		const link = await call(token, 'create_link', {
+			destination: 'https://example.com/shop',
+			slug: 'mcp-page-shop'
+		});
+		const linkId = String((link.body.result?.structuredContent?.link as { id: string }).id);
+
+		const created = await call(token, 'create_page', {
+			handle: 'mcp-page',
+			title: 'Ada',
+			theme: { id: 'ink' },
+			blocks: [
+				{ kind: 'header', label: 'Shop' },
+				{ kind: 'button', linkId, label: 'Open the shop', endsAt: '2000-01-01T00:00:00Z' },
+				{
+					kind: 'social',
+					links: [{ network: 'github', address: 'https://github.com/ada' }]
+				}
+			]
+		});
+		expect(created.body.result?.isError).toBeUndefined();
+		const page = created.body.result?.structuredContent?.page as {
+			id: string;
+			url: string;
+			blocks: Record<string, unknown>[];
+		};
+		expect(page.url).toBe('https://mcp-page.pages.example');
+		expect(page.blocks).toMatchObject([
+			{ kind: 'header', label: 'Shop', visible: true },
+			{
+				kind: 'button',
+				linkId,
+				shortUrl: 'https://short.example/mcp-page-shop',
+				endsAt: '2000-01-01T00:00:00.000Z',
+				visible: true
+			},
+			{ kind: 'social', visible: true }
+		]);
+
+		const listed = await call(token, 'list_pages');
+		expect(listed.body.result?.structuredContent).toMatchObject({
+			pages: [{ id: page.id, handle: 'mcp-page' }],
+			nextCursor: null
+		});
+		const byHandle = await call(token, 'get_page', { page: 'mcp-page' });
+		expect(byHandle.body.result?.structuredContent).toMatchObject({ page: { id: page.id } });
+		const byId = await call(token, 'get_page', { page: page.id });
+		expect(byId.body.result?.structuredContent).toMatchObject({ page: { handle: 'mcp-page' } });
+		const missing = await call(token, 'get_page', { page: 'no-such-page' });
+		expect(missing.body.result?.isError).toBe(true);
+		expect(missing.body.result?.content[0].text).toContain('NOT_FOUND');
+
+		// The blocks from get_page go back as they are, so an assistant can keep them.
+		const changed = await call(token, 'update_page', {
+			page: 'mcp-page',
+			handle: 'mcp-page-two',
+			bio: 'Hello',
+			blocks: [...page.blocks].reverse()
+		});
+		expect(changed.body.result?.structuredContent).toMatchObject({
+			page: {
+				handle: 'mcp-page-two',
+				bio: 'Hello',
+				theme: { id: 'ink' },
+				blocks: [{ kind: 'social' }, { kind: 'button', linkId }, { kind: 'header' }]
+			}
+		});
+		const off = await call(token, 'update_page', { page: page.id, enabled: false });
+		expect(off.body.result?.structuredContent).toMatchObject({ page: { enabled: false } });
+
+		const embed = await call(token, 'update_page', {
+			page: page.id,
+			blocks: [{ kind: 'embed', provider: 'youtube', address: 'https://youtu.be/dQw4w9WgXcQ' }]
+		});
+		expect(embed.body.result?.isError).toBe(true);
+		expect(embed.body.result?.content[0].text).toContain('PAGE_EXTRAS_REQUIRES_PLAN');
+		const second = await call(token, 'create_page', { handle: 'mcp-page-3', title: 'More' });
+		expect(second.body.result?.content[0].text).toContain('PAGE_LIMIT_REACHED');
+
+		const reader = await connect('user-40', 'links:read offline_access');
+		expect((await call(reader.tokens.access_token, 'list_pages')).status).toBe(200);
+		const write = await call(reader.tokens.access_token, 'update_page', {
+			page: page.id,
+			title: 'No'
+		});
+		expect(write.status).toBe(403);
 	});
 
 	it('applies an automation within 20 D1 statements', async () => {

@@ -1188,13 +1188,17 @@ describe('contracts', () => {
 			'list_domains',
 			'export_links',
 			'list_automations',
+			'list_pages',
+			'get_page',
 			'create_link',
 			'import_links',
 			'update_link',
 			'disable_link',
 			'enable_link',
 			'apply_automation',
-			'remove_automation'
+			'remove_automation',
+			'create_page',
+			'update_page'
 		]);
 	});
 });
