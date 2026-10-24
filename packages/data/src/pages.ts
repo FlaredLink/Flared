@@ -345,7 +345,11 @@ export async function updatePage(
 		);
 	if (change.blocks !== undefined)
 		statements.push(
-			statement(db, `DELETE FROM page_blocks WHERE page_id = ?2 AND ${allowed}`, values),
+			statement(
+				db,
+				`DELETE FROM page_blocks WHERE page_id = ?2 AND tenant_id = ?1 AND ${allowed}`,
+				values
+			),
 			statement(db, insertBlocks(allowed), values)
 		);
 	statements.push(
@@ -482,7 +486,6 @@ export interface PageRefusal {
 	handle: { tenantId: string; held: boolean; pageId: string } | null;
 	handleReserved: boolean;
 	domainOwned: boolean;
-	domainPageId: string | null;
 }
 
 export async function readPageRefusal(
@@ -503,8 +506,7 @@ export async function readPageRefusal(
 				(SELECT page_id FROM page_handles WHERE handle = ?2) AS handle_page,
 				(SELECT released_at IS NULL FROM page_handles WHERE handle = ?2) AS handle_held,
 				EXISTS (SELECT 1 FROM reserved_handles WHERE handle = ?2) AS handle_reserved,
-				EXISTS (SELECT 1 FROM domains WHERE id = ?3 AND tenant_id = ?1 AND state <> 'disabled') AS domain_owned,
-				(SELECT id FROM pages WHERE domain_id = ?3) AS domain_page`
+				EXISTS (SELECT 1 FROM domains WHERE id = ?3 AND tenant_id = ?1 AND state <> 'disabled') AS domain_owned`
 		)
 		.bind(tenantId, handle, domainId)
 		.first<Record<string, unknown>>();
@@ -528,7 +530,6 @@ export async function readPageRefusal(
 						pageId: text(row.handle_page, 'handle page')
 					},
 		handleReserved: row.handle_reserved === 1,
-		domainOwned: row.domain_owned === 1,
-		domainPageId: optionalText(row.domain_page, 'domain page')
+		domainOwned: row.domain_owned === 1
 	};
 }
