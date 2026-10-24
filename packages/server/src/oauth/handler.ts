@@ -132,7 +132,8 @@ export function aiCatalogDocument(
 			{
 				identifier: `urn:air:${host}:mcp:links`,
 				displayName: `${site.displayName} MCP server`,
-				description: 'Create, edit, and measure short links from an AI assistant. Uses OAuth.',
+				description:
+					'Create, edit, and measure short links and link pages from an AI assistant. Uses OAuth.',
 				type: 'application/mcp-server-card+json',
 				url: `${site.origin}/.well-known/mcp/server-card.json`,
 				// The ARD schema allows 2 to 5 queries.
@@ -141,7 +142,7 @@ export function aiCatalogDocument(
 					'how many clicks did my link get this week',
 					'change where my short link points',
 					'add UTM parameters to my link',
-					'send iPhone and Android visitors to my app'
+					'make a link-in-bio page with my links'
 				]
 			}
 		]
