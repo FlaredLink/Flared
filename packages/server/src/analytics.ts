@@ -331,7 +331,11 @@ export async function getPageAnalytics(
 	const referrers = [
 		...new Set(request.hostnames.map((hostname) => normalizeReferrer(`https://${hostname}/`)))
 	].filter((hostname) => hostname !== 'unknown');
-	const linkIds = request.buttons.map((button) => button.linkId);
+	// Two blocks can open the same link; its clicks count once, under the first block's label.
+	const buttons = request.buttons.filter(
+		(button, index, all) => all.findIndex((other) => other.linkId === button.linkId) === index
+	);
+	const linkIds = buttons.map((button) => button.linkId);
 	const [totals, dimensions, clicks] = await Promise.all([
 		readPageDailyViews(db, tenantId, pageId, from, to),
 		readPageDimensions(db, tenantId, pageId, from, to),
@@ -353,7 +357,7 @@ export async function getPageAnalytics(
 		referrers: of('referrer'),
 		browsers: of('browser'),
 		operatingSystems: of('os'),
-		buttons: request.buttons
+		buttons: buttons
 			.map((button) => ({ ...button, clicks: clicks.get(button.linkId) ?? 0 }))
 			.sort((a, b) => b.clicks - a.clicks),
 		asOf: new Date(now).toISOString()

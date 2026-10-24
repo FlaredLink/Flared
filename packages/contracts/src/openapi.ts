@@ -459,7 +459,7 @@ const schemas = {
 			type: 'array',
 			items: object({ linkId: { type: 'string' }, label: { type: 'string' }, clicks: count }),
 			description:
-				"The page's buttons and payment cards, most clicks first. clicks counts the clicks of the button's link that came from one of the page's addresses."
+				"The links of the page's buttons and payment cards, most clicks first: one entry per link, with the label of the first block that opens it. clicks counts the clicks of the link that came from one of the page's addresses."
 		},
 		asOf: dateTime
 	}),

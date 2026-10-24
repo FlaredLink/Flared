@@ -573,8 +573,12 @@ describe('page views', () => {
 
 	it('records views apart from clicks, once per event, and reads them with button clicks', async () => {
 		const link = await createLink('user-plus');
+		// Two buttons on one link: its clicks count once, under the first label.
 		const page = await createPage('user-plus', {
-			blocks: [{ kind: 'button', linkId: link.id, label: 'Shop' }]
+			blocks: [
+				{ kind: 'button', linkId: link.id, label: 'Shop' },
+				{ kind: 'button', linkId: link.id, label: 'Shop again' }
+			]
 		});
 		const views: AnalyticsEvent[] = [];
 		const handler = pages({ views });

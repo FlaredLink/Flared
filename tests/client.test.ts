@@ -602,7 +602,8 @@ describe('domains and QR codes', () => {
 		}
 		const analytics = await client(readOnly).getPageAnalytics(page.id);
 		expect(analytics).toMatchObject({ pageId: page.id, views: 0 });
-		expect(analytics.buttons.map((button) => button.label)).toEqual(['Buy', 'Guide']);
+		// The button and the card open one link, so its clicks count once.
+		expect(analytics.buttons.map((button) => button.label)).toEqual(['Buy']);
 		const changed = await client().updatePage(page.id, { title: 'Store', blocks: [] });
 		expect(changed).toMatchObject({ title: 'Store', blocks: [] });
 		await client().deletePage(page.id);
