@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Abuse actions of the installation's operator: block a link, suspend a tenant, and end a
-// tenant's credentials. They act across tenants, so only an operator composition may call them;
+// Abuse actions of the installation's operator: block a link or a page, suspend a tenant, and end
+// a tenant's credentials. They act across tenants, so only an operator composition may call them;
 // tenant checks elsewhere stay as they are. The caller authenticates the operator and keeps the
 // audit record.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
 import type { BlockReason } from '@flared/contracts/links';
 import { setLinkBlock } from '@flared/data/links';
+import { setPageBlock } from '@flared/data/pages';
 import { deleteTenantCredentials, setTenantSuspension } from '@flared/data/tenancy';
 import { projectPolicy, type PolicyStores } from './tenancy';
 
@@ -49,6 +50,36 @@ export async function unblockLink(
 	if (!result) return { status: 'not_found' };
 	if (result.changed)
 		log('operator_link_unblocked', operator, { linkId: request.linkId, tenantId: result.tenantId });
+	return { status: result.changed ? 'changed' : 'unchanged', tenantId: result.tenantId };
+}
+
+// A page snapshot lives at most 60 seconds, so the blocked page reaches every visitor in that time.
+// The owner can neither change nor delete a blocked page.
+export async function blockPage(
+	routing: D1Database,
+	operator: OperatorPrincipal,
+	request: { pageId: string; reason: BlockReason; now: number }
+): Promise<OperatorResult> {
+	const result = await setPageBlock(routing, request.pageId, {
+		reason: request.reason,
+		now: request.now
+	});
+	if (!result) return { status: 'not_found' };
+	if (result.changed)
+		log('operator_page_blocked', operator, { pageId: request.pageId, tenantId: result.tenantId });
+	return { status: result.changed ? 'changed' : 'unchanged', tenantId: result.tenantId };
+}
+
+// The page shows again only if its owner still has it turned on.
+export async function unblockPage(
+	routing: D1Database,
+	operator: OperatorPrincipal,
+	request: { pageId: string }
+): Promise<OperatorResult> {
+	const result = await setPageBlock(routing, request.pageId, null);
+	if (!result) return { status: 'not_found' };
+	if (result.changed)
+		log('operator_page_unblocked', operator, { pageId: request.pageId, tenantId: result.tenantId });
 	return { status: result.changed ? 'changed' : 'unchanged', tenantId: result.tenantId };
 }
 

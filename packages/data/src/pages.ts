@@ -668,3 +668,80 @@ export async function replacePageImage(
 		.run();
 	return result.meta.changes === 1;
 }
+
+// A page as the operator sees it, of any tenant, with the links its blocks open.
+export interface OperatorPage extends PageRow {
+	tenantId: string;
+	blockedAt: number | null;
+	links: { id: string; shortUrl: string; destination: string }[];
+}
+
+// The operator's lookup across tenants: the page that has or last had the handle, or the page put
+// on the hostname. Disabled and blocked pages are found too.
+export async function findOperatorPage(
+	db: D1Database,
+	address: { handle: string } | { hostname: string }
+): Promise<OperatorPage | null> {
+	const session = db.withSession('first-primary');
+	const row = await (
+		'handle' in address
+			? session
+					.prepare(
+						`SELECT ${pageColumns}, p.tenant_id, p.blocked_at FROM page_handles h
+					JOIN pages p ON p.id = h.page_id AND p.tenant_id = h.tenant_id WHERE h.handle = ?`
+					)
+					.bind(address.handle)
+			: session
+					.prepare(
+						`SELECT ${pageColumns}, p.tenant_id, p.blocked_at FROM domain_namespaces n
+					JOIN pages p ON p.domain_id = n.id WHERE n.hostname = ?`
+					)
+					.bind(address.hostname)
+	).first<Record<string, unknown>>();
+	if (!row) return null;
+	const page = toPage(row);
+	const tenantId = text(row.tenant_id, 'tenant');
+	const blocks = await readPageBlocks(session, tenantId, page.id);
+	const links = new Map<string, { id: string; shortUrl: string; destination: string }>();
+	for (const block of blocks)
+		if (block.linkId && block.link)
+			links.set(block.linkId, {
+				id: block.linkId,
+				shortUrl: block.link.shortUrl,
+				destination: block.link.destination
+			});
+	return {
+		...page,
+		tenantId,
+		blockedAt: row.blocked_at === null ? null : time(row.blocked_at, 'block time'),
+		links: [...links.values()]
+	};
+}
+
+// Sets or clears the operator's block of a page. changed false: the page was already in that
+// state, so nothing was written.
+export async function setPageBlock(
+	db: D1Database,
+	pageId: string,
+	block: { reason: BlockReason; now: number } | null
+): Promise<{ tenantId: string; changed: boolean } | null> {
+	const changed = await (
+		block
+			? db
+					.prepare(
+						'UPDATE pages SET blocked_at = ?, blocked_reason = ? WHERE id = ? AND blocked_at IS NULL RETURNING tenant_id'
+					)
+					.bind(block.now, block.reason, pageId)
+			: db
+					.prepare(
+						'UPDATE pages SET blocked_at = NULL, blocked_reason = NULL WHERE id = ? AND blocked_at IS NOT NULL RETURNING tenant_id'
+					)
+					.bind(pageId)
+	).first<{ tenant_id: unknown }>();
+	if (changed) return { tenantId: text(changed.tenant_id, 'tenant'), changed: true };
+	const existing = await db
+		.prepare('SELECT tenant_id FROM pages WHERE id = ?')
+		.bind(pageId)
+		.first<{ tenant_id: unknown }>();
+	return existing ? { tenantId: text(existing.tenant_id, 'tenant'), changed: false } : null;
+}

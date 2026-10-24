@@ -11,11 +11,12 @@ import {
 } from '../packages/contracts/src/analytics';
 import { purgeExpired } from '../packages/data/src/analytics';
 import { deleteAnalyticsData } from '../packages/data/src/deletions';
-import { handleRedirectMs } from '../packages/data/src/pages';
+import { findOperatorPage, handleRedirectMs } from '../packages/data/src/pages';
 import { createTenant } from '../packages/data/src/tenancy';
 import { createClickConsumer, type QueueMessage } from '../packages/server/src/analytics';
 import { createApi } from '../packages/server/src/api';
 import { createDeadLetterConsumer, requeueDeadLetter } from '../packages/server/src/operations';
+import { blockPage, unblockPage } from '../packages/server/src/operator';
 import { createPageHandler, pageSnapshotLifetimeMs } from '../packages/server/src/page-host';
 import { deleteTenantPageImages } from '../packages/server/src/page-images';
 import { createRedirectHandler } from '../packages/server/src/redirect';
@@ -353,6 +354,78 @@ describe('the page', () => {
 				.prepare("UPDATE tenant_policy SET suspended_at = NULL WHERE tenant_id = 'tenant-other'")
 				.run();
 		}
+	});
+
+	it('shows the blocked page within 60 seconds of an operator block, and the page after an unblock', async () => {
+		const operator = { kind: 'operator', id: 'admin-session-1' } as const;
+		const page = await createPage('user-plus');
+		const handler = pages();
+		const saved = clock;
+		try {
+			expect((await visit(handler, `${page.url}/`)).status).toBe(200);
+			const blocked = await blockPage(routing(), operator, {
+				pageId: page.id,
+				reason: 'phishing',
+				now: clock
+			});
+			expect(blocked).toEqual({ status: 'changed', tenantId: 'tenant-plus' });
+			expect(
+				await blockPage(routing(), operator, { pageId: page.id, reason: 'spam', now: clock })
+			).toEqual({ status: 'unchanged', tenantId: 'tenant-plus' });
+			clock = saved + pageSnapshotLifetimeMs;
+			expect((await visit(handler, `${page.url}/`)).status).toBe(410);
+			// The owner can neither change nor delete it.
+			expect(
+				(await call('user-plus', 'PATCH', `/v1/pages/${page.id}`, { title: 'Other' })).status
+			).toBe(409);
+			expect((await call('user-plus', 'DELETE', `/v1/pages/${page.id}`)).status).toBe(409);
+			const read = await json(await call('user-plus', 'GET', `/v1/pages/${page.id}`));
+			expect(read.page.blocked).toEqual({ reason: 'phishing' });
+
+			expect(await unblockPage(routing(), operator, { pageId: page.id })).toEqual({
+				status: 'changed',
+				tenantId: 'tenant-plus'
+			});
+			// Neither result is cached, so the page shows at once.
+			expect((await visit(handler, `${page.url}/`)).status).toBe(200);
+			expect(await unblockPage(routing(), operator, { pageId: 'page-missing' })).toEqual({
+				status: 'not_found'
+			});
+		} finally {
+			clock = saved;
+		}
+	});
+
+	it('finds a page for the operator by handle, old handle, or domain, with its links', async () => {
+		const link = await createLink('user-plus');
+		const page = await createPage('user-plus', {
+			domainId: 'dom-plus-2',
+			blocks: [{ kind: 'button', linkId: link.id, label: 'Shop' }]
+		});
+		const found = await findOperatorPage(routing(), { handle: page.handle });
+		expect(found).toMatchObject({
+			id: page.id,
+			tenantId: 'tenant-plus',
+			handle: page.handle,
+			domainHostname: 'more.plus.example',
+			blockedAt: null,
+			links: [{ id: link.id, shortUrl: link.shortUrl, destination: 'https://example.com/landing' }]
+		});
+		expect(await findOperatorPage(routing(), { hostname: 'more.plus.example' })).toMatchObject({
+			id: page.id
+		});
+		const renamed = `${page.handle}-op`;
+		expect(
+			(await call('user-plus', 'PATCH', `/v1/pages/${page.id}`, { handle: renamed })).status
+		).toBe(200);
+		expect(await findOperatorPage(routing(), { handle: page.handle })).toMatchObject({
+			id: page.id,
+			handle: renamed
+		});
+		await call('user-plus', 'PATCH', `/v1/pages/${page.id}`, { enabled: false });
+		expect(await findOperatorPage(routing(), { handle: renamed })).toMatchObject({ active: false });
+		expect(await findOperatorPage(routing(), { handle: 'nobody-here' })).toBeNull();
+		expect(await findOperatorPage(routing(), { hostname: 'links.unknown.example' })).toBeNull();
 	});
 
 	it('keeps a snapshot for 60 seconds', async () => {
