@@ -7,6 +7,7 @@
 // location sent. The IP address and the destination never leave.
 import {
 	clickEventSchemaVersion,
+	pageViewEventSchemaVersion,
 	forwardShortUrlMaxLength,
 	forwardUserAgentMaxLength,
 	forwardUtmMaxLength,
@@ -18,6 +19,7 @@ import {
 	type ClickForward,
 	type DeviceCategory,
 	type OsFamily,
+	type PageViewEvent,
 	type UtmTag
 } from '@flared/contracts/analytics';
 
@@ -186,5 +188,34 @@ export function buildClickEvent(
 		browser: browserFamily(userAgent),
 		os: osFamily(userAgent),
 		...(forward ? { forward } : {})
+	};
+}
+
+export interface PageViewTarget {
+	tenantId: string;
+	pageId: string;
+	analyticsShardId: string;
+}
+
+// The same coarse fields as a click, and never forwarding fields.
+export function buildPageViewEvent(
+	request: Request,
+	target: PageViewTarget,
+	now: number
+): PageViewEvent {
+	const userAgent = request.headers.get('user-agent');
+	return {
+		type: 'page_view',
+		schemaVersion: pageViewEventSchemaVersion,
+		eventId: crypto.randomUUID(),
+		tenantId: target.tenantId,
+		analyticsShardId: target.analyticsShardId,
+		pageId: target.pageId,
+		occurredAt: now,
+		country: countryOf(request),
+		deviceCategory: deviceCategory(userAgent),
+		referrerHostname: normalizeReferrer(request.headers.get('referer')),
+		browser: browserFamily(userAgent),
+		os: osFamily(userAgent)
 	};
 }

@@ -2,7 +2,12 @@
 // Operating the installation: analytics shard sizes and their growth, and click events that
 // the Queue gave up on. Each edition chooses its own capacity thresholds.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
-import { clickEventMaxAgeMs, parseClickEvent, withoutForward } from '@flared/contracts/analytics';
+import {
+	clickEventMaxAgeMs,
+	isPageViewEvent,
+	parseAnalyticsEvent,
+	withoutForward
+} from '@flared/contracts/analytics';
 import { readIngestionSummary, type IngestionSummary } from '@flared/data/analytics';
 import {
 	claimDeadLetter,
@@ -143,14 +148,16 @@ export function createDeadLetterConsumer(dependencies: {
 		readonly messages: readonly DeadLetterMessage[];
 	}): Promise<void> {
 		for (const message of batch.messages) {
-			const event = parseClickEvent(message.body);
+			const event = parseAnalyticsEvent(message.body);
 			try {
 				await storeDeadLetter(dependencies.identity, {
 					id: event ? `event:${event.eventId}` : `message:${message.id.slice(0, 128)}`,
 					receivedAt: now(),
 					shardId: event?.analyticsShardId ?? null,
 					occurredAt: event?.occurredAt ?? null,
-					event: event ? JSON.stringify(withoutForward(event)) : null
+					event: event
+						? JSON.stringify(isPageViewEvent(event) ? event : withoutForward(event))
+						: null
 				});
 				console.error(
 					JSON.stringify({ event: 'click_dead_letter', valid: event !== null, id: message.id })
@@ -183,7 +190,7 @@ export async function requeueDeadLetter(
 	} catch {
 		body = null;
 	}
-	const event = parseClickEvent(body);
+	const event = parseAnalyticsEvent(body);
 	if (!event || event.occurredAt < now - clickEventMaxAgeMs) {
 		await releaseDeadLetter(identity, id, now);
 		return event ? 'expired' : 'not_found';

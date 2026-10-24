@@ -3,8 +3,10 @@
 // browsers, and Workers: it uses only fetch and never imports server modules.
 import {
 	isLinkAnalytics,
+	isPageAnalytics,
 	isUsage,
 	type LinkAnalytics,
+	type PageAnalytics,
 	type Usage
 } from '@flared/contracts/analytics';
 import {
@@ -38,6 +40,7 @@ import {
 	isPageList,
 	type CreatePageBody,
 	type Page,
+	type PageImageSlot,
 	type PageList,
 	type UpdatePageBody
 } from '@flared/contracts/pages';
@@ -173,6 +176,9 @@ export interface FlaredClient {
 	// blocks replaces the whole list.
 	updatePage(id: string, change: UpdatePageBody): Promise<Page>;
 	deletePage(id: string): Promise<void>;
+	setPageImage(id: string, slot: PageImageSlot, image: PreviewImage): Promise<Page>;
+	removePageImage(id: string, slot: PageImageSlot): Promise<Page>;
+	getPageAnalytics(id: string, range?: { from?: string; to?: string }): Promise<PageAnalytics>;
 }
 
 const maxRetryWaitSeconds = 30;
@@ -436,6 +442,26 @@ export function createClient(options: ClientOptions): FlaredClient {
 		},
 		async deletePage(pageId) {
 			await request('DELETE', `/pages/${id(pageId)}`, { retry: false });
+		},
+		setPageImage(pageId, slot, image) {
+			return pageFrom(
+				request('PUT', `/pages/${id(pageId)}/${slot}-image`, { image, retry: false })
+			);
+		},
+		removePageImage(pageId, slot) {
+			return pageFrom(request('DELETE', `/pages/${id(pageId)}/${slot}-image`, { retry: false }));
+		},
+		async getPageAnalytics(pageId, range = {}) {
+			const params = new URLSearchParams();
+			if (range.from) params.set('from', range.from);
+			if (range.to) params.set('to', range.to);
+			const suffix = params.size ? `?${params}` : '';
+			const { status, body } = await request('GET', `/pages/${id(pageId)}/analytics${suffix}`, {
+				retry: true
+			});
+			const analytics = record(body)?.analytics;
+			if (!isPageAnalytics(analytics)) throw invalid(status);
+			return analytics;
 		}
 	};
 }

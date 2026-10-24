@@ -912,3 +912,12 @@ export function isPage(value: unknown): value is Page {
 		typeof value.theme.id === 'string'
 	);
 }
+
+// An uploaded avatar or background image: PNG, JPEG, or WebP, at most 5 MB, as link card images.
+// It is served on the page's own host; a new image gets a new name.
+export const pageImageSlots = ['avatar', 'background'] as const;
+export type PageImageSlot = (typeof pageImageSlots)[number];
+
+export function pageImagePath(file: string): string {
+	return `/_image/${file}`;
+}

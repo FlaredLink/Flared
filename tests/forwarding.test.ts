@@ -9,7 +9,8 @@ import {
 	visitorIdPattern,
 	withoutForward,
 	type ClickEvent,
-	type ClickForward
+	type ClickForward,
+	isPageViewEvent
 } from '../packages/contracts/src/analytics';
 import { applyAnalyticsPolicy } from '../packages/data/src/analytics';
 import { findRedirectTarget } from '../packages/data/src/links';
@@ -92,7 +93,10 @@ function handler(options: { now?: () => number; cacheName?: string; sink?: boole
 		routing: routing(),
 		appOrigin: 'https://app.example',
 		cacheName: options.cacheName ?? `forwarding-test-${cacheCounter}`,
-		clicks: options.sink === false ? undefined : { send: async (event) => void events.push(event) },
+		clicks:
+			options.sink === false
+				? undefined
+				: { send: async (event) => void (isPageViewEvent(event) || events.push(event)) },
 		now: options.now ?? (() => start)
 	});
 	const visit = (slug: string, headers: Record<string, string> = {}, method = 'GET') =>
@@ -691,7 +695,7 @@ describe('dead letters', () => {
 		expect(
 			await requeueDeadLetter(
 				identity(),
-				{ send: async (body) => void sent.push(body) },
+				{ send: async (body) => void (isPageViewEvent(body) || sent.push(body)) },
 				`event:${value.eventId}`,
 				start
 			)

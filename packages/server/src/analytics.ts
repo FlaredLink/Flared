@@ -1,18 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The click Queue consumer and the analytics reads. Both resolve the tenant's assigned shard.
+// The click Queue consumer and the analytics reads. Both resolve the tenant's assigned shard. Page
+// views travel on the same Queue and are counted apart from clicks.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
 import {
 	clickEventMaxAgeMs,
 	clickEventMaxSkewMs,
 	dayPattern,
+	isPageViewEvent,
+	normalizeReferrer,
 	oldestRetainedDay,
-	parseClickEvent,
+	parseAnalyticsEvent,
 	utcDay,
 	usageWarnings,
 	utcMonth,
+	type AnalyticsEvent,
 	type ClickEvent,
 	type DimensionClicks,
+	type DimensionViews,
 	type LinkAnalytics,
+	type PageAnalytics,
 	type Usage
 } from '@flared/contracts/analytics';
 import {
@@ -23,12 +29,16 @@ import {
 } from '@flared/contracts/export';
 import {
 	ingestClick,
+	ingestPageView,
 	readDailyTotals,
 	readExportDimensions,
 	readExportTotals,
 	readDimensions,
 	readLinkDailyClicks,
 	readMonthlyUsage,
+	readPageDailyViews,
+	readPageDimensions,
+	readReferredClicks,
 	readShardPolicy,
 	recordIngestionMinutes,
 	type IngestionMinute,
@@ -80,37 +90,60 @@ export function createClickConsumer(dependencies: ClickConsumerDependencies) {
 		return 'dropped';
 	}
 
+	// A click counts against the monthly allowance; a page view never does.
+	function ingest(db: D1Database, event: AnalyticsEvent, time: number) {
+		if (isPageViewEvent(event))
+			return ingestPageView(
+				db,
+				{
+					tenantId: event.tenantId,
+					eventId: event.eventId,
+					pageId: event.pageId,
+					day: utcDay(event.occurredAt),
+					country: event.country,
+					device: event.deviceCategory,
+					referrer: event.referrerHostname,
+					browser: event.browser,
+					os: event.os
+				},
+				crypto.randomUUID(),
+				time
+			);
+		return ingestClick(
+			db,
+			{
+				tenantId: event.tenantId,
+				eventId: event.eventId,
+				linkId: event.linkId,
+				day: utcDay(event.occurredAt),
+				month: utcMonth(event.occurredAt),
+				country: event.country,
+				device: event.deviceCategory,
+				referrer: event.referrerHostname,
+				browser: event.browser ?? null,
+				os: event.os ?? null
+			},
+			crypto.randomUUID(),
+			time
+		);
+	}
+
 	async function consumeOne(
 		message: QueueMessage,
-		event: ClickEvent | null,
+		event: AnalyticsEvent | null,
 		time: number
 	): Promise<ConsumeResult> {
 		if (!event) return drop(message, 'invalid');
 		// Synthetic checks arrive with their own plan; until then a test event is never counted.
-		if (event.kind !== 'production') return drop(message, 'unsupported_kind');
+		if (!isPageViewEvent(event) && event.kind !== 'production')
+			return drop(message, 'unsupported_kind');
 		if (dependencies.fixedTenantId !== undefined && event.tenantId !== dependencies.fixedTenantId)
 			return drop(message, 'foreign_tenant');
 		if (event.occurredAt < time - clickEventMaxAgeMs) return drop(message, 'expired');
 		if (event.occurredAt > time + clickEventMaxSkewMs) return drop(message, 'future');
 		try {
 			const db = resolveShard(dependencies.shards, event.analyticsShardId);
-			const outcome = await ingestClick(
-				db,
-				{
-					tenantId: event.tenantId,
-					eventId: event.eventId,
-					linkId: event.linkId,
-					day: utcDay(event.occurredAt),
-					month: utcMonth(event.occurredAt),
-					country: event.country,
-					device: event.deviceCategory,
-					referrer: event.referrerHostname,
-					browser: event.browser ?? null,
-					os: event.os ?? null
-				},
-				crypto.randomUUID(),
-				time
-			);
+			const outcome = await ingest(db, event, time);
 			if (outcome === 'no_policy') {
 				// A deleted workspace never gets its policy back, so its late clicks are dropped.
 				if (await isTombstoned(db, event.tenantId)) return drop(message, 'deleted_tenant');
@@ -136,11 +169,11 @@ export function createClickConsumer(dependencies: ClickConsumerDependencies) {
 		const forwards: ClickEvent[] = [];
 		for (const message of batch.messages) {
 			const time = now();
-			const event = parseClickEvent(message.body);
+			const event = parseAnalyticsEvent(message.body);
 			const result = await consumeOne(message, event, time);
 			results.push(result);
 			if (!event) continue;
-			if (result === 'admitted' && event.forward) forwards.push(event);
+			if (result === 'admitted' && !isPageViewEvent(event) && event.forward) forwards.push(event);
 			const minute = Math.floor(time / 60000) * 60000;
 			const shard = minutes.get(event.analyticsShardId) ?? new Map<number, IngestionMinute>();
 			minutes.set(event.analyticsShardId, shard);
@@ -274,6 +307,55 @@ export async function getLinkAnalytics(
 		referrers: of('referrer'),
 		browsers: of('browser'),
 		operatingSystems: of('os'),
+		asOf: new Date(now).toISOString()
+	};
+}
+
+// The caller has already checked that the tenant owns the page. buttons are the page's buttons
+// and payment cards; hostnames are the page's addresses, whose clicks count as from the page.
+export async function getPageAnalytics(
+	identity: D1Database,
+	shards: AnalyticsShards,
+	request: {
+		tenantId: string;
+		pageId: string;
+		buttons: readonly { linkId: string; label: string }[];
+		hostnames: readonly string[];
+		range: { from?: string; to?: string };
+	},
+	now: number
+): Promise<PageAnalytics> {
+	const { tenantId, pageId } = request;
+	const { db, policy } = await tenantShard(identity, shards, tenantId);
+	const { from, to } = parseRange(request.range, now, policy.retentionDays);
+	const referrers = [
+		...new Set(request.hostnames.map((hostname) => normalizeReferrer(`https://${hostname}/`)))
+	].filter((hostname) => hostname !== 'unknown');
+	const linkIds = request.buttons.map((button) => button.linkId);
+	const [totals, dimensions, clicks] = await Promise.all([
+		readPageDailyViews(db, tenantId, pageId, from, to),
+		readPageDimensions(db, tenantId, pageId, from, to),
+		readReferredClicks(db, tenantId, linkIds, referrers, from, to)
+	]);
+	const days = daysBetween(from, to).map((day) => ({ day, views: totals.get(day) ?? 0 }));
+	const of = (name: string): DimensionViews[] =>
+		dimensions
+			.filter((row) => row.dimension === name)
+			.map(({ value, views }) => ({ value, views }));
+	return {
+		pageId,
+		from,
+		to,
+		views: days.reduce((sum, day) => sum + day.views, 0),
+		days,
+		countries: of('country'),
+		devices: of('device'),
+		referrers: of('referrer'),
+		browsers: of('browser'),
+		operatingSystems: of('os'),
+		buttons: request.buttons
+			.map((button) => ({ ...button, clicks: clicks.get(button.linkId) ?? 0 }))
+			.sort((a, b) => b.clicks - a.clicks),
 		asOf: new Date(now).toISOString()
 	};
 }

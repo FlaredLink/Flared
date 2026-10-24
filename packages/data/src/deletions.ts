@@ -394,6 +394,8 @@ export async function deleteAnalyticsData(
 	const results = await db.batch([
 		byRowid('daily_totals'),
 		byRowid('daily_dimensions'),
+		byRowid('page_daily_totals'),
+		byRowid('page_daily_dimensions'),
 		byRowid('monthly_usage'),
 		byRowid('link_click_totals'),
 		byRowid('click_milestones'),

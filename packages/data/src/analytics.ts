@@ -212,6 +212,152 @@ export async function ingestClick(
 	return seen === 1 ? 'duplicate' : 'no_policy';
 }
 
+// One page view, already validated, with its UTC day.
+export interface PageViewRecord {
+	tenantId: string;
+	eventId: string;
+	pageId: string;
+	day: string;
+	country: string;
+	device: string;
+	referrer: string;
+	browser: string;
+	os: string;
+}
+
+// One transactional batch with the same guard as ingestClick. A view is admitted while the shard
+// holds the tenant's policy; the monthly click allowance does not apply.
+export async function ingestPageView(
+	db: D1Database,
+	view: PageViewRecord,
+	attemptToken: string,
+	now: number
+): Promise<'admitted' | 'duplicate' | 'no_policy'> {
+	const { tenantId, eventId, pageId, day } = view;
+	const admitted =
+		"EXISTS (SELECT 1 FROM event_receipts WHERE tenant_id = ? AND event_id = ? AND attempt_token = ? AND outcome = 'admitted')";
+	const guard = [tenantId, eventId, attemptToken];
+	const dimension = (name: string, value: string) =>
+		db
+			.prepare(
+				`INSERT INTO page_daily_dimensions (tenant_id, page_id, day, dimension, value, views) SELECT ?, ?, ?, ?, ?, 1 WHERE ${admitted} ON CONFLICT(tenant_id, page_id, day, dimension, value) DO UPDATE SET views = views + 1`
+			)
+			.bind(tenantId, pageId, day, name, value, ...guard);
+	const referrerRow =
+		"SELECT 1 FROM page_daily_dimensions WHERE tenant_id = ? AND page_id = ? AND day = ? AND dimension = 'referrer' AND value = ?";
+	const results = await db.batch([
+		db
+			.prepare(
+				"INSERT INTO event_receipts (tenant_id, event_id, attempt_token, outcome, received_at) SELECT ?, ?, ?, 'admitted', ? WHERE EXISTS (SELECT 1 FROM tenant_policy WHERE tenant_id = ?) ON CONFLICT(tenant_id, event_id) DO NOTHING"
+			)
+			.bind(tenantId, eventId, attemptToken, now, tenantId),
+		db
+			.prepare(
+				`INSERT INTO page_daily_totals (tenant_id, page_id, day, views) SELECT ?, ?, ?, 1 WHERE ${admitted} ON CONFLICT(tenant_id, page_id, day) DO UPDATE SET views = views + 1`
+			)
+			.bind(tenantId, pageId, day, ...guard),
+		dimension('country', view.country),
+		dimension('device', view.device),
+		dimension('browser', view.browser),
+		dimension('os', view.os),
+		db
+			.prepare(
+				`INSERT INTO page_daily_dimensions (tenant_id, page_id, day, dimension, value, views) SELECT ?, ?, ?, 'referrer', ?, 1 WHERE ${admitted} AND (EXISTS (${referrerRow}) OR (SELECT COUNT(*) FROM page_daily_dimensions WHERE tenant_id = ? AND page_id = ? AND day = ? AND dimension = 'referrer' AND value <> 'other') < ?) ON CONFLICT(tenant_id, page_id, day, dimension, value) DO UPDATE SET views = views + 1`
+			)
+			.bind(
+				tenantId,
+				pageId,
+				day,
+				view.referrer,
+				...guard,
+				tenantId,
+				pageId,
+				day,
+				view.referrer,
+				tenantId,
+				pageId,
+				day,
+				referrerLimit
+			),
+		db
+			.prepare(
+				`INSERT INTO page_daily_dimensions (tenant_id, page_id, day, dimension, value, views) SELECT ?, ?, ?, 'referrer', 'other', 1 WHERE ${admitted} AND NOT EXISTS (${referrerRow}) ON CONFLICT(tenant_id, page_id, day, dimension, value) DO UPDATE SET views = views + 1`
+			)
+			.bind(tenantId, pageId, day, ...guard, tenantId, pageId, day, view.referrer),
+		db
+			.prepare(
+				'SELECT (SELECT outcome FROM event_receipts WHERE tenant_id = ? AND event_id = ? AND attempt_token = ?) AS outcome, EXISTS (SELECT 1 FROM event_receipts WHERE tenant_id = ? AND event_id = ?) AS seen'
+			)
+			.bind(...guard, tenantId, eventId)
+	]);
+	const row = results.at(-1)?.results[0];
+	if (typeof row !== 'object' || row === null) throw new Error('Ingestion returned no outcome');
+	const { outcome, seen } = Object.fromEntries(Object.entries(row));
+	if (outcome === 'admitted') return outcome;
+	if (outcome !== null) throw new Error('Invalid stored outcome');
+	return seen === 1 ? 'duplicate' : 'no_policy';
+}
+
+export async function readPageDailyViews(
+	db: D1Database,
+	tenantId: string,
+	pageId: string,
+	from: string,
+	to: string
+): Promise<Map<string, number>> {
+	const { results } = await db
+		.prepare(
+			'SELECT day, views FROM page_daily_totals WHERE tenant_id = ? AND page_id = ? AND day >= ? AND day <= ? ORDER BY day LIMIT 400'
+		)
+		.bind(tenantId, pageId, from, to)
+		.all<Record<string, unknown>>();
+	return new Map(results.map((row) => [text(row.day, 'day'), count(row.views, 'views')]));
+}
+
+export async function readPageDimensions(
+	db: D1Database,
+	tenantId: string,
+	pageId: string,
+	from: string,
+	to: string
+): Promise<{ dimension: ExportDimension; value: string; views: number }[]> {
+	const { results } = await db
+		.prepare(
+			'SELECT dimension, value, SUM(views) AS views FROM page_daily_dimensions WHERE tenant_id = ? AND page_id = ? AND day >= ? AND day <= ? GROUP BY dimension, value ORDER BY views DESC, value LIMIT 1000'
+		)
+		.bind(tenantId, pageId, from, to)
+		.all<Record<string, unknown>>();
+	return results.map((row) => ({
+		dimension: storedDimension(row.dimension),
+		value: text(row.value, 'value'),
+		views: count(row.views, 'views')
+	}));
+}
+
+// Clicks of each of up to 100 links of one tenant whose referrer is one of the host names, over
+// the range.
+export async function readReferredClicks(
+	db: D1Database,
+	tenantId: string,
+	linkIds: readonly string[],
+	referrers: readonly string[],
+	from: string,
+	to: string
+): Promise<Map<string, number>> {
+	if (linkIds.length === 0 || referrers.length === 0) return new Map();
+	if (linkIds.length > 100) throw new Error('Too many links');
+	const { results } = await db
+		.prepare(
+			`SELECT link_id, SUM(clicks) AS clicks FROM daily_dimensions
+			WHERE tenant_id = ?1 AND link_id IN (SELECT value FROM json_each(?2)) AND dimension = 'referrer'
+				AND value IN (SELECT value FROM json_each(?3)) AND day >= ?4 AND day <= ?5
+			GROUP BY link_id`
+		)
+		.bind(tenantId, JSON.stringify([...new Set(linkIds)]), JSON.stringify(referrers), from, to)
+		.all<Record<string, unknown>>();
+	return new Map(results.map((row) => [text(row.link_id, 'link'), count(row.clicks, 'clicks')]));
+}
+
 export async function readDailyTotals(
 	db: D1Database,
 	tenantId: string,
@@ -489,6 +635,8 @@ export async function purgeExpired(
 	const results = await db.batch([
 		expired('daily_totals'),
 		expired('daily_dimensions'),
+		expired('page_daily_totals'),
+		expired('page_daily_dimensions'),
 		db
 			.prepare(
 				'DELETE FROM event_receipts WHERE (tenant_id, event_id) IN (SELECT tenant_id, event_id FROM event_receipts WHERE received_at < ? LIMIT ?)'

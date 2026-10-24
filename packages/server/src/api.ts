@@ -11,6 +11,7 @@ import {
 	getExportDimensions,
 	getExportTotals,
 	getLinkAnalytics,
+	getPageAnalytics,
 	getRecentClicks,
 	getUsage
 } from './analytics';
@@ -195,6 +196,12 @@ import {
 	type DomainSettings
 } from './domains';
 import { changePage, createPage, getPage, listPages, removePage, type PageSettings } from './pages';
+import {
+	deletePageImages,
+	removePageImage,
+	setPageImage,
+	type PageImageStore
+} from './page-images';
 import { parseCreatePage, parseUpdatePage } from '@flared/contracts/pages';
 import {
 	ApiError,
@@ -301,6 +308,8 @@ export interface ApiDependencies {
 	automations?: AutomationFeatures;
 	// Where pages show. Without a host, a page shows only at the root of a workspace domain.
 	pages?: PageSettings;
+	// Where uploaded page images are kept. Without it, an image upload answers 503.
+	pageImages?: PageImageStore;
 }
 
 export interface WebhookSettings {
@@ -983,8 +992,65 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 	});
 
 	app.delete('/pages/:id', requireScope('links:write'), async (context) => {
-		await removePage(routing, context.var.tenantId, context.req.param('id'), now());
+		const { tenantId } = context.var;
+		const pageId = context.req.param('id');
+		await removePage(routing, tenantId, pageId, now());
+		if (dependencies.pageImages) await deletePageImages(dependencies.pageImages, tenantId, pageId);
 		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
+	});
+
+	// The image goes to the image store first; the page names it only after the store has it.
+	for (const slot of ['avatar', 'background'] as const) {
+		app.put(`/pages/:id/${slot}-image`, requireScope('links:write'), async (context) => {
+			const body = await readImage(context.req.raw);
+			const page = await setPageImage(routing, dependencies.pageImages, {
+				tenantId: context.var.tenantId,
+				pageId: context.req.param('id'),
+				slot,
+				body,
+				now: now(),
+				settings: pageSettings
+			});
+			return respond({ status: 200, body: JSON.stringify({ page }) });
+		});
+
+		app.delete(`/pages/:id/${slot}-image`, requireScope('links:write'), async (context) => {
+			const page = await removePageImage(routing, dependencies.pageImages, {
+				tenantId: context.var.tenantId,
+				pageId: context.req.param('id'),
+				slot,
+				now: now(),
+				settings: pageSettings
+			});
+			return respond({ status: 200, body: JSON.stringify({ page }) });
+		});
+	}
+
+	// Button clicks are the clicks of each button's link that came from one of the page's
+	// addresses.
+	app.get('/pages/:id/analytics', requireScope('analytics:read'), async (context) => {
+		const { tenantId } = context.var;
+		const page = await getPage(routing, tenantId, context.req.param('id'), pageSettings);
+		if (!dependencies.analytics) throw new AnalyticsUnavailableError();
+		const analytics = await getPageAnalytics(
+			identity,
+			dependencies.analytics,
+			{
+				tenantId,
+				pageId: page.id,
+				buttons: page.blocks.flatMap((block) =>
+					block.kind === 'button' || block.kind === 'payment'
+						? [{ linkId: block.linkId, label: block.label }]
+						: []
+				),
+				hostnames: [page.url, page.domainUrl].flatMap((address) =>
+					address ? [new URL(address).hostname] : []
+				),
+				range: { from: context.req.query('from'), to: context.req.query('to') }
+			},
+			now()
+		);
+		return respond({ status: 200, body: JSON.stringify({ analytics }) });
 	});
 
 	app.get('/domains', requireScope('domains:read'), async (context) => {

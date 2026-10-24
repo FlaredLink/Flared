@@ -6,6 +6,7 @@ import {
 	maxPageHandles,
 	pageBlockKinds,
 	type PageBlockInput,
+	type PageImageSlot,
 	type PageBlockKind,
 	type PageTheme
 } from '@flared/contracts/pages';
@@ -407,7 +408,7 @@ export async function readPage(
 }
 
 export async function readPageBlocks(
-	db: D1Database,
+	db: Pick<D1Database, 'prepare'>,
 	tenantId: string,
 	pageId: string
 ): Promise<PageBlockRow[]> {
@@ -532,4 +533,138 @@ export async function readPageRefusal(
 		handleReserved: row.handle_reserved === 1,
 		domainOwned: row.domain_owned === 1
 	};
+}
+
+// What a visitor's request needs of a page: the page, its blocks with their links, the analytics
+// shard, and whether the plan shows the badge (no page extras).
+export interface PageTarget {
+	tenantId: string;
+	pageId: string;
+	analyticsShardId: string;
+	handle: string;
+	// The workspace domain whose root shows the page, while that domain is active.
+	domainHostname: string | null;
+	title: string;
+	bio: string | null;
+	avatarImage: string | null;
+	backgroundImage: string | null;
+	theme: PageTheme;
+	badge: boolean;
+	blocks: PageBlockRow[];
+}
+
+// page: shows. blocked: the operator blocked the page or suspended its workspace. moved: the
+// handle was the page's until a rename less than handleRedirectMs ago; the page is at handle now.
+export type PageLookup =
+	{ kind: 'page'; page: PageTarget } | { kind: 'blocked' } | { kind: 'moved'; handle: string };
+
+// How long an old handle sends visitors to the page's new handle. After that it shows not found,
+// and it stays with the workspace.
+export const handleRedirectMs = 90 * 86400000;
+
+const targetColumns = `p.tenant_id, p.id, p.handle, p.title, p.bio, p.avatar_image, p.background_image, p.theme, p.status,
+	t.analytics_shard_id, COALESCE(t.page_extras, 0) = 0 AS badge,
+	p.blocked_at IS NOT NULL OR t.suspended_at IS NOT NULL AS blocked,
+	(SELECT n.hostname FROM domains d JOIN domain_namespaces n ON n.id = d.id WHERE d.id = p.domain_id AND d.tenant_id = p.tenant_id AND d.state = 'active') AS domain_hostname`;
+
+async function toLookup(
+	db: Pick<D1Database, 'prepare'>,
+	row: Record<string, unknown> | null
+): Promise<PageLookup | null> {
+	if (!row) return null;
+	if (row.blocked === 1) return { kind: 'blocked' };
+	if (row.status !== 'active') return null;
+	const tenantId = text(row.tenant_id, 'tenant');
+	const pageId = text(row.id, 'page');
+	const theme = json(row.theme, 'theme');
+	if (typeof theme.id !== 'string') throw new Error('Invalid stored theme');
+	return {
+		kind: 'page',
+		page: {
+			tenantId,
+			pageId,
+			analyticsShardId: text(row.analytics_shard_id, 'shard'),
+			handle: text(row.handle, 'handle'),
+			domainHostname: optionalText(row.domain_hostname, 'hostname'),
+			title: text(row.title, 'title'),
+			bio: optionalText(row.bio, 'bio'),
+			avatarImage: optionalText(row.avatar_image, 'avatar image'),
+			backgroundImage: optionalText(row.background_image, 'background image'),
+			theme: theme as PageTheme,
+			badge: row.badge === 1,
+			blocks: await readPageBlocks(db, tenantId, pageId)
+		}
+	};
+}
+
+// Visitor reads use the primary, as redirects do, so a committed change or block is never hidden
+// by replica lag. A page shows while its workspace's policy exists in routing.
+export async function findPageByHandle(
+	db: D1Database,
+	handle: string,
+	now: number
+): Promise<PageLookup | null> {
+	const session = db.withSession('first-primary');
+	const row = await session
+		.prepare(
+			`SELECT ${targetColumns}, h.released_at
+			FROM page_handles h
+			JOIN pages p ON p.id = h.page_id AND p.tenant_id = h.tenant_id
+			JOIN tenant_policy t ON t.tenant_id = p.tenant_id
+			WHERE h.handle = ?`
+		)
+		.bind(handle)
+		.first<Record<string, unknown>>();
+	if (!row) return null;
+	if (row.released_at !== null) {
+		const releasedAt = time(row.released_at, 'release time');
+		const current = text(row.handle, 'handle');
+		return now - releasedAt < handleRedirectMs && current !== handle
+			? { kind: 'moved', handle: current }
+			: null;
+	}
+	return toLookup(session, row);
+}
+
+// The page at the root of an active workspace domain, of the domain's own workspace.
+export async function findPageByDomain(
+	db: D1Database,
+	hostname: string
+): Promise<PageLookup | null> {
+	const session = db.withSession('first-primary');
+	const row = await session
+		.prepare(
+			`SELECT ${targetColumns}
+			FROM domain_namespaces n
+			JOIN domains d ON d.id = n.id AND d.state = 'active' AND d.tenant_id IS NOT NULL
+			JOIN pages p ON p.domain_id = n.id AND p.tenant_id = d.tenant_id
+			JOIN tenant_policy t ON t.tenant_id = p.tenant_id
+			WHERE n.hostname = ?`
+		)
+		.bind(hostname)
+		.first<Record<string, unknown>>();
+	return toLookup(session, row);
+}
+
+// Names the new image (or none) on the page only while the page still names `from` and is not
+// blocked, so concurrent uploads cannot both win.
+export async function replacePageImage(
+	db: D1Database,
+	change: {
+		tenantId: string;
+		pageId: string;
+		slot: PageImageSlot;
+		from: string | null;
+		to: string | null;
+		now: number;
+	}
+): Promise<boolean> {
+	const column = change.slot === 'avatar' ? 'avatar_image' : 'background_image';
+	const result = await db
+		.prepare(
+			`UPDATE pages SET ${column} = ?, updated_at = ? WHERE id = ? AND tenant_id = ? AND blocked_at IS NULL AND ${column} IS ?`
+		)
+		.bind(change.to, change.now, change.pageId, change.tenantId, change.from)
+		.run();
+	return result.meta.changes === 1;
 }

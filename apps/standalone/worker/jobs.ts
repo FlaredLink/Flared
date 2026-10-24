@@ -76,7 +76,8 @@ export function deletionDependencies(config: JobConfig): DeletionDependencies {
 			provider: createWorkerDomainProvider({ routing: config.routing }),
 			reservedHostnames: reservedHostnames(config)
 		},
-		previewImages: config.previewImages
+		previewImages: config.previewImages,
+		pageImages: config.pageImages
 	};
 }
 

@@ -9,10 +9,11 @@
 // start or end time opens only between them; after the end, visitors go to the destination for
 // after the end, which counts no click. A link with a password shows a form; a correct POST of
 // it answers 303 to the visitor's location and counts the click. A link with a social preview
-// gives card bots a page with its card tags and serves its image at /<slug>/preview/<file>.
-// Imports only routing and contract code.
+// gives card bots a page with its card tags and serves its image at /<slug>/preview/<file>. The
+// root of a workspace domain and /_image/<file> go to the page handler, which shows the page that
+// the workspace put on that domain. Imports only routing and contract code.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
-import { visitorIdPattern, type ClickEvent } from '@flared/contracts/analytics';
+import { visitorIdPattern, type AnalyticsEvent } from '@flared/contracts/analytics';
 import {
 	maxLinkPasswordLength,
 	previewImageFilePattern,
@@ -26,6 +27,7 @@ import { findRedirectTarget, type RedirectLookup, type RedirectTarget } from '@f
 import { buildClickEvent, isAutomated, osFamily, type ForwardContext } from './clicks';
 import type { LinkPasswords } from './link-passwords';
 import { isCardFetcher, linkCardHeaders, linkCardPage } from './link-previews';
+import type { PageHandler } from './page-host';
 import { previewImageKey, type PreviewImageStore } from './preview-images';
 import {
 	passwordPage,
@@ -36,9 +38,9 @@ import {
 	type UnavailableReason
 } from './unavailable-page';
 
-// The click Queue producer, or any sink with the same contract.
+// The click Queue producer, or any sink with the same contract. Page views travel on it too.
 export interface ClickSink {
-	send(event: ClickEvent): Promise<void>;
+	send(event: AnalyticsEvent): Promise<void>;
 }
 
 // The Workers Rate Limiting binding, or any limiter with the same contract.
@@ -66,6 +68,8 @@ export interface RedirectDependencies {
 	// Where uploaded preview images are kept. Without it, a preview image is not found; the
 	// preview texts still work.
 	previewImages?: PreviewImageStore;
+	// Pages at the root of workspace domains. Without it, that root answers 404.
+	pages?: PageHandler;
 	now?: () => number;
 }
 
@@ -611,10 +615,16 @@ export function createRedirectHandler(dependencies: RedirectDependencies) {
 				console.error(JSON.stringify({ event: 'redirect_lookup_failed' }));
 				return failed(request);
 			}
-			// A workspace domain serves only its links; its root is not a Flared page.
+			// A workspace domain serves its links and, at its root, the page put on it.
+			if (kind === 'workspace' && url.pathname === '/' && dependencies.pages)
+				return dependencies.pages.fetch(request, background);
 			if (kind !== 'platform') return notFound(request);
 			return redirect(new URL(`${url.pathname}${url.search}`, dependencies.appOrigin).toString());
 		}
+
+		// No slug starts with an underscore, so this path is the page's.
+		if (url.pathname.startsWith('/_image/'))
+			return dependencies.pages ? dependencies.pages.fetch(request, background) : notFound(request);
 
 		const image = /^\/([^/]+)\/preview\/([^/]+)$/.exec(url.pathname);
 		if (image) return previewImage(request, hostname, image[1], image[2], background);

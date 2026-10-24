@@ -13,7 +13,7 @@ import {
 	waitOnExecutionContext
 } from 'cloudflare:test';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import type { ClickEvent } from '@flared/contracts/analytics';
+import type { AnalyticsEvent } from '@flared/contracts/analytics';
 import { routeSettleMs, runDeletions } from '@flared/server/deletion';
 import worker, { type StandaloneEnv } from '../worker/index';
 import { counting } from '../../../tests/support/d1-count';
@@ -23,7 +23,7 @@ const origin = 'https://flared.example.workers.dev';
 const movedOrigin = 'https://links.example.com';
 const password = 'correct horse battery';
 const setupSecret = 'test-only-setup-secret-with-at-least-32-bytes';
-const sent: ClickEvent[] = [];
+const sent: AnalyticsEvent[] = [];
 
 function baseEnv(change: Partial<StandaloneEnv> = {}): StandaloneEnv {
 	return {

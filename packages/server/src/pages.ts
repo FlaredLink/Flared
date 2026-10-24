@@ -7,6 +7,7 @@ import {
 	extraBlockKinds,
 	maxPageHandles,
 	isPaymentDestination,
+	pageImagePath,
 	usesPageExtras,
 	type CreatePageInput,
 	type EmbedProvider,
@@ -121,14 +122,21 @@ export function blockOf(row: PageBlockRow): PageBlock {
 	}
 }
 
+// An image's address on the page host, or else on the workspace domain; null when the page has
+// neither.
+function imageUrl(row: PageRow, settings: PageSettings, file: string | null): string | null {
+	const base =
+		pageUrl(row, settings) ?? (row.domainHostname ? `https://${row.domainHostname}` : null);
+	return file === null || base === null ? null : `${base}${pageImagePath(file)}`;
+}
+
 export function toApiPage(row: PageRow, blocks: PageBlockRow[], settings: PageSettings): Page {
 	return {
 		...summaryOf(row, settings),
 		domainId: row.domainId,
 		bio: row.bio,
-		// Images come with the page image store.
-		avatarImage: null,
-		backgroundImage: null,
+		avatarImage: imageUrl(row, settings, row.avatarImage),
+		backgroundImage: imageUrl(row, settings, row.backgroundImage),
 		theme: row.theme,
 		blocks: blocks.map(blockOf)
 	};

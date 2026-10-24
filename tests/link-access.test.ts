@@ -2,7 +2,7 @@
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
-import type { ClickEvent } from '../packages/contracts/src/analytics';
+import { isPageViewEvent, type ClickEvent } from '../packages/contracts/src/analytics';
 import { LinkInputError, parseCreateLink, parseUpdateLink } from '../packages/contracts/src/links';
 import { createLinkRecord, updateLink } from '../packages/data/src/links';
 import { listUnprojectedLimits } from '../packages/data/src/routing-policy';
@@ -426,7 +426,7 @@ describe('redirects with link access', () => {
 			clicks: options.clicks
 				? {
 						async send(event) {
-							options.clicks?.push(event);
+							if (!isPageViewEvent(event)) options.clicks?.push(event);
 						}
 					}
 				: undefined,

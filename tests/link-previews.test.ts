@@ -2,7 +2,7 @@
 import { env } from 'cloudflare:workers';
 import { applyD1Migrations } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
-import type { ClickEvent } from '../packages/contracts/src/analytics';
+import { isPageViewEvent, type ClickEvent } from '../packages/contracts/src/analytics';
 import {
 	LinkInputError,
 	maxPreviewImageBytes,
@@ -461,7 +461,7 @@ describe('link cards for card bots', () => {
 			clicks: options.clicks
 				? {
 						async send(event) {
-							options.clicks?.push(event);
+							if (!isPageViewEvent(event)) options.clicks?.push(event);
 						}
 					}
 				: undefined,

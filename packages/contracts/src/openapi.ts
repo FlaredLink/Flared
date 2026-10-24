@@ -422,6 +422,47 @@ const schemas = {
 	}),
 	DailyClicks: object({ day, clicks: count }),
 	DimensionClicks: object({ value: { type: 'string' }, clicks: count }),
+	DailyViews: object({ day, views: count }),
+	DimensionViews: object({ value: { type: 'string' }, views: count }),
+	PageAnalytics: object({
+		pageId: { type: 'string' },
+		from: day,
+		to: day,
+		views: { ...count, description: 'Page views by people; bots and prefetches do not count.' },
+		days: { type: 'array', items: ref('DailyViews') },
+		countries: {
+			type: 'array',
+			items: ref('DimensionViews'),
+			description: 'Two-letter country codes, or "unknown".'
+		},
+		devices: {
+			type: 'array',
+			items: ref('DimensionViews'),
+			description: `One of ${deviceCategories.join(', ')}.`
+		},
+		referrers: {
+			type: 'array',
+			items: ref('DimensionViews'),
+			description: 'Referrer host names; at most 50 per page and day, the rest under "other".'
+		},
+		browsers: {
+			type: 'array',
+			items: ref('DimensionViews'),
+			description: `One of ${browserFamilies.join(', ')}.`
+		},
+		operatingSystems: {
+			type: 'array',
+			items: ref('DimensionViews'),
+			description: `One of ${osFamilies.join(', ')}.`
+		},
+		buttons: {
+			type: 'array',
+			items: object({ linkId: { type: 'string' }, label: { type: 'string' }, clicks: count }),
+			description:
+				"The page's buttons and payment cards, most clicks first. clicks counts the clicks of the button's link that came from one of the page's addresses."
+		},
+		asOf: dateTime
+	}),
 	LinkAnalytics: object({
 		linkId: { type: 'string' },
 		from: day,
@@ -811,8 +852,15 @@ const schemas = {
 		...pageSummaryFields,
 		domainId: nullable({ type: 'string' }),
 		bio: nullable({ type: 'string' }),
-		avatarImage: nullable({ type: 'string', format: 'uri' }),
-		backgroundImage: nullable({ type: 'string', format: 'uri' }),
+		avatarImage: {
+			...nullable({ type: 'string', format: 'uri' }),
+			description:
+				'The avatar on the page host, or else on the workspace domain. Set it with PUT /pages/{id}/avatar-image.'
+		},
+		backgroundImage: {
+			...nullable({ type: 'string', format: 'uri' }),
+			description: 'The background image. Set it with PUT /pages/{id}/background-image.'
+		},
 		theme: ref('PageTheme'),
 		blocks: { type: 'array', items: blockSchema(true) }
 	}),
@@ -1356,6 +1404,98 @@ export function openApiDocument(serverUrl: string) {
 						}
 					},
 					{ parameters: [pageId] }
+				)
+			},
+			'/pages/{id}/avatar-image': {
+				put: operation(
+					'Set the avatar image of a page',
+					'links:write',
+					{
+						'200': {
+							description: 'The page with its new avatarImage.',
+							content: json(object({ page: ref('Page') }))
+						}
+					},
+					{
+						parameters: [pageId],
+						description: `Send the image itself as the body: PNG, JPEG, or WebP, at most ${maxPreviewImageBytes / 1024 / 1024} MB. A new image replaces the old one.`,
+						requestBody: {
+							required: true,
+							content: Object.fromEntries(
+								['image/png', 'image/jpeg', 'image/webp'].map((type) => [
+									type,
+									{ schema: { type: 'string', format: 'binary' } }
+								])
+							)
+						}
+					}
+				),
+				delete: operation(
+					'Remove the avatar image of a page',
+					'links:write',
+					{
+						'200': {
+							description: 'The page without avatarImage.',
+							content: json(object({ page: ref('Page') }))
+						}
+					},
+					{ parameters: [pageId] }
+				)
+			},
+			'/pages/{id}/background-image': {
+				put: operation(
+					'Set the background image of a page',
+					'links:write',
+					{
+						'200': {
+							description: 'The page with its new backgroundImage.',
+							content: json(object({ page: ref('Page') }))
+						}
+					},
+					{
+						parameters: [pageId],
+						description: `Send the image itself as the body: PNG, JPEG, or WebP, at most ${maxPreviewImageBytes / 1024 / 1024} MB. A new image replaces the old one.`,
+						requestBody: {
+							required: true,
+							content: Object.fromEntries(
+								['image/png', 'image/jpeg', 'image/webp'].map((type) => [
+									type,
+									{ schema: { type: 'string', format: 'binary' } }
+								])
+							)
+						}
+					}
+				),
+				delete: operation(
+					'Remove the background image of a page',
+					'links:write',
+					{
+						'200': {
+							description: 'The page without backgroundImage.',
+							content: json(object({ page: ref('Page') }))
+						}
+					},
+					{ parameters: [pageId] }
+				)
+			},
+			'/pages/{id}/analytics': {
+				get: operation(
+					'Read view analytics for a page',
+					'analytics:read',
+					{
+						'200': {
+							description:
+								'UTC daily views, breakdowns, and button clicks, clamped to the retention period. Page views do not count against the monthly click allowance.',
+							content: json(object({ analytics: ref('PageAnalytics') }))
+						}
+					},
+					{
+						parameters: [
+							pageId,
+							{ name: 'from', in: 'query', schema: day },
+							{ name: 'to', in: 'query', schema: day }
+						]
+					}
 				)
 			},
 			'/openapi.json': {

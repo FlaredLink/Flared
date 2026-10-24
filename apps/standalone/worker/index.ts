@@ -29,6 +29,7 @@ import {
 } from '@flared/server/oauth/handler';
 import { isOAuthPath } from '@flared/server/oauth';
 import { createDeadLetterConsumer } from '@flared/server/operations';
+import { createPageHandler } from '@flared/server/page-host';
 import { createRedirectHandler } from '@flared/server/redirect';
 import {
 	createWorkerDomainProvider,
@@ -200,7 +201,8 @@ class Installation {
 			// checks destinations at :30.
 			automations: { email: false, destinationChecks: true },
 			linkPasswords: config.linkPasswords?.keys,
-			previewImages: config.previewImages
+			previewImages: config.previewImages,
+			pageImages: config.pageImages
 		});
 	}
 
@@ -236,7 +238,14 @@ class Installation {
 			clicks: config.clicks,
 			fixedTenantId: this.fixedTenantId,
 			linkPasswords: config.linkPasswords,
-			previewImages: config.previewImages
+			previewImages: config.previewImages,
+			// No page host: a page shows at the root of a workspace domain, with no badge.
+			pages: createPageHandler({
+				routing: config.routing,
+				views: config.clicks,
+				images: config.pageImages,
+				fixedTenantId: this.fixedTenantId
+			})
 		});
 	}
 

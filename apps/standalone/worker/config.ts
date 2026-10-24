@@ -3,11 +3,12 @@
 // values fail closed with an operator page that names them and never shows a value. The
 // deployment may leave out APP_ORIGIN and AUTH_SECRET: the app origin is then the one stored at
 // setup, and the auth secret is one the Worker made and stored at its first request.
-import type { ClickEvent } from '@flared/contracts/analytics';
+import type { AnalyticsEvent } from '@flared/contracts/analytics';
 import { installationAuthSecret } from '@flared/data/setup';
 import type { AnalyticsShards } from '@flared/server/shards';
 import { keyedHash } from '@flared/server/auth/limits';
 import { createLinkPasswords, type LinkPasswords } from '@flared/server/link-passwords';
+import type { PageImageStore } from '@flared/server/page-images';
 import type { PreviewImageStore } from '@flared/server/preview-images';
 import type { AttemptLimiter, ClickSink } from '@flared/server/redirect';
 import { defaultSourceUrl } from '../src/lib/source';
@@ -17,8 +18,8 @@ export interface StandaloneEnv {
 	IDENTITY?: D1Database;
 	ROUTING?: D1Database;
 	ANALYTICS_1?: D1Database;
-	// The click Queue producer.
-	CLICKS?: { send(message: ClickEvent): Promise<unknown> };
+	// The click Queue producer. Page views travel on it too.
+	CLICKS?: { send(message: AnalyticsEvent): Promise<unknown> };
 	// Secrets: the app origin (an https: origin with no path) and the auth signing secret, both
 	// optional, and the setup secret that the owner types once at /setup.
 	APP_ORIGIN?: string;
@@ -32,6 +33,9 @@ export interface StandaloneEnv {
 	// An R2 bucket for link card images, which the operator adds (docs/self-hosting/link-previews.md).
 	// Without it, link cards have a title and description but no image.
 	PREVIEW_IMAGES?: PreviewImageStore;
+	// An R2 bucket for page avatar and background images, which the operator adds. Without it,
+	// pages show without images.
+	PAGE_IMAGES?: PageImageStore;
 }
 
 export interface DeploymentConfig {
@@ -51,6 +55,7 @@ export interface DeploymentConfig {
 	// password stop working until it is set again.
 	linkPasswords: { keys: LinkPasswords; attempts: AttemptLimiter } | undefined;
 	previewImages: PreviewImageStore | undefined;
+	pageImages: PageImageStore | undefined;
 }
 
 // The configuration of one request, with the app origin resolved.
@@ -122,6 +127,7 @@ export async function readConfig(
 	const queue = env.CLICKS;
 	const attempts = env.LINK_PASSWORD_ATTEMPTS;
 	const images = env.PREVIEW_IMAGES;
+	const pageImages = env.PAGE_IMAGES;
 	return {
 		ok: true,
 		config: {
@@ -146,7 +152,8 @@ export async function readConfig(
 				attempts && typeof attempts.limit === 'function'
 					? { keys: createLinkPasswords(secret), attempts }
 					: undefined,
-			previewImages: images && typeof images.put === 'function' ? images : undefined
+			previewImages: images && typeof images.put === 'function' ? images : undefined,
+			pageImages: pageImages && typeof pageImages.put === 'function' ? pageImages : undefined
 		}
 	};
 }

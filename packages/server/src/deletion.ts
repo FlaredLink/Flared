@@ -25,6 +25,7 @@ import {
 import { listDomains } from '@flared/data/domains';
 import { listWorkspaces, readTenantShard } from '@flared/data/tenancy';
 import { removeDomain, type DomainSettings } from './domains';
+import { deleteTenantPageImages, type PageImageStore } from './page-images';
 import { deleteTenantPreviewImages, type PreviewImageStore } from './preview-images';
 import type { EmailContent, EmailTransport } from './email/transport';
 import { resolveShard, type AnalyticsShards } from './shards';
@@ -51,6 +52,8 @@ export interface DeletionDependencies {
 	email?: DeletionEmail;
 	// The installation's preview image store. The workspace's images go before its routing rows.
 	previewImages?: PreviewImageStore;
+	// The installation's page image store, emptied of the workspace's images at the same step.
+	pageImages?: PageImageStore;
 	// An edition's own records of the tenant and user, deleted before the identity records.
 	// Must be safe to repeat.
 	extension?: (job: { tenantId: string; userId: string }) => Promise<void>;
@@ -312,6 +315,14 @@ async function advance(deps: DeletionDependencies, job: DeletionJob): Promise<bo
 				if (
 					images &&
 					!(await drain(() => deleteTenantPreviewImages(images, tenantId, rowsPerBatch)))
+				) {
+					await save('routing_data', now());
+					return false;
+				}
+				const pageImages = deps.pageImages;
+				if (
+					pageImages &&
+					!(await drain(() => deleteTenantPageImages(pageImages, tenantId, rowsPerBatch)))
 				) {
 					await save('routing_data', now());
 					return false;

@@ -280,6 +280,103 @@ export function parseClickEvent(value: unknown): ClickEvent | null {
 	};
 }
 
+// A view of a page, on the same Queue as clicks. type tells the two apart; a consumer before page
+// views refuses the unknown field. Views never count against the monthly click allowance, and
+// they carry the same coarse fields as a click and never forwarding fields.
+export const pageViewEventSchemaVersion = 1;
+
+export interface PageViewEvent {
+	type: 'page_view';
+	schemaVersion: typeof pageViewEventSchemaVersion;
+	eventId: string;
+	tenantId: string;
+	analyticsShardId: string;
+	pageId: string;
+	occurredAt: number;
+	country: string;
+	deviceCategory: DeviceCategory;
+	referrerHostname: string;
+	browser: BrowserFamily;
+	os: OsFamily;
+}
+
+export type AnalyticsEvent = ClickEvent | PageViewEvent;
+
+export function isPageViewEvent(event: AnalyticsEvent): event is PageViewEvent {
+	return 'type' in event && event.type === 'page_view';
+}
+
+// Returns null for any view that the consumer must not count.
+export function parsePageViewEvent(value: unknown): PageViewEvent | null {
+	if (!isRecord(value)) return null;
+	const allowed = [
+		'type',
+		'schemaVersion',
+		'eventId',
+		'tenantId',
+		'analyticsShardId',
+		'pageId',
+		'occurredAt',
+		'country',
+		'deviceCategory',
+		'referrerHostname',
+		'browser',
+		'os'
+	];
+	if (Object.keys(value).some((key) => !allowed.includes(key))) return null;
+	const {
+		type,
+		schemaVersion,
+		eventId,
+		tenantId,
+		analyticsShardId,
+		pageId,
+		occurredAt,
+		country,
+		deviceCategory,
+		referrerHostname,
+		browser,
+		os
+	} = value;
+	if (type !== 'page_view' || schemaVersion !== pageViewEventSchemaVersion) return null;
+	if (typeof eventId !== 'string' || !uuidPattern.test(eventId)) return null;
+	if (typeof tenantId !== 'string' || !idPattern.test(tenantId)) return null;
+	if (typeof pageId !== 'string' || !idPattern.test(pageId)) return null;
+	if (typeof analyticsShardId !== 'string' || !shardIdPattern.test(analyticsShardId)) return null;
+	if (typeof occurredAt !== 'number' || !Number.isSafeInteger(occurredAt) || occurredAt < 0)
+		return null;
+	if (
+		typeof country !== 'string' ||
+		(country !== 'unknown' && normalizeCountry(country) !== country)
+	)
+		return null;
+	if (!isDevice(deviceCategory) || !isBrowser(browser) || !isOs(os)) return null;
+	if (
+		typeof referrerHostname !== 'string' ||
+		(referrerHostname !== 'unknown' && !hostnamePattern.test(referrerHostname))
+	)
+		return null;
+	return {
+		type,
+		schemaVersion,
+		eventId,
+		tenantId,
+		analyticsShardId,
+		pageId,
+		occurredAt,
+		country,
+		deviceCategory,
+		referrerHostname,
+		browser,
+		os
+	};
+}
+
+// A Queue message: a page view when it says so, otherwise a click.
+export function parseAnalyticsEvent(value: unknown): AnalyticsEvent | null {
+	return isRecord(value) && 'type' in value ? parsePageViewEvent(value) : parseClickEvent(value);
+}
+
 // UTC calendar day (YYYY-MM-DD) and month (YYYY-MM) of a time in milliseconds.
 export function utcDay(time: number): string {
 	return new Date(time).toISOString().slice(0, 10);
@@ -415,6 +512,73 @@ export function isLinkAnalytics(value: unknown): value is LinkAnalytics {
 		(analytics.operatingSystems === undefined ||
 			isRows<DimensionClicks>(analytics.operatingSystems, 'value')) &&
 		typeof analytics.asOf === 'string'
+	);
+}
+
+export interface DailyViews {
+	day: string;
+	views: number;
+}
+
+export interface DimensionViews {
+	value: string;
+	views: number;
+}
+
+// Clicks on a button or a payment card of the page that came from the page: the link's clicks
+// with one of the page's addresses as referrer. A browser that sends no referrer is not counted
+// here.
+export interface PageButtonClicks {
+	linkId: string;
+	label: string;
+	clicks: number;
+}
+
+export interface PageAnalytics {
+	pageId: string;
+	from: string;
+	to: string;
+	views: number;
+	// One entry for every day in the range, including days without views.
+	days: DailyViews[];
+	countries: DimensionViews[];
+	devices: DimensionViews[];
+	// At most 50 host names per page and day; the rest count under "other".
+	referrers: DimensionViews[];
+	browsers: DimensionViews[];
+	operatingSystems: DimensionViews[];
+	// The page's buttons and payment cards, most clicks first.
+	buttons: PageButtonClicks[];
+	asOf: string;
+}
+
+function isViewRows(value: unknown, key: 'day' | 'value'): boolean {
+	return (
+		Array.isArray(value) &&
+		value.every((row) => isRecord(row) && typeof row[key] === 'string' && isCount(row.views))
+	);
+}
+
+export function isPageAnalytics(value: unknown): value is PageAnalytics {
+	if (!isRecord(value)) return false;
+	return (
+		typeof value.pageId === 'string' &&
+		typeof value.from === 'string' &&
+		typeof value.to === 'string' &&
+		isCount(value.views) &&
+		isViewRows(value.days, 'day') &&
+		['countries', 'devices', 'referrers', 'browsers', 'operatingSystems'].every((key) =>
+			isViewRows(value[key], 'value')
+		) &&
+		Array.isArray(value.buttons) &&
+		value.buttons.every(
+			(row) =>
+				isRecord(row) &&
+				typeof row.linkId === 'string' &&
+				typeof row.label === 'string' &&
+				isCount(row.clicks)
+		) &&
+		typeof value.asOf === 'string'
 	);
 }
 

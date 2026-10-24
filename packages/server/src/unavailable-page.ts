@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The page a browser sees when a short link cannot open. It is static: it never repeats the
-// requested address, and an unknown link looks the same as a disabled one.
+// The page a browser sees when a short link or a page cannot open. It is static: it never repeats
+// the requested address, and an unknown link or page looks the same as a disabled one.
 
 export type UnavailableReason = 'not-found' | 'blocked' | 'unavailable' | 'not-open' | 'ended';
+// The same for a page.
+export type PageUnavailableReason = 'page-not-found' | 'page-blocked' | 'page-unavailable';
 
-const copy: Record<UnavailableReason, { title: string; heading: string; text: string }> = {
+const copy: Record<
+	UnavailableReason | PageUnavailableReason,
+	{ title: string; heading: string; text: string }
+> = {
 	'not-found': {
 		title: 'Link not available',
 		heading: 'This link isn’t available',
@@ -29,6 +34,21 @@ const copy: Record<UnavailableReason, { title: string; heading: string; text: st
 		title: 'Link ended',
 		heading: 'This link has ended',
 		text: 'Its owner set an end time, and it has passed. Check the link with the person who shared it.'
+	},
+	'page-not-found': {
+		title: 'Page not available',
+		heading: 'This page isn’t available',
+		text: 'Its owner may have turned it off, or the address may be wrong. Check the address with the person who shared it.'
+	},
+	'page-blocked': {
+		title: 'Page blocked',
+		heading: 'This page was blocked',
+		text: 'Flared blocked this page because it broke the rules, for example with phishing or malware. Do not enter passwords or payment details on a site that this page sent you to before.'
+	},
+	'page-unavailable': {
+		title: 'Page can’t open right now',
+		heading: 'This page can’t open right now',
+		text: 'Something went wrong on our side. Try again in a minute.'
 	}
 };
 
@@ -66,13 +86,13 @@ const escape = (value: string) => value.replace(/[&<>"']/g, (character) => escap
 // The URLs come from deployment configuration, never from the request. Only the blocked page
 // links to the report form.
 export function unavailablePage(
-	reason: UnavailableReason,
+	reason: UnavailableReason | PageUnavailableReason,
 	links: { homeUrl?: string; reportUrl?: string } = {}
 ): string {
 	const { title, heading, text } = copy[reason];
 	const report =
-		reason === 'blocked' && links.reportUrl
-			? `<p><a href="${escape(links.reportUrl)}">Report another link</a></p>`
+		(reason === 'blocked' || reason === 'page-blocked') && links.reportUrl
+			? `<p><a href="${escape(links.reportUrl)}">Report another ${reason === 'blocked' ? 'link' : 'page'}</a></p>`
 			: '';
 	const footer = links.homeUrl
 		? `<footer>Short links by <a href="${escape(links.homeUrl)}">Flared</a></footer>`

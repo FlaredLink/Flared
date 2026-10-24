@@ -103,6 +103,10 @@ declare namespace Cloudflare {
 		PAGES_IDENTITY: D1Database;
 		PAGES_ROUTING: D1Database;
 		PAGES_ANALYTICS: D1Database;
+		PAGEHOST_IDENTITY: D1Database;
+		PAGEHOST_ROUTING: D1Database;
+		PAGEHOST_ANALYTICS: D1Database;
+		PAGE_IMAGES: R2Bucket;
 		IDENTITY_MIGRATIONS: import('cloudflare:test').D1Migration[];
 		ROUTING_MIGRATIONS: import('cloudflare:test').D1Migration[];
 		ANALYTICS_MIGRATIONS: import('cloudflare:test').D1Migration[];

@@ -58,6 +58,8 @@ function api() {
 		},
 		automations: { email: false, destinationChecks: false },
 		previewImages: env.PREVIEW_IMAGES,
+		pages: { host: 'pages.example' },
+		pageImages: env.PAGE_IMAGES,
 		webhooks: {
 			secret: 'test-only-client-webhook-secret',
 			hooks: { allowedHosts: ['hooks.zapier.com'] }
@@ -587,6 +589,20 @@ describe('domains and QR codes', () => {
 		]);
 		expect((await client(readOnly).listPages()).pages.map((item) => item.id)).toContain(page.id);
 		expect((await client(readOnly).getPage(page.id)).title).toBe('Shop');
+		const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+		for (const slot of ['avatar', 'background'] as const) {
+			const withImage = await client().setPageImage(page.id, slot, {
+				body: png,
+				type: 'image/png'
+			});
+			expect(withImage[`${slot}Image`]).toMatch(
+				/^https:\/\/client-page\.pages\.example\/_image\/[A-Za-z0-9_-]{22}\.png$/
+			);
+			expect((await client().removePageImage(page.id, slot))[`${slot}Image`]).toBeNull();
+		}
+		const analytics = await client(readOnly).getPageAnalytics(page.id);
+		expect(analytics).toMatchObject({ pageId: page.id, views: 0 });
+		expect(analytics.buttons.map((button) => button.label)).toEqual(['Buy', 'Guide']);
 		const changed = await client().updatePage(page.id, { title: 'Store', blocks: [] });
 		expect(changed).toMatchObject({ title: 'Store', blocks: [] });
 		await client().deletePage(page.id);
