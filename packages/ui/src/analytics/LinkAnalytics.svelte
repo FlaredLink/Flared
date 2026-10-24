@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import EmptyState from '../empty/EmptyState.svelte';
 	import Glyph from '../icons/Glyph.svelte';
 	import SegmentedControl from '../molecules/SegmentedControl.svelte';
@@ -21,9 +22,37 @@
 		navigate?: (href: string) => void;
 		// Address of a site's icon on the app's origin. Without it, referrers show a letter.
 		iconHref?: (hostname: string) => string;
+		// What the counts are: link clicks, or page views (a page's analytics passes its views in
+		// the click fields).
+		unit?: 'click' | 'view';
+		// Replaces the country count, such as the clicks on a page's buttons.
+		secondKpi?: { label: string; value: string };
+		// The empty range: how to get a first count.
+		emptyText?: string;
+		// One more card after the breakdowns.
+		children?: Snippet;
 	}
 
-	let { analytics, ranges = [], navigate, iconHref }: Props = $props();
+	let {
+		analytics,
+		ranges = [],
+		navigate,
+		iconHref,
+		unit = 'click',
+		secondKpi,
+		emptyText = 'Open the short link in a browser; the click shows here within a few minutes.',
+		children
+	}: Props = $props();
+	const words = $derived(
+		unit === 'view'
+			? { one: 'view', many: 'views', title: 'Views', ignored: 'Known bots are not counted.' }
+			: {
+					one: 'click',
+					many: 'clicks',
+					title: 'Clicks',
+					ignored: 'Link previews and known bots are not counted.'
+				}
+	);
 	const id = $props.id();
 
 	const numbers = new Intl.NumberFormat();
@@ -73,7 +102,7 @@
 	};
 
 	const clickCount = (clicks: number) =>
-		`${numbers.format(clicks)} ${clicks === 1 ? 'click' : 'clicks'}`;
+		`${numbers.format(clicks)} ${clicks === 1 ? words.one : words.many}`;
 
 	function formatDay(day: string): string {
 		return dayLabel.format(new Date(`${day}T00:00:00Z`));
@@ -240,8 +269,8 @@
 	{#if breakdown.recorded && breakdown.recorded.clicks < analytics.total}
 		<p class="note">
 			{breakdown.recorded.clicks === 0
-				? `No ${breakdown.recorded.noun} data for these clicks yet. Recording started after them.`
-				: `Based on ${numbers.format(breakdown.recorded.clicks)} of ${numbers.format(analytics.total)} clicks. Older clicks have no ${breakdown.recorded.noun} data.`}
+				? `No ${breakdown.recorded.noun} data for these ${words.many} yet. Recording started after them.`
+				: `Based on ${numbers.format(breakdown.recorded.clicks)} of ${numbers.format(analytics.total)} ${words.many}. Older ${words.many} have no ${breakdown.recorded.noun} data.`}
 		</p>
 	{/if}
 {/snippet}
@@ -259,7 +288,7 @@
 <section class="analytics" aria-labelledby="{id}-heading">
 	<div class="head">
 		<div class="titles">
-			<h2 id="{id}-heading">Clicks</h2>
+			<h2 id="{id}-heading">{words.title}</h2>
 			<p class="dates">{formatDay(analytics.from)} – {formatDay(analytics.to)} · UTC</p>
 		</div>
 		{#if ranges.length > 0}
@@ -274,28 +303,31 @@
 	</div>
 
 	<dl class="kpis">
-		{@render kpi('Clicks', numbers.format(analytics.total))}
-		{@render kpi(countries === 1 ? 'Country' : 'Countries', numbers.format(countries))}
+		{@render kpi(words.title, numbers.format(analytics.total))}
+		{#if secondKpi}
+			{@render kpi(secondKpi.label, secondKpi.value)}
+		{:else}
+			{@render kpi(countries === 1 ? 'Country' : 'Countries', numbers.format(countries))}
+		{/if}
 		{@render kpi('On phones', phoneShare)}
 		{@render kpi('Top referrer', topReferrer)}
 	</dl>
 	<p class="as-of">
 		<Glyph name="refresh" size={16} />
 		<span
-			>Updated {time.format(new Date(analytics.asOf))} UTC. New clicks can take up to five minutes to
-			appear.<span class="sep" aria-hidden="true">·</span>Link previews and known bots are not
-			counted.</span
+			>Updated {time.format(new Date(analytics.asOf))} UTC. New {words.many} can take up to five minutes
+			to appear.<span class="sep" aria-hidden="true">·</span>{words.ignored}</span
 		>
 	</p>
 
 	{#if analytics.total === 0}
-		<EmptyState title="No clicks in this range yet" icon="chartLine">
-			Open the short link in a browser; the click shows here within a few minutes.
+		<EmptyState title="No {words.many} in this range yet" icon="chartLine">
+			{emptyText}
 		</EmptyState>
 	{:else}
 		<section class="card daily" aria-labelledby="{id}-daily">
 			<div class="daily-head">
-				<h3 id="{id}-daily">Clicks per day</h3>
+				<h3 id="{id}-daily">{words.title} per day</h3>
 				<SegmentedControl
 					options={[
 						{ value: 'chart', label: 'Chart', icon: 'chart' },
@@ -303,16 +335,16 @@
 					]}
 					bind:value={dailyView}
 					name="{id}-daily-view"
-					label="Show clicks per day as"
+					label="Show {words.many} per day as"
 				/>
 			</div>
 			{#if dailyView === 'chart'}
 				<figure class="chart">
-					<figcaption class="visually-hidden">Clicks over time</figcaption>
+					<figcaption class="visually-hidden">{words.title} over time</figcaption>
 					<div
 						class="plot"
 						role="img"
-						aria-label={`Daily clicks from ${formatDay(analytics.from)} to ${formatDay(analytics.to)}. Highest day: ${numbers.format(peak)}.`}
+						aria-label={`Daily ${words.many} from ${formatDay(analytics.from)} to ${formatDay(analytics.to)}. Highest day: ${numbers.format(peak)}.`}
 					>
 						<!-- One bar per day: daily bars keep a sparse count from looking like a trend. -->
 						{#each analytics.days as day (day.day)}
@@ -342,7 +374,7 @@
 				<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 				<div class="table-scroll" role="region" aria-labelledby="{id}-daily" tabindex="0">
 					<table>
-						<thead><tr><th scope="col">Day (UTC)</th><th scope="col">Clicks</th></tr></thead>
+						<thead><tr><th scope="col">Day (UTC)</th><th scope="col">{words.title}</th></tr></thead>
 						<tbody>
 							{#each analytics.days as day (day.day)}
 								<tr><td>{formatDay(day.day)}</td><td>{numbers.format(day.clicks)}</td></tr>
@@ -389,6 +421,7 @@
 				<h3 id="{id}-referrers">Referrers</h3>
 				{@render rows(referrerBreakdown)}
 			</section>
+			{@render children?.()}
 		</div>
 	{/if}
 </section>

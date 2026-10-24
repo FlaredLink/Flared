@@ -2,7 +2,8 @@
 // The HTML of a page. It is built on the server with inline CSS and has no script, no cookie, and
 // no third-party resource except the players of the embed blocks it shows, which the CSP names
 // one by one. Every text comes from the member, so every text is escaped; colours, fonts, and
-// shapes come from the theme rules, never from member CSS.
+// shapes come from the theme rules, never from member CSS. The dashboard draws its preview with the
+// same function, so the preview has the layout of the page.
 import {
 	embedProviders,
 	embedSource,
@@ -14,7 +15,7 @@ import {
 	type PageBlock,
 	type PageFont,
 	type PageTheme
-} from '@flared/contracts/pages';
+} from './pages';
 
 export interface PageView {
 	title: string;
@@ -30,6 +31,10 @@ export interface PageView {
 	// "Made with Flared", on plans without page extras. It links to homeUrl when there is one.
 	badge: boolean;
 	homeUrl?: string;
+	// The dashboard preview: embeds show as a box with the provider's name, because the preview
+	// frame runs no script. Links target a new window, which the frame's sandbox refuses, so a
+	// preview never records a click.
+	preview?: boolean;
 }
 
 const escapes: Record<string, string> = {
@@ -92,6 +97,7 @@ function styles(view: PageView, embeds: readonly EmbedProvider[]): string {
 		'.card p{overflow-wrap:anywhere}',
 		'.note{font-size:.8125rem;opacity:.75}',
 		'iframe{display:block;width:100%;border:0;border-radius:12px}',
+		'.placeholder{display:grid;place-items:center;border:1px dashed color-mix(in srgb,var(--text) 35%,transparent);border-radius:12px;font-size:.875rem;opacity:.75}',
 		...embeds.map((provider) => `.embed-${provider}{${embedHeights[provider]}}`),
 		'footer{margin-top:24px;text-align:center;font-size:.8125rem;opacity:.75}',
 		'footer a{color:inherit}'
@@ -104,7 +110,7 @@ function styles(view: PageView, embeds: readonly EmbedProvider[]): string {
 // is not in the current lists is left out rather than shown wrong.
 const known = (list: object, key: string) => Object.hasOwn(list, key);
 
-function block(item: PageBlock): string {
+function block(item: PageBlock, preview: boolean): string {
 	switch (item.kind) {
 		case 'button':
 			return `<a class="button" href="${escape(item.shortUrl)}">${escape(item.label)}</a>`;
@@ -131,6 +137,8 @@ function block(item: PageBlock): string {
 			const source = embedSource(item.provider, item.address);
 			if (source === null) return '';
 			const name = embedProviders[item.provider].name;
+			if (preview)
+				return `<div class="embed-${item.provider} placeholder">${escape(name)} player</div>`;
 			return `<iframe class="embed-${item.provider}" src="${escape(source)}" title="${escape(name)}" loading="lazy" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-presentation" allow="encrypted-media; fullscreen; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
 		}
 		case 'signup':
@@ -180,7 +188,7 @@ export function renderPage(view: PageView): { html: string; contentSecurityPolic
 		: view.homeUrl
 			? `<footer><a href="${escape(view.homeUrl)}">Made with Flared</a></footer>`
 			: '<footer>Made with Flared</footer>';
-	const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>${tags.join('')}<style>${styles(view, embeds)}</style></head><body><main><header class="profile">${avatar}<h1>${title}</h1>${bio}</header>${view.blocks.map(block).join('')}${badge}</main></body></html>`;
+	const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>${view.preview ? '<base target="_blank">' : ''}${tags.join('')}<style>${styles(view, embeds)}</style></head><body><main><header class="profile">${avatar}<h1>${title}</h1>${bio}</header>${view.blocks.map((item) => block(item, view.preview ?? false)).join('')}${badge}</main></body></html>`;
 	const frames = embeds.map((provider) => embedProviders[provider].frame);
 	const contentSecurityPolicy = [
 		"default-src 'none'",

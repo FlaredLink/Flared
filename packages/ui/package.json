@@ -92,6 +92,26 @@
 			"svelte": "./src/domains/DomainList.svelte"
 		},
 		"./domains/client": "./src/domains/client.ts",
+		"./pages/PageList.svelte": {
+			"types": "./src/pages/PageList.svelte",
+			"svelte": "./src/pages/PageList.svelte"
+		},
+		"./pages/PageEditor.svelte": {
+			"types": "./src/pages/PageEditor.svelte",
+			"svelte": "./src/pages/PageEditor.svelte"
+		},
+		"./pages/PageTopBar.svelte": {
+			"types": "./src/pages/PageTopBar.svelte",
+			"svelte": "./src/pages/PageTopBar.svelte"
+		},
+		"./pages/PageQr.svelte": {
+			"types": "./src/pages/PageQr.svelte",
+			"svelte": "./src/pages/PageQr.svelte"
+		},
+		"./pages/PageAnalytics.svelte": {
+			"types": "./src/pages/PageAnalytics.svelte",
+			"svelte": "./src/pages/PageAnalytics.svelte"
+		},
 		"./workspace/shown": "./src/workspace/shown.ts",
 		"./workspace/client": "./src/workspace/client.ts",
 		"./usage/UsageBanner.svelte": {

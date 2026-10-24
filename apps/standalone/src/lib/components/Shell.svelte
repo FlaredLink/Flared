@@ -78,6 +78,12 @@
 			current: shownPath === appRoutes.domains
 		},
 		{
+			label: 'Pages',
+			href: appRoutes.pages,
+			icon: 'browser',
+			current: shownPath === appRoutes.pages || shownPath.startsWith(`${appRoutes.pages}/`)
+		},
+		{
 			label: 'Automations',
 			href: appRoutes.automations,
 			icon: 'lightning',

@@ -19,6 +19,7 @@
 		"./icons": "./src/icons.ts",
 		"./webhooks": "./src/webhooks.ts",
 		"./automations": "./src/automations.ts",
-		"./pages": "./src/pages.ts"
+		"./pages": "./src/pages.ts",
+		"./page-render": "./src/page-render.ts"
 	}
 }

@@ -2,9 +2,11 @@
 import { isMemberPage, type MemberPage } from '@flared/contracts/members';
 import { isErrorCode } from '@flared/contracts/errors';
 import {
+	isPageAnalytics,
 	isUsage,
 	type DimensionClicks,
 	type LinkAnalytics,
+	type PageAnalytics,
 	type Usage
 } from '@flared/contracts/analytics';
 import {
@@ -19,6 +21,7 @@ import {
 import { isApiTokenPage, type ApiTokenPage } from '@flared/contracts/tokens';
 import { isConnectedAppPage, type ConnectedAppPage } from '@flared/contracts/oauth';
 import { isDomainPage, type DomainPage } from '@flared/contracts/domains';
+import { isPage, isPageList, type Page, type PageList } from '@flared/contracts/pages';
 import { isWebhookEndpointPage, type WebhookEndpointPage } from '@flared/contracts/webhooks';
 import {
 	isAutomationPage,
@@ -531,6 +534,47 @@ export async function fetchDomains(
 	if (!result.ok) return result;
 	return isDomainPage(result.body)
 		? { ok: true, page: result.body }
+		: { ok: false, failure: malformed };
+}
+
+export async function fetchPages(
+	service: ApiService,
+	headers: Headers
+): Promise<{ ok: true; list: PageList } | { ok: false; failure: ApiFailure }> {
+	const result = await getJson(service, headers, '/v1/pages?limit=100');
+	if (!result.ok) return result;
+	return isPageList(result.body)
+		? { ok: true, list: result.body }
+		: { ok: false, failure: malformed };
+}
+
+export async function fetchPage(
+	service: ApiService,
+	headers: Headers,
+	id: string
+): Promise<{ ok: true; page: Page } | { ok: false; failure: ApiFailure }> {
+	const result = await getJson(service, headers, `/v1/pages/${encodeURIComponent(id)}`);
+	if (!result.ok) return result;
+	return isPage(result.body.page)
+		? { ok: true, page: result.body.page }
+		: { ok: false, failure: malformed };
+}
+
+export async function fetchPageAnalytics(
+	service: ApiService,
+	headers: Headers,
+	id: string,
+	range: { from: string; to: string }
+): Promise<{ ok: true; analytics: PageAnalytics } | { ok: false; failure: ApiFailure }> {
+	const query = new URLSearchParams(range);
+	const result = await getJson(
+		service,
+		headers,
+		`/v1/pages/${encodeURIComponent(id)}/analytics?${query}`
+	);
+	if (!result.ok) return result;
+	return isPageAnalytics(result.body.analytics)
+		? { ok: true, analytics: result.body.analytics }
 		: { ok: false, failure: malformed };
 }
 

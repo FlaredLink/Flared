@@ -24,7 +24,7 @@ import {
 } from '@flared/data/pages';
 import { buildPageViewEvent, isAutomated } from './clicks';
 import { pageImageKey, type PageImageStore } from './page-images';
-import { renderPage } from './page-render';
+import { renderPage } from '@flared/contracts/page-render';
 import { blockOf } from './pages';
 import type { BackgroundWork, ClickSink } from './redirect';
 import {

@@ -64,7 +64,7 @@ export async function qrPng(text: string, size = defaultQrSize): Promise<Uint8Ar
 	]);
 }
 
-async function deflate(data: Uint8Array): Promise<Uint8Array> {
+async function deflate(data: Uint8Array<ArrayBuffer>): Promise<Uint8Array> {
 	const stream = new Blob([data]).stream().pipeThrough(new CompressionStream('deflate'));
 	return new Uint8Array(await new Response(stream).arrayBuffer());
 }

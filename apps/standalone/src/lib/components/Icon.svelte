@@ -2,6 +2,7 @@
 <script lang="ts" module>
 	import LinkSimple from 'phosphor-svelte/lib/LinkSimple';
 	import Globe from 'phosphor-svelte/lib/Globe';
+	import Browser from 'phosphor-svelte/lib/Browser';
 	import GearSix from 'phosphor-svelte/lib/GearSix';
 	import Lightning from 'phosphor-svelte/lib/Lightning';
 	import SignOut from 'phosphor-svelte/lib/SignOut';
@@ -12,6 +13,7 @@
 	const icons = {
 		link: LinkSimple,
 		globe: Globe,
+		browser: Browser,
 		lightning: Lightning,
 		settings: GearSix,
 		signOut: SignOut,

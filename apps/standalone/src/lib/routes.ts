@@ -4,6 +4,7 @@ export const appRoutes = {
 	login: '/app/login',
 	app: '/app',
 	domains: '/app/domains',
+	pages: '/app/pages',
 	automations: '/app/automations',
 	settings: '/app/settings',
 	consent: '/app/oauth/consent',
@@ -28,4 +29,8 @@ export const settingsRoutes = {
 
 export function linkRoute(id: string): string {
 	return `/app/links/${encodeURIComponent(id)}`;
+}
+
+export function pageRoute(id: string): string {
+	return `/app/pages/${encodeURIComponent(id)}`;
 }
