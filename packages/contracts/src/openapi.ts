@@ -31,6 +31,23 @@ import {
 	minLinkPasswordLength,
 	recentClickDays
 } from './links';
+import {
+	buttonShapes,
+	buttonStyles,
+	embedProviders,
+	handlePattern,
+	maxBlockLabelLength,
+	maxPageBioLength,
+	maxPageBlocks,
+	maxPageTitleLength,
+	maxPaymentDescriptionLength,
+	maxPriceLength,
+	maxSocialLinks,
+	pageFonts,
+	paymentProviders,
+	socialNetworks,
+	themePresets
+} from './pages';
 import { tokenScopes, type TokenScope } from './tokens';
 import {
 	defaultMilestoneInterval,
@@ -44,7 +61,7 @@ import {
 // Duplicated from the client's QR module, which this package cannot import.
 const qrSizes = { minimum: 128, maximum: 2048, default: 512 };
 
-export const openApiVersion = '1.11.0';
+export const openApiVersion = '1.12.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const dateTime = { type: 'string', format: 'date-time' };
@@ -96,6 +113,125 @@ const previewDescription = {
 	type: 'string',
 	maxLength: maxPreviewDescriptionLength,
 	description: `The description that link cards show, instead of the destination page description.${previewNote}`
+};
+
+const extrasNote =
+	' Needs page extras on the plan (PAGE_EXTRAS_REQUIRES_PLAN otherwise); a block the page already has stays allowed.';
+const blockSchedule = {
+	startsAt: { ...nullable(dateTime), description: 'The block shows from this time; null is now.' },
+	endsAt: { ...nullable(dateTime), description: 'The block hides after this time; null is never.' }
+};
+const blockLabel = { type: 'string', minLength: 1, maxLength: maxBlockLabelLength };
+const colour = { type: 'string', pattern: '^#[0-9a-fA-F]{6}$' };
+const socialLink = object({
+	network: { type: 'string', enum: Object.keys(socialNetworks) },
+	address: {
+		type: 'string',
+		maxLength: 2048,
+		description: 'An https profile address on the network, or an email address for email.'
+	}
+});
+// The fields of each block kind as a request sends them; reads add shortUrl and visible.
+const blockFields = {
+	button: { linkId: { type: 'string' }, label: blockLabel },
+	header: { label: blockLabel },
+	social: {
+		links: { type: 'array', minItems: 1, maxItems: maxSocialLinks, items: socialLink }
+	},
+	payment: {
+		linkId: {
+			type: 'string',
+			description: "A link of the workspace that opens the provider's checkout page."
+		},
+		provider: { type: 'string', enum: Object.keys(paymentProviders) },
+		label: blockLabel,
+		price: {
+			...nullable({ type: 'string', maxLength: maxPriceLength }),
+			description: 'Shown as typed.'
+		},
+		description: nullable({ type: 'string', maxLength: maxPaymentDescriptionLength })
+	},
+	embed: {
+		provider: { type: 'string', enum: Object.keys(embedProviders) },
+		address: {
+			type: 'string',
+			format: 'uri',
+			maxLength: 2048,
+			description: "The address of the provider's page, such as a YouTube video."
+		}
+	},
+	signup: { label: blockLabel, buttonLabel: { type: 'string', minLength: 1, maxLength: 40 } }
+} as const;
+const blockDescriptions: Record<keyof typeof blockFields, string> = {
+	button: 'A button that opens a link of the workspace.',
+	header: 'A section title.',
+	social: 'A row of social icons.',
+	payment: `A product card with a checkout button. Flared never takes or holds the payment.${extrasNote}`,
+	embed: `A player or booking page from the provider.${extrasNote}`,
+	signup: `An email sign-up form.${extrasNote}`
+};
+const blockSchema = (read: boolean) => ({
+	oneOf: Object.entries(blockFields).map(([kind, fields]) => {
+		const linked = kind === 'button' || kind === 'payment';
+		const properties = {
+			kind: { const: kind },
+			...fields,
+			...(read && linked ? { shortUrl: { type: 'string', format: 'uri' } } : {}),
+			...blockSchedule,
+			...(read
+				? {
+						visible: {
+							type: 'boolean',
+							description:
+								"false while the block's link is off or blocked, or a card's link no longer opens the provider's checkout; the page then leaves the block out."
+						}
+					}
+				: {})
+		};
+		const required = Object.keys(properties).filter(
+			(key) => read || !['startsAt', 'endsAt', 'price', 'description'].includes(key)
+		);
+		return {
+			...object(properties, required),
+			description: blockDescriptions[kind as keyof typeof blockFields]
+		};
+	})
+});
+const pageSummaryFields = {
+	id: { type: 'string' },
+	handle: { type: 'string' },
+	url: {
+		...nullable({ type: 'string', format: 'uri' }),
+		description: 'Where the page shows; null when this installation has no page host.'
+	},
+	domainUrl: {
+		...nullable({ type: 'string', format: 'uri' }),
+		description: 'The workspace domain whose root shows the page.'
+	},
+	title: { type: 'string' },
+	enabled: { type: 'boolean' },
+	blocked: {
+		...nullable(object({ reason: { type: 'string', enum: [...blockReasons] } })),
+		description: 'Set while Flared blocks the page for abuse.'
+	},
+	createdAt: dateTime,
+	updatedAt: dateTime
+};
+const pageInputFields = {
+	handle: {
+		type: 'string',
+		pattern: handlePattern.source,
+		description:
+			'The page address: 3 to 30 lowercase letters, digits, and single hyphens. A used address stays with its workspace for good.'
+	},
+	title: { type: 'string', minLength: 1, maxLength: maxPageTitleLength },
+	bio: nullable({ type: 'string', maxLength: maxPageBioLength }),
+	theme: ref('PageTheme'),
+	blocks: { type: 'array', maxItems: maxPageBlocks, items: blockSchema(false) },
+	domainId: {
+		...nullable({ type: 'string' }),
+		description: `A domain of the workspace whose root shows the page; one page per domain.${extrasNote}`
+	}
 };
 
 const endsAt = {
@@ -656,6 +792,45 @@ const schemas = {
 				}
 			})
 		]
+	},
+	PageTheme: object(
+		{
+			id: { type: 'string', enum: themePresets.map((preset) => preset.id) },
+			background: colour,
+			text: colour,
+			buttonBackground: colour,
+			buttonText: colour,
+			font: { type: 'string', enum: [...pageFonts] },
+			buttonShape: { type: 'string', enum: [...buttonShapes] },
+			buttonStyle: { type: 'string', enum: [...buttonStyles] }
+		},
+		['id']
+	),
+	PageSummary: object(pageSummaryFields),
+	Page: object({
+		...pageSummaryFields,
+		domainId: nullable({ type: 'string' }),
+		bio: nullable({ type: 'string' }),
+		avatarImage: nullable({ type: 'string', format: 'uri' }),
+		backgroundImage: nullable({ type: 'string', format: 'uri' }),
+		theme: ref('PageTheme'),
+		blocks: { type: 'array', items: blockSchema(true) }
+	}),
+	PageList: object({
+		pages: { type: 'array', items: ref('PageSummary') },
+		nextCursor: nullable({ type: 'string' })
+	}),
+	CreatePageInput: object(pageInputFields, ['handle', 'title']),
+	UpdatePageInput: {
+		...object(
+			{
+				...pageInputFields,
+				enabled: { type: 'boolean' }
+			},
+			[]
+		),
+		minProperties: 1,
+		description: 'Send the fields to change; blocks replaces the whole list.'
 	}
 };
 
@@ -663,6 +838,13 @@ const json = (schema: unknown) => ({ 'application/json': { schema } });
 const errorResponse = { description: 'An error. See the code.', content: json(ref('Error')) };
 const linkId = { name: 'id', in: 'path', required: true, schema: { type: 'string' } };
 const domainId = { name: 'id', in: 'path', required: true, schema: { type: 'string' } };
+const pageId = {
+	name: 'id',
+	in: 'path',
+	required: true,
+	schema: { type: 'string' },
+	description: 'A page ID from GET /v1/pages.'
+};
 const automationId = (name: string) => ({
 	name,
 	in: 'path',
@@ -1121,6 +1303,59 @@ export function openApiDocument(serverUrl: string) {
 						parameters: [automationId('id')],
 						requestBody: { required: true, content: json(ref('ApplyAutomationLinksInput')) }
 					}
+				)
+			},
+			'/pages': {
+				get: operation(
+					'List pages, newest first',
+					'links:read',
+					{ '200': { description: 'A page of pages.', content: json(ref('PageList')) } },
+					{ parameters: [cursor] }
+				),
+				post: operation(
+					'Create a page',
+					'links:write',
+					{
+						'201': {
+							description:
+								'The page. The workspace keeps as many pages as its plan allows (PAGE_LIMIT_REACHED otherwise).',
+							content: json(object({ page: ref('Page') }))
+						}
+					},
+					{ requestBody: { required: true, content: json(ref('CreatePageInput')) } }
+				)
+			},
+			'/pages/{id}': {
+				get: operation(
+					'Read a page',
+					'links:read',
+					{ '200': { description: 'The page.', content: json(object({ page: ref('Page') })) } },
+					{ parameters: [pageId] }
+				),
+				patch: operation(
+					'Edit a page',
+					'links:write',
+					{
+						'200': {
+							description: 'The changed page.',
+							content: json(object({ page: ref('Page') }))
+						}
+					},
+					{
+						parameters: [pageId],
+						requestBody: { required: true, content: json(ref('UpdatePageInput')) }
+					}
+				),
+				delete: operation(
+					'Delete a page',
+					'links:write',
+					{
+						'204': {
+							description:
+								'Deleted. Its address stays with the workspace, and no other workspace can take it.'
+						}
+					},
+					{ parameters: [pageId] }
 				)
 			},
 			'/openapi.json': {

@@ -18,6 +18,7 @@
 		"./members": "./src/members.ts",
 		"./icons": "./src/icons.ts",
 		"./webhooks": "./src/webhooks.ts",
-		"./automations": "./src/automations.ts"
+		"./automations": "./src/automations.ts",
+		"./pages": "./src/pages.ts"
 	}
 }

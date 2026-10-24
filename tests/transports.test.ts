@@ -1164,9 +1164,9 @@ describe('post_message', () => {
 });
 
 describe('contracts', () => {
-	it('describe OpenAPI 1.11.0 with post_message and target_missing, and keep the 15 MCP tools', () => {
+	it('describe OpenAPI 1.12.0 with post_message and target_missing, and keep the 15 MCP tools', () => {
 		const document = openApiDocument('https://api.example/v1');
-		expect(document.info.version).toBe('1.11.0');
+		expect(document.info.version).toBe('1.12.0');
 		expect(
 			document.components.schemas.AutomationAction.oneOf.map((item) =>
 				Reflect.get(Object(item.properties.type), 'const')

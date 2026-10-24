@@ -55,6 +55,18 @@ export const errorStatus = {
 	// allowed.
 	LINK_PREVIEW_REQUIRES_PLAN: 403,
 	LINK_BLOCKED: 409,
+	// The workspace keeps as many pages as its plan allows; at 0, pages are off.
+	PAGE_LIMIT_REACHED: 403,
+	// Another workspace, or another page of this one, has the page address. A used address stays
+	// with its workspace for good.
+	HANDLE_TAKEN: 409,
+	// The workspace's plan does not include page extras: payment, embed, and sign-up blocks, and a
+	// page on a workspace domain. Removing them is always allowed.
+	PAGE_EXTRAS_REQUIRES_PLAN: 403,
+	// Another page already shows at the root of this domain.
+	PAGE_DOMAIN_TAKEN: 409,
+	// Flared blocked the page for abuse; its owner cannot change or delete it.
+	PAGE_BLOCKED: 409,
 	NOT_FOUND: 404,
 	METHOD_NOT_ALLOWED: 405,
 	PAYLOAD_TOO_LARGE: 413,

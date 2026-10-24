@@ -24,6 +24,12 @@ export interface PolicyLimits {
 	// 1 lets members set social previews on links; 0 refuses new values. Without it, a new tenant
 	// gets 0 and an update keeps the setting.
 	linkPreviews?: 0 | 1;
+	// Pages; 0 turns pages off. Without it, a new tenant gets 0 and an update keeps the limit.
+	pageLimit?: number;
+	// 1 removes the page badge and lets members add page extras (payment, embed, and sign-up
+	// blocks, and a page on a workspace domain); 0 refuses new extras. Without it, a new tenant
+	// gets 0 and an update keeps the setting.
+	pageExtras?: 0 | 1;
 }
 
 export interface NewTenant {
@@ -62,6 +68,8 @@ export interface PolicyProjection {
 	automationLimit: number;
 	linkAccess: 0 | 1;
 	linkPreviews: 0 | 1;
+	pageLimit: number;
+	pageExtras: 0 | 1;
 	suspendedAt: number | null;
 }
 
@@ -89,7 +97,8 @@ function checkLimits(limits: PolicyLimits): void {
 		limits.retentionDays < 1 ||
 		limits.memberLimit === 0 ||
 		(limits.linkAccess !== undefined && limits.linkAccess > 1) ||
-		(limits.linkPreviews !== undefined && limits.linkPreviews > 1)
+		(limits.linkPreviews !== undefined && limits.linkPreviews > 1) ||
+		(limits.pageExtras !== undefined && limits.pageExtras > 1)
 	)
 		throw new Error('Invalid policy limits');
 }
@@ -255,7 +264,7 @@ export function tenantStatements(
 			.bind(tenant.id, tenant.ownerUserId, now),
 		db
 			.prepare(
-				`INSERT INTO tenant_policy (tenant_id, revision, active_link_limit, monthly_click_limit, retention_days, domain_limit, member_limit, webhook_endpoint_limit, automation_limit, link_access, link_previews, updated_at) SELECT ?1, 1, ?2, ?3, ?4, ?5, ?7, ?8, ?9, ?10, ?11, ?6 ${inserted}`
+				`INSERT INTO tenant_policy (tenant_id, revision, active_link_limit, monthly_click_limit, retention_days, domain_limit, member_limit, webhook_endpoint_limit, automation_limit, link_access, link_previews, page_limit, page_extras, updated_at) SELECT ?1, 1, ?2, ?3, ?4, ?5, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?6 ${inserted}`
 			)
 			.bind(
 				tenant.id,
@@ -268,7 +277,9 @@ export function tenantStatements(
 				limits.webhookEndpointLimit ?? 0,
 				limits.automationLimit ?? 0,
 				limits.linkAccess ?? 0,
-				limits.linkPreviews ?? 0
+				limits.linkPreviews ?? 0,
+				limits.pageLimit ?? 0,
+				limits.pageExtras ?? 0
 			)
 	];
 }
@@ -285,7 +296,7 @@ export async function updateTenantPolicy(
 	checkLimits(limits);
 	const row = await db
 		.prepare(
-			'UPDATE tenant_policy SET revision = revision + 1, active_link_limit = ?, monthly_click_limit = ?, retention_days = ?, domain_limit = ?, updated_at = ?, member_limit = COALESCE(?7, member_limit), webhook_endpoint_limit = COALESCE(?8, webhook_endpoint_limit), automation_limit = COALESCE(?9, automation_limit), link_access = COALESCE(?10, link_access), link_previews = COALESCE(?11, link_previews) WHERE tenant_id = ?6 AND NOT EXISTS (SELECT 1 FROM tenant_deletions WHERE tenant_id = ?6) RETURNING revision'
+			'UPDATE tenant_policy SET revision = revision + 1, active_link_limit = ?, monthly_click_limit = ?, retention_days = ?, domain_limit = ?, updated_at = ?, member_limit = COALESCE(?7, member_limit), webhook_endpoint_limit = COALESCE(?8, webhook_endpoint_limit), automation_limit = COALESCE(?9, automation_limit), link_access = COALESCE(?10, link_access), link_previews = COALESCE(?11, link_previews), page_limit = COALESCE(?12, page_limit), page_extras = COALESCE(?13, page_extras) WHERE tenant_id = ?6 AND NOT EXISTS (SELECT 1 FROM tenant_deletions WHERE tenant_id = ?6) RETURNING revision'
 		)
 		.bind(
 			limits.activeLinkLimit,
@@ -298,7 +309,9 @@ export async function updateTenantPolicy(
 			limits.webhookEndpointLimit ?? null,
 			limits.automationLimit ?? null,
 			limits.linkAccess ?? null,
-			limits.linkPreviews ?? null
+			limits.linkPreviews ?? null,
+			limits.pageLimit ?? null,
+			limits.pageExtras ?? null
 		)
 		.first<{ revision: unknown }>();
 	return row ? count(row.revision, 'revision') : null;
@@ -340,7 +353,7 @@ export async function readPolicyProjection(
 ): Promise<PolicyProjection | null> {
 	const row = await db
 		.prepare(
-			'SELECT p.revision, p.routing_revision, p.analytics_revision, t.analytics_shard_id, p.active_link_limit, p.domain_limit, p.monthly_click_limit, p.retention_days, p.member_limit, p.webhook_endpoint_limit, p.automation_limit, p.link_access, p.link_previews, p.suspended_at FROM tenant_policy p JOIN tenants t ON t.id = p.tenant_id WHERE p.tenant_id = ? AND NOT EXISTS (SELECT 1 FROM tenant_deletions d WHERE d.tenant_id = p.tenant_id)'
+			'SELECT p.revision, p.routing_revision, p.analytics_revision, t.analytics_shard_id, p.active_link_limit, p.domain_limit, p.monthly_click_limit, p.retention_days, p.member_limit, p.webhook_endpoint_limit, p.automation_limit, p.link_access, p.link_previews, p.page_limit, p.page_extras, p.suspended_at FROM tenant_policy p JOIN tenants t ON t.id = p.tenant_id WHERE p.tenant_id = ? AND NOT EXISTS (SELECT 1 FROM tenant_deletions d WHERE d.tenant_id = p.tenant_id)'
 		)
 		.bind(tenantId)
 		.first<Record<string, unknown>>();
@@ -360,6 +373,8 @@ export async function readPolicyProjection(
 		automationLimit: count(row.automation_limit, 'automation limit'),
 		linkAccess: row.link_access === 1 ? 1 : 0,
 		linkPreviews: row.link_previews === 1 ? 1 : 0,
+		pageLimit: count(row.page_limit, 'page limit'),
+		pageExtras: row.page_extras === 1 ? 1 : 0,
 		suspendedAt: row.suspended_at === null ? null : count(row.suspended_at, 'suspension time')
 	};
 }

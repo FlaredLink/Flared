@@ -2368,7 +2368,7 @@ describe('REST API with OAuth', () => {
 		expect(remaining.results.map((row) => row.clientId)).toEqual([client.clientId]);
 	});
 
-	it('publishes RFC 9728 metadata for /v1 and describes the oauth identity in OpenAPI 1.11.0', async () => {
+	it('publishes RFC 9728 metadata for /v1 and describes the oauth identity in OpenAPI 1.12.0', async () => {
 		const response = apiProtectedResourceDocument(
 			new Request('https://api.example/.well-known/oauth-protected-resource/v1'),
 			apiResource,
@@ -2382,7 +2382,7 @@ describe('REST API with OAuth', () => {
 			resource_name: 'Flared'
 		});
 		const document = openApiDocument('https://api.example/v1');
-		expect(document.info.version).toBe('1.11.0');
+		expect(document.info.version).toBe('1.12.0');
 		expect(JSON.stringify(document.components.schemas.Identity)).toContain('"oauth"');
 	});
 });

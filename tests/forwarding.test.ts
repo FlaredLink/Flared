@@ -277,6 +277,8 @@ describe('routing flag', () => {
 			automationLimit: 25,
 			linkAccess: 0,
 			linkPreviews: 0,
+			pageLimit: 0,
+			pageExtras: 0,
 			suspendedAt: null,
 			now: 4
 		});

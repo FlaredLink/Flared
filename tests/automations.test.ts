@@ -1623,6 +1623,8 @@ describe('limits and states', () => {
 			automationLimit: 1,
 			linkAccess: 0,
 			linkPreviews: 0,
+			pageLimit: 0,
+			pageExtras: 0,
 			suspendedAt: null,
 			now: clock
 		});

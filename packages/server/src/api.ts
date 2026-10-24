@@ -194,6 +194,8 @@ import {
 	removeDomain,
 	type DomainSettings
 } from './domains';
+import { changePage, createPage, getPage, listPages, removePage, type PageSettings } from './pages';
+import { parseCreatePage, parseUpdatePage } from '@flared/contracts/pages';
 import {
 	ApiError,
 	changeLink,
@@ -297,6 +299,8 @@ export interface ApiDependencies {
 	// (which needs webhooks.transports), post_message is. Without them, the automation routes
 	// answer 404.
 	automations?: AutomationFeatures;
+	// Where pages show. Without a host, a page shows only at the root of a workspace domain.
+	pages?: PageSettings;
 }
 
 export interface WebhookSettings {
@@ -407,6 +411,8 @@ export async function authenticateBearer(
 }
 
 const maxBodyBytes = 8192;
+// A page with its full list of blocks.
+const maxPageBodyBytes = 65536;
 // The default of ApiDependencies.importItemsPerRequest. The MCP import_links tool caps its items
 // at it, because the MCP endpoint does not see a deployment's API options.
 export const defaultImportItemsPerRequest = 3;
@@ -928,6 +934,57 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			headers['content-disposition'] = `attachment; filename="${link.slug}.${format}"`;
 		const body = format === 'svg' ? qrSvg(link.shortUrl, size) : await qrPng(link.shortUrl, size);
 		return new Response(body, { headers });
+	});
+
+	// Pages are built from links, so they use the link scopes.
+	const pageSettings = dependencies.pages ?? {};
+
+	app.get('/pages', requireScope('links:read'), async (context) => {
+		const list = await listPages(
+			routing,
+			context.var.tenantId,
+			{ limit: pageSize(context.req.query('limit')), cursor: context.req.query('cursor') ?? null },
+			pageSettings
+		);
+		return respond({ status: 200, body: JSON.stringify(list) });
+	});
+
+	app.post('/pages', requireScope('links:write'), async (context) => {
+		const input = parseCreatePage(await readJson(context.req.raw, maxPageBodyBytes));
+		const page = await createPage(routing, {
+			tenantId: context.var.tenantId,
+			input,
+			now: now(),
+			settings: pageSettings
+		});
+		return respond({ status: 201, body: JSON.stringify({ page }) });
+	});
+
+	app.get('/pages/:id', requireScope('links:read'), async (context) => {
+		const page = await getPage(
+			routing,
+			context.var.tenantId,
+			context.req.param('id'),
+			pageSettings
+		);
+		return respond({ status: 200, body: JSON.stringify({ page }) });
+	});
+
+	app.patch('/pages/:id', requireScope('links:write'), async (context) => {
+		const change = parseUpdatePage(await readJson(context.req.raw, maxPageBodyBytes));
+		const page = await changePage(routing, {
+			tenantId: context.var.tenantId,
+			pageId: context.req.param('id'),
+			change,
+			now: now(),
+			settings: pageSettings
+		});
+		return respond({ status: 200, body: JSON.stringify({ page }) });
+	});
+
+	app.delete('/pages/:id', requireScope('links:write'), async (context) => {
+		await removePage(routing, context.var.tenantId, context.req.param('id'), now());
+		return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
 	});
 
 	app.get('/domains', requireScope('domains:read'), async (context) => {

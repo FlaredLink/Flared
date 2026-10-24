@@ -278,8 +278,9 @@ export async function deleteRoutingPolicy(db: D1Database, tenantId: string): Pro
 	await db.prepare('DELETE FROM tenant_policy WHERE tenant_id = ?').bind(tenantId).run();
 }
 
-// Deletes up to limit links, automation records, and the tenant's request records. Slug
-// reservations, hostname namespaces, and disabled domain rows stay, so no address can be reused.
+// Deletes up to limit links, pages, automation records, and the tenant's request records. Slug
+// reservations, page handles, hostname namespaces, and disabled domain rows stay, so no address
+// can be reused.
 // Returns the rows deleted; 0 means nothing is left.
 export async function deleteRoutingData(
 	db: D1Database,
@@ -304,8 +305,22 @@ export async function deleteRoutingData(
 				'DELETE FROM automations WHERE id IN (SELECT a.id FROM automations a WHERE a.tenant_id = ? AND NOT EXISTS (SELECT 1 FROM link_automations x WHERE x.automation_id = a.id) LIMIT ?)'
 			)
 			.bind(tenantId, limit),
+		// Page blocks name links, so they go first, then pages with no block left, so the cascade
+		// deletes nothing past limit. Page handles stay, as slug reservations do.
 		db
-			.prepare('DELETE FROM links WHERE id IN (SELECT id FROM links WHERE tenant_id = ? LIMIT ?)')
+			.prepare(
+				'DELETE FROM page_blocks WHERE (page_id, position) IN (SELECT page_id, position FROM page_blocks WHERE tenant_id = ? LIMIT ?)'
+			)
+			.bind(tenantId, limit),
+		db
+			.prepare(
+				'DELETE FROM pages WHERE id IN (SELECT p.id FROM pages p WHERE p.tenant_id = ? AND NOT EXISTS (SELECT 1 FROM page_blocks b WHERE b.page_id = p.id) LIMIT ?)'
+			)
+			.bind(tenantId, limit),
+		db
+			.prepare(
+				'DELETE FROM links WHERE id IN (SELECT l.id FROM links l WHERE l.tenant_id = ? AND NOT EXISTS (SELECT 1 FROM page_blocks b WHERE b.tenant_id = l.tenant_id AND b.link_id = l.id) LIMIT ?)'
+			)
 			.bind(tenantId, limit),
 		db
 			.prepare(

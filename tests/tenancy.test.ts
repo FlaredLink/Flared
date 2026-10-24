@@ -234,6 +234,8 @@ describe('policy projection', () => {
 			automationLimit: 0,
 			linkAccess: 0,
 			linkPreviews: 0,
+			pageLimit: 0,
+			pageExtras: 0,
 			suspendedAt: null,
 			now: 22
 		});
@@ -304,6 +306,8 @@ describe('policy projection', () => {
 			automationLimit: 0,
 			linkAccess: 0,
 			linkPreviews: 0,
+			pageLimit: 0,
+			pageExtras: 0,
 			suspendedAt: null,
 			now: 44
 		});

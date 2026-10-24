@@ -11,9 +11,10 @@ import type { StandaloneConfig } from './config';
 
 // Bounds of each limit. Higher values are possible on D1 and Queues but cost more; see
 // docs/self-hosting/limits.md. The member limit counts the owner and open invites.
-// Link access and link previews are not limits: a single installation always has them.
+// Link access, link previews, and page extras are not limits: a single installation always has
+// them.
 export const limitBounds: Record<
-	Exclude<keyof PolicyLimits, 'linkAccess' | 'linkPreviews'>,
+	Exclude<keyof PolicyLimits, 'linkAccess' | 'linkPreviews' | 'pageExtras'>,
 	{ min: number; max: number }
 > = {
 	activeLinkLimit: { min: 1, max: 1_000_000 },
@@ -22,12 +23,13 @@ export const limitBounds: Record<
 	domainLimit: { min: 0, max: 50 },
 	memberLimit: { min: 1, max: 100 },
 	webhookEndpointLimit: { min: 0, max: 50 },
-	automationLimit: { min: 0, max: 100 }
+	automationLimit: { min: 0, max: 100 },
+	pageLimit: { min: 0, max: 100 }
 };
 
-// A page loaded before the webhook endpoint limit or the automation limit existed sends the other
-// limits only; the update then keeps the stored value.
-const optionalLimits: readonly string[] = ['webhookEndpointLimit', 'automationLimit'];
+// A page loaded before the webhook endpoint limit, the automation limit, or the page limit existed
+// sends the other limits only; the update then keeps the stored value.
+const optionalLimits: readonly string[] = ['webhookEndpointLimit', 'automationLimit', 'pageLimit'];
 
 function failure(code: string, status: number, message: string): Response {
 	return Response.json(
@@ -63,7 +65,8 @@ function parseLimits(value: unknown): PolicyLimits | null {
 		...('webhookEndpointLimit' in limits
 			? { webhookEndpointLimit: limits.webhookEndpointLimit }
 			: {}),
-		...('automationLimit' in limits ? { automationLimit: limits.automationLimit } : {})
+		...('automationLimit' in limits ? { automationLimit: limits.automationLimit } : {}),
+		...('pageLimit' in limits ? { pageLimit: limits.pageLimit } : {})
 	};
 }
 
@@ -85,7 +88,8 @@ async function view(config: StandaloneConfig, tenantId: string): Promise<Respons
 				domainLimit: policy.domainLimit,
 				memberLimit: policy.memberLimit,
 				webhookEndpointLimit: policy.webhookEndpointLimit,
-				automationLimit: policy.automationLimit
+				automationLimit: policy.automationLimit,
+				pageLimit: policy.pageLimit
 			},
 			pending:
 				policy.routingRevision < policy.revision || policy.analyticsRevision < policy.revision,

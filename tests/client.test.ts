@@ -208,7 +208,9 @@ beforeAll(async () => {
 			domainLimit: 1,
 			automationLimit: 5,
 			webhookEndpointLimit: 5,
-			linkPreviews: 1
+			linkPreviews: 1,
+			pageLimit: 2,
+			pageExtras: 1
 		},
 		now: 1
 	});
@@ -558,6 +560,37 @@ describe('domains and QR codes', () => {
 		const without = await client().removePreviewImage(link.id);
 		expect(without.previewImage).toBeNull();
 		expect(without.previewTitle).toBe('Card title');
+	});
+
+	it('creates, lists, reads, edits, and deletes a page', async () => {
+		const { link } = await client().createLink({ destination: 'https://buy.stripe.com/test_page' });
+		const page = await client().createPage({
+			handle: 'client-page',
+			title: 'Shop',
+			theme: { id: 'ember', buttonShape: 'square' },
+			blocks: [
+				{ kind: 'header', label: 'New', startsAt: '2026-01-01T00:00:00Z' },
+				{ kind: 'button', linkId: link.id, label: 'Buy' },
+				{ kind: 'payment', linkId: link.id, provider: 'stripe', label: 'Guide', price: 'US$9' },
+				{ kind: 'social', links: [{ network: 'github', address: 'https://github.com/flared' }] },
+				{ kind: 'embed', provider: 'youtube', address: 'https://youtu.be/dQw4w9WgXcQ' },
+				{ kind: 'signup', label: 'News', buttonLabel: 'Join' }
+			]
+		});
+		expect(page.blocks.map((block) => block.kind)).toEqual([
+			'header',
+			'button',
+			'payment',
+			'social',
+			'embed',
+			'signup'
+		]);
+		expect((await client(readOnly).listPages()).pages.map((item) => item.id)).toContain(page.id);
+		expect((await client(readOnly).getPage(page.id)).title).toBe('Shop');
+		const changed = await client().updatePage(page.id, { title: 'Store', blocks: [] });
+		expect(changed).toMatchObject({ title: 'Store', blocks: [] });
+		await client().deletePage(page.id);
+		await expect(client().getPage(page.id)).rejects.toMatchObject({ code: 'NOT_FOUND' });
 	});
 
 	it('serves QR codes as SVG and PNG', async () => {

@@ -497,6 +497,21 @@
 			"binding": "PREVIEW_ANALYTICS",
 			"database_name": "preview-analytics",
 			"database_id": "00000000-0000-0000-0000-000000000122"
+		},
+		{
+			"binding": "PAGES_IDENTITY",
+			"database_name": "pages-identity",
+			"database_id": "00000000-0000-0000-0000-000000000123"
+		},
+		{
+			"binding": "PAGES_ROUTING",
+			"database_name": "pages-routing",
+			"database_id": "00000000-0000-0000-0000-000000000124"
+		},
+		{
+			"binding": "PAGES_ANALYTICS",
+			"database_name": "pages-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000125"
 		}
 	],
 	"r2_buckets": [{ "binding": "PREVIEW_IMAGES", "bucket_name": "preview-images" }]

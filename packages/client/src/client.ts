@@ -33,6 +33,14 @@ import {
 	type Link,
 	type LinkPage
 } from '@flared/contracts/links';
+import {
+	isPage,
+	isPageList,
+	type CreatePageBody,
+	type Page,
+	type PageList,
+	type UpdatePageBody
+} from '@flared/contracts/pages';
 import { isApiIdentity, type ApiIdentity } from '@flared/contracts/tokens';
 
 export const defaultApiUrl = 'https://api.flared.page/v1';
@@ -157,6 +165,14 @@ export interface FlaredClient {
 		endsAt?: string
 	): Promise<ApplyAutomationLinksResult>;
 	removeLinkAutomation(linkId: string, automationId: string): Promise<void>;
+	listPages(cursor?: string): Promise<PageList>;
+	getPage(id: string): Promise<Page>;
+	// Not retried: a page create has no key, and a retry after a lost answer would find the
+	// handle taken by the first try.
+	createPage(page: CreatePageBody): Promise<Page>;
+	// blocks replaces the whole list.
+	updatePage(id: string, change: UpdatePageBody): Promise<Page>;
+	deletePage(id: string): Promise<void>;
 }
 
 const maxRetryWaitSeconds = 30;
@@ -274,6 +290,12 @@ export function createClient(options: ClientOptions): FlaredClient {
 		const domain = record(body)?.domain;
 		if (!isDomain(domain)) throw invalid(status);
 		return domain;
+	}
+	async function pageFrom(promise: ReturnType<typeof request>): Promise<Page> {
+		const { status, body } = await promise;
+		const page = record(body)?.page;
+		if (!isPage(page)) throw invalid(status);
+		return page;
 	}
 	async function linkFrom(promise: ReturnType<typeof request>): Promise<Link> {
 		const { status, body } = await promise;
@@ -399,6 +421,21 @@ export function createClient(options: ClientOptions): FlaredClient {
 			await request('DELETE', `/links/${id(linkId)}/automations/${id(automationId)}`, {
 				retry: false
 			});
+		},
+		listPages(cursor) {
+			return page(`/pages${after(cursor)}`, isPageList);
+		},
+		getPage(pageId) {
+			return pageFrom(request('GET', `/pages/${id(pageId)}`, { retry: true }));
+		},
+		createPage(input) {
+			return pageFrom(request('POST', '/pages', { body: input, retry: false }));
+		},
+		updatePage(pageId, change) {
+			return pageFrom(request('PATCH', `/pages/${id(pageId)}`, { body: change, retry: false }));
+		},
+		async deletePage(pageId) {
+			await request('DELETE', `/pages/${id(pageId)}`, { retry: false });
 		}
 	};
 }

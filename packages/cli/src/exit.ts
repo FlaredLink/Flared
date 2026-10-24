@@ -25,6 +25,7 @@ export function exitCodeFor(code: ClientErrorCode): number {
 		case 'ACCOUNT_DELETING':
 		case 'WORKSPACE_SUSPENDED':
 		case 'LINK_BLOCKED':
+		case 'PAGE_BLOCKED':
 		case 'ORIGIN_REJECTED':
 		case 'REAUTH_REQUIRED':
 			return exitCodes.forbidden;
@@ -39,6 +40,8 @@ export function exitCodeFor(code: ClientErrorCode): number {
 		case 'DEFAULT_DOMAIN_UNAVAILABLE':
 		case 'DOMAIN_UNAVAILABLE':
 		case 'DOMAIN_TAKEN':
+		case 'HANDLE_TAKEN':
+		case 'PAGE_DOMAIN_TAKEN':
 			return exitCodes.rejected;
 		case 'PLAN_LIMIT_REACHED':
 		case 'TOKEN_LIMIT_REACHED':
@@ -48,6 +51,8 @@ export function exitCodeFor(code: ClientErrorCode): number {
 		case 'LINK_AUTOMATION_LIMIT_REACHED':
 		case 'LINK_ACCESS_REQUIRES_PLAN':
 		case 'LINK_PREVIEW_REQUIRES_PLAN':
+		case 'PAGE_LIMIT_REACHED':
+		case 'PAGE_EXTRAS_REQUIRES_PLAN':
 			return exitCodes.planLimit;
 		case 'RATE_LIMITED':
 		case 'DOMAIN_CHECK_TOO_SOON':

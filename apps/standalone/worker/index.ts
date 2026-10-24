@@ -61,9 +61,11 @@ const initialLimits = {
 	memberLimit: 10,
 	webhookEndpointLimit: 10,
 	automationLimit: 25,
+	pageLimit: 25,
 	// A single installation has every feature; the Limits page does not change them.
 	linkAccess: 1,
-	linkPreviews: 1
+	linkPreviews: 1,
+	pageExtras: 1
 } as const;
 
 const deadLetterQueue = 'flared-clicks-dlq';

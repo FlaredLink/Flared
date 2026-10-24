@@ -21,7 +21,8 @@
 		"./deletions": "./src/deletions.ts",
 		"./operations": "./src/operations.ts",
 		"./webhooks": "./src/webhooks.ts",
-		"./automations": "./src/automations.ts"
+		"./automations": "./src/automations.ts",
+		"./pages": "./src/pages.ts"
 	},
 	"dependencies": {
 		"@flared/contracts": "workspace:*",

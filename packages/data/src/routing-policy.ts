@@ -12,20 +12,22 @@ export interface RoutingPolicy {
 	automationLimit: number;
 	linkAccess: 0 | 1;
 	linkPreviews: 0 | 1;
+	pageLimit: number;
+	pageExtras: 0 | 1;
 	// Set while the operator suspends the tenant; its links then do not redirect.
 	suspendedAt: number | null;
 	now: number;
 }
 
 // A row at the same revision is replaced only while its webhook endpoint limit, automation limit,
-// link access, or link previews is NULL: it was projected before routing stored that value, and
+// link access, link previews, page limit, or page extras is NULL: it was projected before routing stored that value, and
 // no migration takes a new revision for it.
 export async function applyRoutingPolicy(db: D1Database, policy: RoutingPolicy): Promise<void> {
 	await db
 		.prepare(
-			`INSERT INTO tenant_policy (tenant_id, revision, analytics_shard_id, active_link_limit, domain_limit, webhook_endpoint_limit, automation_limit, link_access, link_previews, suspended_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(tenant_id) DO UPDATE SET revision = excluded.revision, analytics_shard_id = excluded.analytics_shard_id, active_link_limit = excluded.active_link_limit, domain_limit = excluded.domain_limit, webhook_endpoint_limit = excluded.webhook_endpoint_limit, automation_limit = excluded.automation_limit, link_access = excluded.link_access, link_previews = excluded.link_previews, suspended_at = excluded.suspended_at, updated_at = excluded.updated_at
-			WHERE excluded.revision > tenant_policy.revision OR (excluded.revision = tenant_policy.revision AND (tenant_policy.webhook_endpoint_limit IS NULL OR tenant_policy.automation_limit IS NULL OR tenant_policy.link_access IS NULL OR tenant_policy.link_previews IS NULL))`
+			`INSERT INTO tenant_policy (tenant_id, revision, analytics_shard_id, active_link_limit, domain_limit, webhook_endpoint_limit, automation_limit, link_access, link_previews, page_limit, page_extras, suspended_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(tenant_id) DO UPDATE SET revision = excluded.revision, analytics_shard_id = excluded.analytics_shard_id, active_link_limit = excluded.active_link_limit, domain_limit = excluded.domain_limit, webhook_endpoint_limit = excluded.webhook_endpoint_limit, automation_limit = excluded.automation_limit, link_access = excluded.link_access, link_previews = excluded.link_previews, page_limit = excluded.page_limit, page_extras = excluded.page_extras, suspended_at = excluded.suspended_at, updated_at = excluded.updated_at
+			WHERE excluded.revision > tenant_policy.revision OR (excluded.revision = tenant_policy.revision AND (tenant_policy.webhook_endpoint_limit IS NULL OR tenant_policy.automation_limit IS NULL OR tenant_policy.link_access IS NULL OR tenant_policy.link_previews IS NULL OR tenant_policy.page_limit IS NULL OR tenant_policy.page_extras IS NULL))`
 		)
 		.bind(
 			policy.tenantId,
@@ -37,6 +39,8 @@ export async function applyRoutingPolicy(db: D1Database, policy: RoutingPolicy):
 			policy.automationLimit,
 			policy.linkAccess,
 			policy.linkPreviews,
+			policy.pageLimit,
+			policy.pageExtras,
 			policy.suspendedAt,
 			policy.now
 		)
@@ -44,13 +48,14 @@ export async function applyRoutingPolicy(db: D1Database, policy: RoutingPolicy):
 }
 
 // Tenants whose routing row lacks a value that a later version added (the webhook endpoint limit,
-// the automation limit, link access, or link previews), for the scheduled heal.
+// the automation limit, link access, link previews, the page limit, or page extras), for the
+// scheduled heal.
 export async function listUnprojectedLimits(db: D1Database, limit: number): Promise<string[]> {
 	if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
 		throw new Error('Invalid projection batch size');
 	const { results } = await db
 		.prepare(
-			'SELECT tenant_id FROM tenant_policy WHERE webhook_endpoint_limit IS NULL OR automation_limit IS NULL OR link_access IS NULL OR link_previews IS NULL ORDER BY tenant_id LIMIT ?'
+			'SELECT tenant_id FROM tenant_policy WHERE webhook_endpoint_limit IS NULL OR automation_limit IS NULL OR link_access IS NULL OR link_previews IS NULL OR page_limit IS NULL OR page_extras IS NULL ORDER BY tenant_id LIMIT ?'
 		)
 		.bind(limit)
 		.all<{ tenant_id: unknown }>();
