@@ -6,6 +6,7 @@ import type { ClickEvent } from '../packages/contracts/src/analytics';
 import { LinkInputError, parseCreateLink, parseUpdateLink } from '../packages/contracts/src/links';
 import { createLinkRecord, updateLink } from '../packages/data/src/links';
 import { listUnprojectedLimits } from '../packages/data/src/routing-policy';
+import { linkJson } from '../packages/data/src/webhooks';
 import { createTenant } from '../packages/data/src/tenancy';
 import { createApi } from '../packages/server/src/api';
 import {
@@ -222,10 +223,30 @@ describe('link access in the API', () => {
 			hasPassword: true
 		});
 		const read = await json(await call('user-plus', 'GET', `/v1/links/${link.id}`));
-		const text = JSON.stringify(read);
 		expect(read.link.hasPassword).toBe(true);
-		expect(text).not.toContain('sesame');
-		expect(text).not.toContain('pbkdf2');
+		// The MCP tools read links through these routes, so their results carry only hasPassword too.
+		const list = await call('user-plus', 'GET', '/v1/links');
+		const exported = await call('user-plus', 'GET', '/v1/export/links');
+		expect(list.status).toBe(200);
+		expect(exported.status).toBe(200);
+		// The webhook payload of a link is built in SQL.
+		const payload = await routing()
+			.prepare(
+				`SELECT ${linkJson('l', 'n')} AS link FROM links l JOIN domain_namespaces n ON n.id = l.domain_id WHERE l.id = ?`
+			)
+			.bind(link.id)
+			.first<{ link: string }>();
+		expect(JSON.parse(payload?.link ?? '{}').hasPassword).toBe(true);
+		for (const text of [
+			JSON.stringify(read),
+			await list.text(),
+			await exported.text(),
+			payload?.link ?? ''
+		]) {
+			expect(text).toContain(link.id);
+			expect(text).not.toContain('sesame');
+			expect(text).not.toContain('pbkdf2');
+		}
 		expect(await storedHash(link.id)).toMatch(/^hmac-pbkdf2-sha256\$5000\$/);
 	});
 
