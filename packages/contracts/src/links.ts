@@ -27,6 +27,14 @@ export interface Link {
 	// destinations were added leave them out.
 	iosDestination?: string | null;
 	androidDestination?: string | null;
+	// The link opens at startsAt and stops at endsAt (ISO 8601, UTC); null is no bound. After the
+	// end, visitors go to endedDestination, or see that the link has ended. hasPassword: visitors
+	// enter a password first; the password itself is never returned. Servers before link access
+	// was added leave them out.
+	startsAt?: string | null;
+	endsAt?: string | null;
+	endedDestination?: string | null;
+	hasPassword?: boolean;
 	enabled: boolean;
 	// Set while the operator blocks the link for abuse. A blocked link does not redirect, and
 	// its owner cannot edit it or turn it on.
@@ -57,15 +65,31 @@ export interface CreateLinkInput {
 	domainId: string | null;
 	iosDestination: string | null;
 	androidDestination: string | null;
+	// UTC milliseconds.
+	startsAt: number | null;
+	endsAt: number | null;
+	endedDestination: string | null;
+	password: string | null;
 }
 
-// null clears a device destination.
+// null clears a device destination, a date, the destination after the end, or the password.
 export interface UpdateLinkInput {
 	destination?: string;
 	title?: string | null;
 	iosDestination?: string | null;
 	androidDestination?: string | null;
+	startsAt?: number | null;
+	endsAt?: number | null;
+	endedDestination?: string | null;
+	password?: string | null;
 	enabled?: boolean;
+}
+
+// The fields that need link access on the plan. Setting one needs it; clearing one does not.
+export const linkAccessFields = ['startsAt', 'endsAt', 'endedDestination', 'password'] as const;
+
+export function setsLinkAccess(input: Partial<CreateLinkInput> | UpdateLinkInput): boolean {
+	return linkAccessFields.some((field) => input[field] !== undefined && input[field] !== null);
 }
 
 export type DeviceField = 'iosDestination' | 'androidDestination';
@@ -231,6 +255,55 @@ export function withUtm(destination: string, utm: Utm): string {
 	return parseDestination(url.href);
 }
 
+export const minLinkPasswordLength = 4;
+export const maxLinkPasswordLength = 128;
+// The latest time a date may name: the end of year 9999.
+const maxTime = 253402300799999;
+const timePattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+// An ISO 8601 date and time with Z or an offset, so the moment does not depend on the server's
+// time zone. Returns UTC milliseconds; an empty value is no date.
+export function parseLinkTime(value: unknown, field: 'startsAt' | 'endsAt'): number | null {
+	if (value === undefined || value === null || value === '') return null;
+	if (typeof value !== 'string' || !timePattern.test(value))
+		throw new LinkInputError(
+			field,
+			'Enter a date and time with a time zone, such as 2026-11-01T09:00:00Z.'
+		);
+	const time = Date.parse(value);
+	if (!Number.isSafeInteger(time) || time < 0 || time > maxTime)
+		throw new LinkInputError(field, 'Enter a real date and time.');
+	return time;
+}
+
+// Kept as typed: spaces count, so only control characters are refused.
+export function parseLinkPassword(value: unknown): string | null {
+	if (value === undefined || value === null) return null;
+	if (typeof value !== 'string')
+		throw new LinkInputError('password', 'Enter the password as text.');
+	if (value.length < minLinkPasswordLength || value.length > maxLinkPasswordLength)
+		throw new LinkInputError('password', 'Use a password of 4 to 128 characters.');
+	if (/\p{Cc}/u.test(value)) throw new LinkInputError('password', 'Remove control characters.');
+	return value;
+}
+
+function parseEndedDestination(value: unknown): string | null {
+	if (value === undefined || value === null || value === '') return null;
+	return parseDestination(value, 'endedDestination');
+}
+
+// Both dates of one request, in order. The server checks a change against the stored dates too.
+export function checkLinkWindow(window: {
+	startsAt: number | null;
+	endsAt: number | null;
+	endedDestination: string | null;
+}): void {
+	if (window.startsAt !== null && window.endsAt !== null && window.endsAt <= window.startsAt)
+		throw new LinkInputError('endsAt', 'Set the end after the start.');
+	if (window.endedDestination !== null && window.endsAt === null)
+		throw new LinkInputError('endedDestination', 'Set an end date for this destination.');
+}
+
 export function parseSlug(value: unknown): string | null {
 	if (value === undefined || value === null || value === '') return null;
 	if (typeof value !== 'string') throw new LinkInputError('slug', 'Enter the slug as text.');
@@ -263,29 +336,54 @@ export function parseCreateLink(value: unknown): CreateLinkInput {
 		'title',
 		'domainId',
 		'iosDestination',
-		'androidDestination'
+		'androidDestination',
+		'startsAt',
+		'endsAt',
+		'endedDestination',
+		'password'
 	]);
 	const domainId = body.domainId;
 	if (domainId !== undefined && domainId !== null && (typeof domainId !== 'string' || !domainId))
 		throw new LinkInputError('domainId', 'Use a domain ID from GET /v1/domains.');
-	return {
+	const input: CreateLinkInput = {
 		destination: parseDestination(body.destination),
 		slug: parseSlug(body.slug),
 		title: parseTitle(body.title),
 		domainId: typeof domainId === 'string' ? domainId : null,
 		iosDestination: parseDeviceDestination(body.iosDestination, 'iosDestination'),
-		androidDestination: parseDeviceDestination(body.androidDestination, 'androidDestination')
+		androidDestination: parseDeviceDestination(body.androidDestination, 'androidDestination'),
+		startsAt: parseLinkTime(body.startsAt, 'startsAt'),
+		endsAt: parseLinkTime(body.endsAt, 'endsAt'),
+		endedDestination: parseEndedDestination(body.endedDestination),
+		password: parseLinkPassword(body.password)
 	};
+	checkLinkWindow(input);
+	return input;
 }
 
 export function parseUpdateLink(value: unknown): UpdateLinkInput {
 	const body = record(value);
-	onlyFields(body, ['destination', 'title', 'iosDestination', 'androidDestination', 'enabled']);
+	onlyFields(body, [
+		'destination',
+		'title',
+		'iosDestination',
+		'androidDestination',
+		'startsAt',
+		'endsAt',
+		'endedDestination',
+		'password',
+		'enabled'
+	]);
 	const update: UpdateLinkInput = {};
 	if (body.destination !== undefined) update.destination = parseDestination(body.destination);
 	if (body.title !== undefined) update.title = parseTitle(body.title);
 	for (const field of ['iosDestination', 'androidDestination'] as const)
 		if (body[field] !== undefined) update[field] = parseDeviceDestination(body[field], field);
+	for (const field of ['startsAt', 'endsAt'] as const)
+		if (body[field] !== undefined) update[field] = parseLinkTime(body[field], field);
+	if (body.endedDestination !== undefined)
+		update.endedDestination = parseEndedDestination(body.endedDestination);
+	if (body.password !== undefined) update.password = parseLinkPassword(body.password);
 	if (body.enabled !== undefined) {
 		if (typeof body.enabled !== 'boolean')
 			throw new LinkInputError('enabled', 'Use true or false.');
@@ -294,8 +392,14 @@ export function parseUpdateLink(value: unknown): UpdateLinkInput {
 	if (Object.keys(update).length === 0)
 		throw new LinkInputError(
 			'body',
-			'Change the destination, title, a device destination, or the enabled state.'
+			'Change the destination, title, a device destination, a date, the password, or the enabled state.'
 		);
+	if (update.startsAt !== undefined && update.endsAt !== undefined)
+		checkLinkWindow({
+			startsAt: update.startsAt,
+			endsAt: update.endsAt,
+			endedDestination: update.endedDestination ?? null
+		});
 	return update;
 }
 

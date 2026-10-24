@@ -134,6 +134,11 @@ export async function createLink(
 		// Empty or absent means no device destination.
 		iosDestination?: string;
 		androidDestination?: string;
+		// Empty or absent means none.
+		startsAt?: string;
+		endsAt?: string;
+		endedDestination?: string;
+		password?: string;
 	}
 ): Promise<{ ok: true; link: Link } | { ok: false; failure: ApiFailure }> {
 	const response = await service.fetch(
@@ -149,6 +154,10 @@ export async function createLink(
 				title: input.title || null,
 				iosDestination: input.iosDestination || null,
 				androidDestination: input.androidDestination || null,
+				startsAt: input.startsAt || null,
+				endsAt: input.endsAt || null,
+				endedDestination: input.endedDestination || null,
+				password: input.password || null,
 				// Empty means the installation default.
 				...(input.domainId ? { domainId: input.domainId } : {})
 			})
@@ -255,10 +264,20 @@ export async function fetchLink(
 		: { ok: false, failure: malformed };
 }
 
-// The fields of PATCH /v1/links/:id. An empty title or device destination clears it; an absent
-// device destination stays as it is.
+// The fields of PATCH /v1/links/:id. An empty title, device destination, date, or destination
+// after the end clears it; an absent one stays as it is. password: a new password, or null to
+// remove it; absent keeps it.
 export type LinkChange =
-	| { destination: string; title: string; iosDestination?: string; androidDestination?: string }
+	| {
+			destination: string;
+			title: string;
+			iosDestination?: string;
+			androidDestination?: string;
+			startsAt?: string;
+			endsAt?: string;
+			endedDestination?: string;
+			password?: string | null;
+	  }
 	| { enabled: boolean };
 
 // The change that LinkEditForm submits: intent "edit" with the fields, or "enable" or "disable".
@@ -276,7 +295,19 @@ export function linkChangeOf(form: FormData): LinkChange | null {
 				...(form.has('iosDestination') ? { iosDestination: text('iosDestination') } : {}),
 				...(form.has('androidDestination')
 					? { androidDestination: text('androidDestination') }
-					: {})
+					: {}),
+				// The box that removes the times sends them empty; otherwise only the fields sent.
+				...Object.fromEntries(
+					(['startsAt', 'endsAt', 'endedDestination'] as const)
+						.filter((name) => form.has(name) || form.get('removeTimes') === 'on')
+						.map((name) => [name, form.get('removeTimes') === 'on' ? '' : text(name)])
+				),
+				// An empty password field keeps the password; the checkbox removes it.
+				...(form.get('removePassword') === 'on'
+					? { password: null }
+					: text('password')
+						? { password: text('password') }
+						: {})
 			};
 		case 'enable':
 			return { enabled: true };
@@ -304,7 +335,13 @@ export async function updateLink(
 						: { iosDestination: change.iosDestination || null }),
 					...(change.androidDestination === undefined
 						? {}
-						: { androidDestination: change.androidDestination || null })
+						: { androidDestination: change.androidDestination || null }),
+					...Object.fromEntries(
+						(['startsAt', 'endsAt', 'endedDestination'] as const)
+							.filter((name) => change[name] !== undefined)
+							.map((name) => [name, change[name] || null])
+					),
+					...(change.password === undefined ? {} : { password: change.password })
 				};
 	const response = await service.fetch(
 		apiRequest(`/v1/links/${encodeURIComponent(id)}`, {

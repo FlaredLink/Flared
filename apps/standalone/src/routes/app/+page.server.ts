@@ -98,8 +98,13 @@ export const actions: Actions = {
 			// Empty means the default domain; the API checks that an ID is active and ours.
 			domainId: form ? text(form, 'domainId') : '',
 			iosDestination: form ? text(form, 'iosDestination') : '',
-			androidDestination: form ? text(form, 'androidDestination') : ''
+			androidDestination: form ? text(form, 'androidDestination') : '',
+			startsAt: form ? text(form, 'startsAt') : '',
+			endsAt: form ? text(form, 'endsAt') : '',
+			endedDestination: form ? text(form, 'endedDestination') : ''
 		};
+		// Sent to the API only: a failed create never sends the password back to the page.
+		const password = form ? text(form, 'password') : '';
 		const key = form ? text(form, 'idempotencyKey') : '';
 		const service = platform?.env.API_SERVICE;
 		const failure = (problem: Pick<ApiFailure, 'code' | 'message' | 'status' | 'field'>) =>
@@ -118,7 +123,7 @@ export const actions: Actions = {
 		};
 		if (!service || !key) return failure(unavailable);
 		try {
-			const result = await createLink(service, request.headers, key, values);
+			const result = await createLink(service, request.headers, key, { ...values, password });
 			if (!result.ok) return failure(result.failure);
 			return { created: result.link };
 		} catch {

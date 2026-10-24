@@ -7,7 +7,8 @@ import type { ClickEvent } from '@flared/contracts/analytics';
 import { installationAuthSecret } from '@flared/data/setup';
 import type { AnalyticsShards } from '@flared/server/shards';
 import { keyedHash } from '@flared/server/auth/limits';
-import type { ClickSink } from '@flared/server/redirect';
+import { createLinkPasswords, type LinkPasswords } from '@flared/server/link-passwords';
+import type { AttemptLimiter, ClickSink } from '@flared/server/redirect';
 import { defaultSourceUrl } from '../src/lib/source';
 
 export interface StandaloneEnv {
@@ -24,6 +25,9 @@ export interface StandaloneEnv {
 	SETUP_SECRET?: string;
 	// Where the source of this version is published (AGPL section 13).
 	SOURCE_URL?: string;
+	// The rate limiting binding for tries of a link password. Without it, no link password can
+	// be set, and a link that has one does not open.
+	LINK_PASSWORD_ATTEMPTS?: AttemptLimiter;
 }
 
 export interface DeploymentConfig {
@@ -39,6 +43,9 @@ export interface DeploymentConfig {
 	shards: AnalyticsShards;
 	analyticsShardId: string;
 	clicks: ClickSink | undefined;
+	// The link password key comes from the auth secret, so a new auth secret makes every link
+	// password stop working until it is set again.
+	linkPasswords: { keys: LinkPasswords; attempts: AttemptLimiter } | undefined;
 }
 
 // The configuration of one request, with the app origin resolved.
@@ -108,6 +115,7 @@ export async function readConfig(
 	const secret = isSet(env.AUTH_SECRET) ? env.AUTH_SECRET : await storedAuthSecret(identity);
 	const setup = isSet(env.SETUP_SECRET) ? env.SETUP_SECRET : null;
 	const queue = env.CLICKS;
+	const attempts = env.LINK_PASSWORD_ATTEMPTS;
 	return {
 		ok: true,
 		config: {
@@ -127,6 +135,10 @@ export async function readConfig(
 								await queue.send(event);
 							}
 						}
+					: undefined,
+			linkPasswords:
+				attempts && typeof attempts.limit === 'function'
+					? { keys: createLinkPasswords(secret), attempts }
 					: undefined
 		}
 	};

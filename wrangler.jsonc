@@ -55,5 +55,13 @@
 		]
 	},
 	// The frequent jobs every 10 minutes and daily maintenance (apps/standalone/worker/jobs.ts).
-	"triggers": { "crons": ["*/10 * * * *", "17 3 * * *"] }
+	"triggers": { "crons": ["*/10 * * * *", "17 3 * * *"] },
+	// Tries of a link password: 10 a minute for each link and visitor IP.
+	"ratelimits": [
+		{
+			"name": "LINK_PASSWORD_ATTEMPTS",
+			"namespace_id": "1001",
+			"simple": { "limit": 10, "period": 60 }
+		}
+	]
 }

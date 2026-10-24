@@ -73,7 +73,8 @@ export const actions: Actions = {
 	update: async ({ request, platform, params }) => {
 		const form = await request.formData().catch(() => null);
 		const change = form ? linkChangeOf(form) : null;
-		const values = change && 'destination' in change ? change : null;
+		// The page gets the fields back after a failure, never the password.
+		const values = change && 'destination' in change ? { ...change, password: undefined } : null;
 		const failure = (problem: Pick<ApiFailure, 'code' | 'message' | 'status' | 'field'>) =>
 			fail(problem.status, {
 				error: { code: problem.code, message: problem.message, field: problem.field },

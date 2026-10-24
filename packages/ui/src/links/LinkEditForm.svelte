@@ -7,6 +7,7 @@
 	import Button from '../atoms/Button.svelte';
 	import TextInput from '../atoms/TextInput.svelte';
 	import FormField from '../molecules/FormField.svelte';
+	import AccessFields from './AccessFields.svelte';
 	import DeviceFields from './DeviceFields.svelte';
 	import UtmFields from './UtmFields.svelte';
 
@@ -15,6 +16,9 @@
 		title: string;
 		iosDestination?: string;
 		androidDestination?: string;
+		startsAt?: string;
+		endsAt?: string;
+		endedDestination?: string;
 	}
 
 	interface Props {
@@ -28,6 +32,8 @@
 		enhance?: Action<HTMLFormElement>;
 		// Closes the form without a change. Without it, the form shows no Cancel button.
 		oncancel?: () => void;
+		// Why the workspace cannot set dates or a password, such as its plan. Without it, it can.
+		accessUnavailable?: string | null;
 	}
 
 	let {
@@ -37,7 +43,8 @@
 		error = null,
 		pending = false,
 		enhance = () => {},
-		oncancel
+		oncancel,
+		accessUnavailable = null
 	}: Props = $props();
 
 	// A submitted value wins; a device destination that was not submitted shows the link's.
@@ -45,14 +52,26 @@
 		destination: values?.destination ?? link.destination,
 		title: values?.title ?? link.title ?? '',
 		iosDestination: values?.iosDestination ?? link.iosDestination ?? '',
-		androidDestination: values?.androidDestination ?? link.androidDestination ?? ''
+		androidDestination: values?.androidDestination ?? link.androidDestination ?? '',
+		startsAt: values?.startsAt ?? link.startsAt ?? '',
+		endsAt: values?.endsAt ?? link.endsAt ?? '',
+		endedDestination: values?.endedDestination ?? link.endedDestination ?? ''
 	});
 	// Bound to the destination field, so the UTM fields can write into it.
 	let destination = $state(untrack(() => shown.destination));
 	$effect(() => {
 		destination = shown.destination;
 	});
-	const ownFields = ['destination', 'title', 'iosDestination', 'androidDestination'];
+	const ownFields = [
+		'destination',
+		'title',
+		'iosDestination',
+		'androidDestination',
+		'startsAt',
+		'endsAt',
+		'endedDestination',
+		'password'
+	];
 	const invalid = (field: string) => error?.field === field;
 	const fieldError = (field: string) => (invalid(field) ? error?.message : null);
 	// An error that belongs to no field shows under the buttons.
@@ -93,6 +112,13 @@
 	</FormField>
 	<UtmFields bind:destination idPrefix="edit" />
 	<DeviceFields idPrefix="edit" values={shown} {error} />
+	<AccessFields
+		idPrefix="edit"
+		values={shown}
+		hasPassword={link.hasPassword ?? false}
+		{error}
+		unavailable={accessUnavailable}
+	/>
 	<p id="edit-hint" class="hint">
 		The short link {link.hostname}/{link.slug} stays the same. New clicks go to the new destination.
 	</p>

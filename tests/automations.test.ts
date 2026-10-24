@@ -242,7 +242,11 @@ async function addLink(tenantId: string, createdAt = clock): Promise<string> {
 			title: null,
 			domainId: null,
 			iosDestination: null,
-			androidDestination: null
+			androidDestination: null,
+			startsAt: null,
+			endsAt: null,
+			endedDestination: null,
+			password: null
 		},
 		requestId: 'request-1',
 		now: createdAt
@@ -1615,6 +1619,7 @@ describe('limits and states', () => {
 			domainLimit: 1,
 			webhookEndpointLimit: 5,
 			automationLimit: 1,
+			linkAccess: 0,
 			suspendedAt: null,
 			now: clock
 		});

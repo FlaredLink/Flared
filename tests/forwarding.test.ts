@@ -275,6 +275,7 @@ describe('routing flag', () => {
 			domainLimit: 2,
 			webhookEndpointLimit: 5,
 			automationLimit: 25,
+			linkAccess: 0,
 			suspendedAt: null,
 			now: 4
 		});

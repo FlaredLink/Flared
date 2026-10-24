@@ -4,7 +4,14 @@ import type { D1Database } from '@cloudflare/workers-types/index.ts';
 import type { ErrorBody, ErrorCode } from '@flared/contracts/errors';
 import { errorStatus } from '@flared/contracts/errors';
 import { exportLinkPageSize, type ExportLinkPage } from '@flared/contracts/export';
-import type { CreateLinkInput, Link, LinkPage, UpdateLinkInput } from '@flared/contracts/links';
+import {
+	checkLinkWindow,
+	setsLinkAccess,
+	type CreateLinkInput,
+	type Link,
+	type LinkPage,
+	type UpdateLinkInput
+} from '@flared/contracts/links';
 import { isReservedSlug } from '@flared/contracts/reserved';
 import { newWebhookEventId } from '@flared/contracts/webhooks';
 import {
@@ -16,6 +23,8 @@ import {
 	updateLink,
 	type LinkRow
 } from '@flared/data/links';
+import { readLinkAccess } from '@flared/data/routing-policy';
+import type { LinkPasswords } from './link-passwords';
 
 export const createKeyLifetimeMs = 24 * 60 * 60 * 1000;
 const generatedSlugLength = 7;
@@ -61,6 +70,10 @@ export function toApiLink(row: LinkRow): Link {
 		title: row.title,
 		iosDestination: row.iosDestination,
 		androidDestination: row.androidDestination,
+		startsAt: row.startsAt === null ? null : new Date(row.startsAt).toISOString(),
+		endsAt: row.endsAt === null ? null : new Date(row.endsAt).toISOString(),
+		endedDestination: row.endedDestination,
+		hasPassword: row.hasPassword,
 		enabled: row.active,
 		blocked: row.blockedReason ? { reason: row.blockedReason } : null,
 		createdAt: new Date(row.createdAt).toISOString(),
@@ -85,19 +98,31 @@ export function generateSlug(
 }
 
 // Hash of the validated input. The omitted domain has its own marker, so a later change of
-// the default domain cannot make a replay match a different request. Device destinations are
-// added only when set, so a request without them keeps the hash it had before they existed.
+// the default domain cannot make a replay match a different request. Device destinations and
+// link access are added only when set, so a request without them keeps the hash it had before
+// they existed. The password counts only as set: the stored hash must not depend on it.
 export async function hashCreateInput(input: CreateLinkInput): Promise<string> {
 	const devices =
 		input.iosDestination === null && input.androidDestination === null
 			? []
 			: [{ ios: input.iosDestination, android: input.androidDestination }];
+	const access = setsLinkAccess(input)
+		? [
+				{
+					startsAt: input.startsAt,
+					endsAt: input.endsAt,
+					endedDestination: input.endedDestination,
+					password: input.password !== null
+				}
+			]
+		: [];
 	const canonical = JSON.stringify([
 		input.destination,
 		input.slug,
 		input.title,
 		input.domainId === null ? { default: true } : { id: input.domainId },
-		...devices
+		...devices,
+		...access
 	]);
 	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical));
 	return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -105,6 +130,24 @@ export async function hashCreateInput(input: CreateLinkInput): Promise<string> {
 
 export const slugTakenMessage = 'This slug is already taken on this domain.';
 export const limitReachedMessage = 'Your workspace has reached its active link limit.';
+export const linkAccessMessage = 'Your plan does not include passwords or start and end dates.';
+
+function linkAccessRefused(): ApiError {
+	return new ApiError('LINK_ACCESS_REQUIRES_PLAN', linkAccessMessage);
+}
+
+// Without the installation's key, a password cannot be stored or checked.
+async function hashPassword(
+	passwords: LinkPasswords | undefined,
+	password: string
+): Promise<string> {
+	if (!passwords)
+		throw new ApiError(
+			'SERVICE_UNAVAILABLE',
+			'Link passwords are not available on this installation.'
+		);
+	return passwords.hash(password);
+}
 
 // A create without a domain uses the installation default; an explicit one must be usable.
 export function domainUnavailable(domainId: string | null): ApiError {
@@ -121,6 +164,7 @@ export interface CreateLinkRequest {
 	now: number;
 	newId?: () => string;
 	newSlug?: () => string;
+	passwords?: LinkPasswords;
 }
 
 export async function createLink(
@@ -131,6 +175,11 @@ export async function createLink(
 	const requestHash = await hashCreateInput(input);
 	const domain = await findUsableDomain(routing, tenantId, input.domainId);
 	if (!domain) throw domainUnavailable(input.domainId);
+	// The create batch checks it again, so a plan change during the request cannot pass it.
+	if (setsLinkAccess(input) && !(await readLinkAccess(routing, tenantId)))
+		throw linkAccessRefused();
+	const passwordHash =
+		input.password === null ? null : await hashPassword(request.passwords, input.password);
 	const slugTaken = errorBody('SLUG_TAKEN', slugTakenMessage, requestId, 'slug');
 	const limitReached = errorBody('PLAN_LIMIT_REACHED', limitReachedMessage, requestId);
 	const attempts = input.slug === null ? generatedSlugAttempts : 1;
@@ -146,6 +195,10 @@ export async function createLink(
 			title: input.title,
 			iosDestination: input.iosDestination,
 			androidDestination: input.androidDestination,
+			startsAt: input.startsAt,
+			endsAt: input.endsAt,
+			endedDestination: input.endedDestination,
+			hasPassword: passwordHash !== null,
 			active: true,
 			blockedReason: null,
 			createdAt: now,
@@ -164,6 +217,10 @@ export async function createLink(
 			title: input.title,
 			iosDestination: input.iosDestination,
 			androidDestination: input.androidDestination,
+			startsAt: input.startsAt,
+			endsAt: input.endsAt,
+			endedDestination: input.endedDestination,
+			passwordHash,
 			now,
 			expiresAt: now + createKeyLifetimeMs,
 			bodies: { created: body, slugTaken, limitReached },
@@ -265,18 +322,67 @@ export async function getLink(
 	return toApiLink(row);
 }
 
+type WindowChange = Pick<UpdateLinkInput, 'startsAt' | 'endsAt' | 'endedDestination'>;
+
+// The dates after the change, checked against the stored ones. A value equal to the stored one
+// is no change, so an edit form that sends the dates back needs no link access. Clearing the end
+// also clears the destination after it.
+async function windowChange(
+	routing: D1Database,
+	tenantId: string,
+	linkId: string,
+	change: UpdateLinkInput
+): Promise<WindowChange> {
+	if (
+		change.startsAt === undefined &&
+		change.endsAt === undefined &&
+		change.endedDestination === undefined
+	)
+		return {};
+	const stored = await readLink(routing, tenantId, linkId);
+	if (!stored) throw new ApiError('NOT_FOUND', 'Link not found.');
+	const changed = <T>(value: T | undefined, current: T) => (value === current ? undefined : value);
+	const startsAt = changed(change.startsAt, stored.startsAt);
+	const endsAt = changed(change.endsAt, stored.endsAt);
+	let endedDestination = changed(change.endedDestination, stored.endedDestination);
+	if (endsAt === null && endedDestination === undefined && stored.endedDestination !== null)
+		endedDestination = null;
+	// A LinkInputError names its field, as a request error does.
+	checkLinkWindow({
+		startsAt: startsAt === undefined ? stored.startsAt : startsAt,
+		endsAt: endsAt === undefined ? stored.endsAt : endsAt,
+		endedDestination: endedDestination === undefined ? stored.endedDestination : endedDestination
+	});
+	return { startsAt, endsAt, endedDestination };
+}
+
 export async function changeLink(
 	routing: D1Database,
 	tenantId: string,
 	linkId: string,
 	change: UpdateLinkInput,
-	now: number
+	now: number,
+	passwords?: LinkPasswords
 ): Promise<{ link: Link; eventStaged: boolean }> {
+	const window = await windowChange(routing, tenantId, linkId, change);
+	const access = setsLinkAccess({ ...window, password: change.password });
+	// The update checks it again, so a plan change during the request cannot pass it.
+	if (access && !(await readLinkAccess(routing, tenantId))) {
+		if (!(await readLink(routing, tenantId, linkId)))
+			throw new ApiError('NOT_FOUND', 'Link not found.');
+		throw linkAccessRefused();
+	}
+	const passwordHash =
+		typeof change.password === 'string'
+			? await hashPassword(passwords, change.password)
+			: change.password;
 	const { updated, eventStaged } = await updateLink(routing, tenantId, linkId, {
 		destination: change.destination,
 		title: change.title,
 		iosDestination: change.iosDestination,
 		androidDestination: change.androidDestination,
+		...window,
+		passwordHash,
 		active: change.enabled,
 		now,
 		eventId: newWebhookEventId()
@@ -289,6 +395,7 @@ export async function changeLink(
 				'LINK_BLOCKED',
 				'Flared blocked this link for abuse. You can only turn it off.'
 			);
+		if (access && !(await readLinkAccess(routing, tenantId))) throw linkAccessRefused();
 		throw new ApiError('PLAN_LIMIT_REACHED', limitReachedMessage);
 	}
 	return { link: await getLink(routing, tenantId, linkId), eventStaged };

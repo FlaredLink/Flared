@@ -177,7 +177,11 @@ async function addLink(tenantId: string, destination: string): Promise<string> {
 			title: null,
 			domainId: null,
 			iosDestination: null,
-			androidDestination: null
+			androidDestination: null,
+			startsAt: null,
+			endsAt: null,
+			endedDestination: null,
+			password: null
 		},
 		requestId: 'request-1',
 		now: clock

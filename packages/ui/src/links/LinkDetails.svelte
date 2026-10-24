@@ -31,6 +31,10 @@
 		timeZone: 'UTC'
 	});
 	const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
+	const timeFormat = new Intl.DateTimeFormat(undefined, {
+		dateStyle: 'medium',
+		timeStyle: 'short'
+	});
 
 	// The list carries one count per UTC day for the last 30 days, ending today.
 	const week = $derived(link.dailyClicksLast30Days?.slice(-7) ?? null);
@@ -106,6 +110,18 @@
 					<dd>{link.iosDestination}</dd>{/if}
 				{#if link.androidDestination}<dt>Android</dt>
 					<dd>{link.androidDestination}</dd>{/if}
+			</dl>
+		{/if}
+		{#if link.startsAt || link.endsAt || link.hasPassword}
+			<dl class="devices">
+				{#if link.startsAt}<dt>Opens</dt>
+					<dd>{timeFormat.format(new Date(link.startsAt))}</dd>{/if}
+				{#if link.endsAt}<dt>Stops</dt>
+					<dd>{timeFormat.format(new Date(link.endsAt))}</dd>{/if}
+				{#if link.endedDestination}<dt>After it stops</dt>
+					<dd>{link.endedDestination}</dd>{/if}
+				{#if link.hasPassword}<dt>Password</dt>
+					<dd>On</dd>{/if}
 			</dl>
 		{/if}
 	</div>

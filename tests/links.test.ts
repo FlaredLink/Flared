@@ -337,7 +337,11 @@ describe('link creation', () => {
 				title: null,
 				domainId: null,
 				iosDestination: null,
-				androidDestination: null
+				androidDestination: null,
+				startsAt: null,
+				endsAt: null,
+				endedDestination: null,
+				password: null
 			},
 			requestId: 'request-1',
 			now: clock,
@@ -379,7 +383,11 @@ describe('link creation', () => {
 				title: null,
 				domainId: null,
 				iosDestination: null,
-				androidDestination: null
+				androidDestination: null,
+				startsAt: null,
+				endsAt: null,
+				endedDestination: null,
+				password: null
 			},
 			requestId: 'request-2',
 			now: clock,
@@ -784,6 +792,28 @@ describe('dashboard edit form', () => {
 		);
 		expect(disabled.ok && disabled.link.enabled).toBe(false);
 		expect(linkChangeOf(form({ intent: 'delete' }))).toBeNull();
+	});
+
+	it('reads the times and the password boxes of the edit form', () => {
+		const base = { intent: 'edit', destination: 'https://example.com', title: '' };
+		expect(
+			change({ ...base, startsAt: '2026-11-01T00:00:00.000Z', endsAt: '', password: '' })
+		).toEqual({
+			destination: 'https://example.com',
+			title: '',
+			startsAt: '2026-11-01T00:00:00.000Z',
+			endsAt: ''
+		});
+		expect(change({ ...base, password: 'open sesame' })).toMatchObject({ password: 'open sesame' });
+		expect(change({ ...base, password: 'ignored', removePassword: 'on' })).toMatchObject({
+			password: null
+		});
+		expect(change({ ...base, removeTimes: 'on' })).toMatchObject({
+			startsAt: '',
+			endsAt: '',
+			endedDestination: ''
+		});
+		expect(change(base)).not.toHaveProperty('password');
 	});
 
 	it('changes device destinations only when the form has their fields', async () => {

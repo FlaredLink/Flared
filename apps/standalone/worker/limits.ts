@@ -11,7 +11,11 @@ import type { StandaloneConfig } from './config';
 
 // Bounds of each limit. Higher values are possible on D1 and Queues but cost more; see
 // docs/self-hosting/limits.md. The member limit counts the owner and open invites.
-export const limitBounds: Record<keyof PolicyLimits, { min: number; max: number }> = {
+// Link access is not a limit: a single installation always has it.
+export const limitBounds: Record<
+	Exclude<keyof PolicyLimits, 'linkAccess'>,
+	{ min: number; max: number }
+> = {
 	activeLinkLimit: { min: 1, max: 1_000_000 },
 	monthlyClickLimit: { min: 1, max: 100_000_000 },
 	retentionDays: { min: 1, max: 3650 },

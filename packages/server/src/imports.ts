@@ -7,18 +7,21 @@ import {
 	LinkInputError,
 	isLink,
 	parseCreateLink,
+	setsLinkAccess,
 	type CreateLinkInput,
 	type ImportItemError,
 	type ImportItemResult,
 	type ImportLinksResult
 } from '@flared/contracts/links';
 import { findUsableDomain, readTakenSlugs, type DomainRow } from '@flared/data/links';
-import { readLimitUsage } from '@flared/data/routing-policy';
+import { readLimitUsage, readLinkAccess } from '@flared/data/routing-policy';
+import type { LinkPasswords } from './link-passwords';
 import {
 	ApiError,
 	createLink,
 	domainUnavailable,
 	limitReachedMessage,
+	linkAccessMessage,
 	slugTakenMessage
 } from './links';
 
@@ -56,17 +59,22 @@ function apiFailure(error: ApiError): ImportItemError {
 	return { code: error.code, message: error.message };
 }
 
-// Reads only. Checks the items in order with the create's rules: a usable domain, room under the
-// active link limit (earlier ready items included), then a free slug, also against earlier ready
-// items in the request. A generated slug is never taken.
+// Reads only. Checks the items in order with the create's rules: a usable domain, link access for
+// dates and passwords, room under the active link limit (earlier ready items included), then a
+// free slug, also against earlier ready items in the request. A generated slug is never taken.
+// passwords: the installation can store a link password.
 export async function previewImport(
 	routing: D1Database,
 	tenantId: string,
-	items: ImportItem[]
+	items: ImportItem[],
+	features: { passwords: boolean }
 ): Promise<ImportLinksResult> {
 	const usage = await readLimitUsage(routing, tenantId);
 	if (!usage)
 		throw new ApiError('SERVICE_UNAVAILABLE', 'Link creation is not available. Try again.');
+	const linkAccess = items.some((item) => item.ok && setsLinkAccess(item.input))
+		? await readLinkAccess(routing, tenantId)
+		: false;
 	const domains = new Map<string | null, DomainRow | null>();
 	for (const item of items)
 		if (item.ok && !domains.has(item.input.domainId))
@@ -89,6 +97,13 @@ export async function previewImport(
 		if (!item.ok) return failed(index, item.error);
 		const domain = domains.get(item.input.domainId);
 		if (!domain) return failed(index, apiFailure(domainUnavailable(item.input.domainId)));
+		if (setsLinkAccess(item.input) && !linkAccess)
+			return failed(index, { code: 'LINK_ACCESS_REQUIRES_PLAN', message: linkAccessMessage });
+		if (item.input.password !== null && !features.passwords)
+			return failed(index, {
+				code: 'SERVICE_UNAVAILABLE',
+				message: 'Link passwords are not available on this installation.'
+			});
 		if (usage.links.used + ready >= usage.links.limit)
 			return failed(index, { code: 'PLAN_LIMIT_REACHED', message: limitReachedMessage });
 		if (item.input.slug !== null) {
@@ -109,6 +124,7 @@ export interface ImportRun {
 	items: ImportItem[];
 	requestId: string;
 	now: number;
+	passwords?: LinkPasswords;
 }
 
 // created counts links this call created; a replayed item reports its stored result again and
@@ -140,7 +156,8 @@ export async function runImport(routing: D1Database, run: ImportRun): Promise<Im
 				key: `${run.key}:${index}`,
 				input: item.input,
 				requestId: run.requestId,
-				now: run.now
+				now: run.now,
+				passwords: run.passwords
 			});
 		} catch (error) {
 			if (!(error instanceof ApiError)) throw error;

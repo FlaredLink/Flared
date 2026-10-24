@@ -9,6 +9,10 @@
 		// Empty or absent means no device destination.
 		iosDestination?: string;
 		androidDestination?: string;
+		// ISO 8601 times and a URL; empty or absent means none. A password is never sent back.
+		startsAt?: string;
+		endsAt?: string;
+		endedDestination?: string;
 	}
 
 	export interface LinkFormDomain {
@@ -25,6 +29,7 @@
 	import Glyph from '../icons/Glyph.svelte';
 	import Button from '../atoms/Button.svelte';
 	import { utmOf } from '@flared/contracts/links';
+	import AccessFields from './AccessFields.svelte';
 	import DeviceFields from './DeviceFields.svelte';
 	import UtmFields from './UtmFields.svelte';
 
@@ -42,6 +47,8 @@
 		domains?: LinkFormDomain[];
 		// The destination field, for a shortcut that focuses it.
 		destinationInput?: HTMLInputElement;
+		// Why the workspace cannot set dates or a password, such as its plan. Without it, it can.
+		accessUnavailable?: string | null;
 	}
 
 	let {
@@ -53,16 +60,32 @@
 		pending = false,
 		enhance = () => {},
 		domains = [],
-		destinationInput = $bindable()
+		destinationInput = $bindable(),
+		accessUnavailable = null
 	}: Props = $props();
 
 	const invalid = (field: string) => error?.field === field;
 	// The extra fields stay folded unless they hold a value or an error. Without script they
 	// stay open, so the form works before hydration too.
 	const customized = $derived(
-		Boolean(values.title || values.iosDestination || values.androidDestination) ||
+		Boolean(
+			values.title ||
+			values.iosDestination ||
+			values.androidDestination ||
+			values.startsAt ||
+			values.endsAt ||
+			values.endedDestination
+		) ||
 			Object.keys(utmOf(values.destination)).length > 0 ||
-			['title', 'iosDestination', 'androidDestination'].some(invalid)
+			[
+				'title',
+				'iosDestination',
+				'androidDestination',
+				'startsAt',
+				'endsAt',
+				'endedDestination',
+				'password'
+			].some(invalid)
 	);
 	// Bound to the destination field, so the UTM fields can write into it.
 	let destination = $state(untrack(() => values.destination));
@@ -241,6 +264,17 @@
 			}}
 			{error}
 			errorId="link-form-error"
+		/>
+		<AccessFields
+			idPrefix="link"
+			values={{
+				startsAt: values.startsAt ?? '',
+				endsAt: values.endsAt ?? '',
+				endedDestination: values.endedDestination ?? ''
+			}}
+			{error}
+			errorId="link-form-error"
+			unavailable={accessUnavailable}
 		/>
 	</div>
 	{#if error}<p id="link-form-error" class="error" role="alert">{error.message}</p>{/if}

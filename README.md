@@ -45,7 +45,7 @@
 
 |     |                       |                                                                                      |
 | --- | --------------------- | ------------------------------------------------------------------------------------ |
-| 🔗  | **Short links**       | Your own domain, custom slugs, UTM builder, iPhone and Android links                 |
+| 🔗  | **Short links**       | Your own domain, custom slugs, UTM builder, iPhone and Android links, passwords      |
 | 📊  | **Click analytics**   | Clicks by day, country, device, browser, OS, and referrer                            |
 | 🔳  | **QR codes**          | PNG or SVG for every link                                                            |
 | 🤖  | **AI assistants**     | Remote MCP server with OAuth for Claude, ChatGPT, Cursor, and more                   |
@@ -146,6 +146,7 @@ All commands: [packages/cli](packages/cli/README.md).
 | 📏 [Limits](docs/self-hosting/limits.md)           | Change the workspace limits       |
 | 🪝 [Webhooks](docs/self-hosting/webhooks.md)       | Send events to your endpoints     |
 | ⚡ [Automations](docs/self-hosting/automations.md) | Templates and destination checks  |
+| 🔒 [Link access](docs/self-hosting/link-access.md) | Start and end times, passwords    |
 | ⬆️ [Upgrade](docs/self-hosting/upgrade.md)         | Get new releases as pull requests |
 | 💾 [Backups](docs/self-hosting/backups.md)         | Restore with D1 Time Travel       |
 | 🔑 [Recovery](docs/self-hosting/recovery.md)       | Reset a forgotten owner password  |

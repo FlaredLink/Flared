@@ -15,6 +15,7 @@ import {
 	getUsage
 } from './analytics';
 import type { AnalyticsShards } from './shards';
+import type { LinkPasswords } from './link-passwords';
 import {
 	ImportRequestError,
 	LinkInputError,
@@ -282,6 +283,9 @@ export interface ApiDependencies {
 	events?: ProductEvents;
 	// Webhooks. Without them, the webhook routes answer 404 and changes only stage events.
 	webhooks?: WebhookSettings;
+	// The installation's link password key. Without it, a password cannot be set, and a link
+	// that has one does not open.
+	linkPasswords?: LinkPasswords;
 	// Automations, with what this installation offers: without email, the email action is
 	// refused; without destination checks, the destination-down trigger is; without messages
 	// (which needs webhooks.transports), post_message is. Without them, the automation routes
@@ -698,7 +702,14 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 				allowance.retryAfterSeconds
 			);
 		const input = parseCreateLink(await readJson(context.req.raw));
-		const result = await createLink(routing, { tenantId, key, input, requestId, now: time });
+		const result = await createLink(routing, {
+			tenantId,
+			key,
+			input,
+			requestId,
+			now: time,
+			passwords: dependencies.linkPasswords
+		});
 		if (result.status === 201 && !result.replayed) {
 			await noteLimitUsage(identity, routing, tenantId, time);
 			const { principal } = context.var;
@@ -734,7 +745,9 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 		}
 		const items = parseImportItems(request.items);
 		if (request.dryRun) {
-			const preview = await previewImport(routing, tenantId, items);
+			const preview = await previewImport(routing, tenantId, items, {
+				passwords: dependencies.linkPasswords !== undefined
+			});
 			return respond({ status: 200, body: JSON.stringify(preview) });
 		}
 		const time = now();
@@ -752,7 +765,14 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 				'Too many links imported this hour. Try again later.',
 				allowance.retryAfterSeconds
 			);
-		const outcome = await runImport(routing, { tenantId, key, items, requestId, now: time });
+		const outcome = await runImport(routing, {
+			tenantId,
+			key,
+			items,
+			requestId,
+			now: time,
+			passwords: dependencies.linkPasswords
+		});
 		if (allowance && valid > outcome.created)
 			await releaseCreationWindow(
 				routing,
@@ -807,7 +827,8 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			tenantId,
 			context.req.param('id'),
 			change,
-			now()
+			now(),
+			dependencies.linkPasswords
 		);
 		if (eventStaged) deliverLater(tenantId, requestId);
 		return respond({ status: 200, body: JSON.stringify({ link }) });

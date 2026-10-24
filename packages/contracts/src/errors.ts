@@ -48,6 +48,9 @@ export const errorStatus = {
 	INVITE_FOR_ANOTHER_EMAIL: 403,
 	// The owner cannot leave or be removed; the workspace needs an owner.
 	OWNER_CANNOT_LEAVE: 409,
+	// The workspace's plan does not include start and end dates or passwords on links. Clearing
+	// them is always allowed.
+	LINK_ACCESS_REQUIRES_PLAN: 403,
 	LINK_BLOCKED: 409,
 	NOT_FOUND: 404,
 	METHOD_NOT_ALLOWED: 405,

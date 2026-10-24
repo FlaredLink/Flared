@@ -63,6 +63,7 @@ function routingPolicyOf(policy: PolicyProjection, now: number): RoutingPolicy {
 		domainLimit: policy.domainLimit,
 		webhookEndpointLimit: policy.webhookEndpointLimit,
 		automationLimit: policy.automationLimit,
+		linkAccess: policy.linkAccess,
 		suspendedAt: policy.suspendedAt,
 		now
 	};
@@ -160,8 +161,8 @@ export async function retryProjections(
 				console.error(JSON.stringify({ event: 'policy_projection_failed', store, tenantId }));
 			}
 		}
-	// A routing row projected before routing stored the webhook endpoint limit or the automation
-	// limit gets them at the same revision. A tenant whose deletion has started has no policy to
+	// A routing row projected before routing stored the webhook endpoint limit, the automation
+	// limit, or link access gets them at the same revision. A tenant whose deletion has started has no policy to
 	// copy.
 	for (const tenantId of await listUnprojectedLimits(stores.routing, limit)) {
 		try {

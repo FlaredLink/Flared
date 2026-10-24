@@ -73,16 +73,28 @@ export interface CreateLinkRequest {
 	// Where iPhone and Android visitors go instead of destination.
 	iosDestination?: string;
 	androidDestination?: string;
+	// The link opens at startsAt and stops at endsAt (ISO 8601 with Z or an offset). After the end,
+	// visitors go to endedDestination. Visitors enter password before the redirect. These need
+	// link access on the plan.
+	startsAt?: string;
+	endsAt?: string;
+	endedDestination?: string;
+	password?: string;
 	// Reuse the same key to retry a create safely; a new one is generated when it is absent.
 	idempotencyKey?: string;
 }
 
-// null clears a title or a device destination.
+// null clears a title, a device destination, a date, the destination after the end, or the
+// password.
 export interface UpdateLinkRequest {
 	destination?: string;
 	title?: string | null;
 	iosDestination?: string | null;
 	androidDestination?: string | null;
+	startsAt?: string | null;
+	endsAt?: string | null;
+	endedDestination?: string | null;
+	password?: string | null;
 	enabled?: boolean;
 }
 

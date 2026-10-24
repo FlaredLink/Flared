@@ -467,6 +467,21 @@
 			"binding": "HOOKS_MIGRATION",
 			"database_name": "hooks-migration",
 			"database_id": "00000000-0000-0000-0000-000000000116"
+		},
+		{
+			"binding": "ACCESS_IDENTITY",
+			"database_name": "access-identity",
+			"database_id": "00000000-0000-0000-0000-000000000117"
+		},
+		{
+			"binding": "ACCESS_ROUTING",
+			"database_name": "access-routing",
+			"database_id": "00000000-0000-0000-0000-000000000118"
+		},
+		{
+			"binding": "ACCESS_ANALYTICS",
+			"database_name": "access-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000119"
 		}
 	]
 }

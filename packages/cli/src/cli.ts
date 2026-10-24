@@ -80,8 +80,37 @@ const optionTypes = {
 	'utm-campaign': { type: 'string' },
 	'utm-term': { type: 'string' },
 	'utm-content': { type: 'string' },
+	'starts-at': { type: 'string' },
+	'ends-at': { type: 'string' },
+	'ended-destination': { type: 'string' },
+	'clear-starts-at': { type: 'boolean' },
+	'clear-ends-at': { type: 'boolean' },
+	'clear-ended-destination': { type: 'boolean' },
+	password: { type: 'boolean' },
+	'password-stdin': { type: 'boolean' },
+	'clear-password': { type: 'boolean' },
 	yes: { type: 'boolean' }
 } as const;
+
+const accessOptions = [
+	'starts-at',
+	'ends-at',
+	'ended-destination',
+	'password',
+	'password-stdin'
+] as const;
+
+// --password asks in the terminal without echo; --password-stdin reads it from standard input.
+// A password is never an argument, so it stays out of shell history and process lists.
+async function passwordFrom(options: Options, io: CliIo): Promise<string | undefined> {
+	if (options.password && options['password-stdin'])
+		throw new UsageError('Use --password or --password-stdin, not both.');
+	if (options['password-stdin']) return (await io.readStdin()).replace(/\r?\n$/, '');
+	if (!options.password) return undefined;
+	if (!io.stdinIsTTY)
+		throw new UsageError('Pass the password on standard input with --password-stdin.');
+	return io.readSecret('Link password: ');
+}
 
 const utmFlags = [
 	['utm-source', 'source'],
@@ -241,12 +270,22 @@ const commands: Record<string, Command> = {
 	},
 	'link create': {
 		usage:
-			'flared link create URL [--slug SLUG] [--title TITLE] [--domain HOSTNAME] [--ios URL] [--android URL] [--utm-source VALUE] [--utm-medium VALUE] [--utm-campaign VALUE] [--utm-term VALUE] [--utm-content VALUE] [--idempotency-key KEY]',
+			'flared link create URL [--slug SLUG] [--title TITLE] [--domain HOSTNAME] [--ios URL] [--android URL] [--utm-source VALUE] [--utm-medium VALUE] [--utm-campaign VALUE] [--utm-term VALUE] [--utm-content VALUE] [--starts-at TIME] [--ends-at TIME] [--ended-destination URL] [--password | --password-stdin] [--idempotency-key KEY]',
 		summary:
-			'Create a short link and print its URL. Without --domain, it uses the default domain. --ios and --android send visitors on those devices to an app link; --utm-* adds UTM parameters to URL.',
-		options: ['slug', 'title', 'domain', 'ios', 'android', ...utmOptions, 'idempotency-key'],
+			'Create a short link and print its URL. Without --domain, it uses the default domain. --ios and --android send visitors on those devices to an app link; --utm-* adds UTM parameters to URL. --starts-at and --ends-at (ISO 8601 with Z or an offset) set when the link opens and stops, --ended-destination where it goes after the end, and --password asks visitors for a password; not every plan includes these.',
+		options: [
+			'slug',
+			'title',
+			'domain',
+			'ios',
+			'android',
+			...utmOptions,
+			...accessOptions,
+			'idempotency-key'
+		],
 		args: 1,
-		async run({ args, options, client, print }) {
+		async run({ args, options, io, client, print }) {
+			const password = await passwordFrom(options, io);
 			const api = await client();
 			let domainId: string | undefined;
 			if (options.domain !== undefined) {
@@ -266,6 +305,10 @@ const commands: Record<string, Command> = {
 				...(options.android ? { androidDestination: options.android } : {}),
 				...(options.slug ? { slug: options.slug } : {}),
 				...(options.title ? { title: options.title } : {}),
+				...(options['starts-at'] ? { startsAt: options['starts-at'] } : {}),
+				...(options['ends-at'] ? { endsAt: options['ends-at'] } : {}),
+				...(options['ended-destination'] ? { endedDestination: options['ended-destination'] } : {}),
+				...(password !== undefined ? { password } : {}),
 				...(options['idempotency-key'] ? { idempotencyKey: options['idempotency-key'] } : {})
 			});
 			print(result.link.shortUrl, result);
@@ -310,9 +353,9 @@ const commands: Record<string, Command> = {
 	},
 	'link update': {
 		usage:
-			'flared link update ID_OR_SLUG [--destination URL] [--title TITLE | --clear-title] [--ios URL | --clear-ios] [--android URL | --clear-android] [--utm-source VALUE] [--utm-medium VALUE] [--utm-campaign VALUE] [--utm-term VALUE] [--utm-content VALUE]',
+			'flared link update ID_OR_SLUG [--destination URL] [--title TITLE | --clear-title] [--ios URL | --clear-ios] [--android URL | --clear-android] [--utm-source VALUE] [--utm-medium VALUE] [--utm-campaign VALUE] [--utm-term VALUE] [--utm-content VALUE] [--starts-at TIME | --clear-starts-at] [--ends-at TIME | --clear-ends-at] [--ended-destination URL | --clear-ended-destination] [--password | --password-stdin | --clear-password]',
 		summary:
-			'Change the destination, title, UTM parameters, or iPhone and Android destinations. An empty --utm-* value removes that parameter.',
+			'Change the destination, title, UTM parameters, iPhone and Android destinations, start and end times, or password. An empty --utm-* value removes that parameter; --clear-ends-at also removes the destination after the end.',
 		options: [
 			'destination',
 			'title',
@@ -321,17 +364,28 @@ const commands: Record<string, Command> = {
 			'clear-ios',
 			'android',
 			'clear-android',
-			...utmOptions
+			...utmOptions,
+			...accessOptions,
+			'clear-starts-at',
+			'clear-ends-at',
+			'clear-ended-destination',
+			'clear-password'
 		],
 		args: 1,
-		async run({ args, options, client, print }) {
+		async run({ args, options, io, client, print }) {
 			for (const [set, clear] of [
 				['title', 'clear-title'],
 				['ios', 'clear-ios'],
-				['android', 'clear-android']
+				['android', 'clear-android'],
+				['starts-at', 'clear-starts-at'],
+				['ends-at', 'clear-ends-at'],
+				['ended-destination', 'clear-ended-destination']
 			] as const)
 				if (options[set] !== undefined && options[clear])
 					throw new UsageError(`Use --${set} or --${clear}, not both.`);
+			if (options['clear-password'] && (options.password || options['password-stdin']))
+				throw new UsageError('Use --password or --clear-password, not both.');
+			const password = await passwordFrom(options, io);
 			const utm = utmFrom(options);
 			const change = {
 				...(options.destination !== undefined ? { destination: options.destination } : {}),
@@ -340,11 +394,21 @@ const commands: Record<string, Command> = {
 				...(options.ios !== undefined ? { iosDestination: options.ios } : {}),
 				...(options['clear-ios'] ? { iosDestination: null } : {}),
 				...(options.android !== undefined ? { androidDestination: options.android } : {}),
-				...(options['clear-android'] ? { androidDestination: null } : {})
+				...(options['clear-android'] ? { androidDestination: null } : {}),
+				...(options['starts-at'] !== undefined ? { startsAt: options['starts-at'] } : {}),
+				...(options['clear-starts-at'] ? { startsAt: null } : {}),
+				...(options['ends-at'] !== undefined ? { endsAt: options['ends-at'] } : {}),
+				...(options['clear-ends-at'] ? { endsAt: null } : {}),
+				...(options['ended-destination'] !== undefined
+					? { endedDestination: options['ended-destination'] }
+					: {}),
+				...(options['clear-ended-destination'] ? { endedDestination: null } : {}),
+				...(password !== undefined ? { password } : {}),
+				...(options['clear-password'] ? { password: null } : {})
 			};
 			if (Object.keys(change).length === 0 && !utm)
 				throw new UsageError(
-					'Give --destination, --title, --clear-title, --ios, --clear-ios, --android, --clear-android, or a --utm-* option.'
+					'Give --destination, --title, --ios, --android, a --utm-* option, a time, a password, or a --clear-* option.'
 				);
 			const api = await client();
 			const id = await resolveLink(api, args[0]);

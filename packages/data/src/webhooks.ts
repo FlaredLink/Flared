@@ -46,11 +46,14 @@ export function isoTime(column: string): string {
 }
 
 // SQL: the public link of a links row `l` and its domain namespace `n`, with the keys and values
-// of toApiLink in its order, so the JSON text is the same as the API's.
+// of toApiLink in its order, so the JSON text is the same as the API's. A NULL time stays null.
 export function linkJson(l: string, n: string): string {
 	return `json_object('id', ${l}.id, 'domainId', ${l}.domain_id, 'hostname', ${n}.hostname, 'slug', ${l}.slug,
 		'shortUrl', 'https://' || ${n}.hostname || '/' || ${l}.slug, 'destination', ${l}.destination, 'title', ${l}.title,
 		'iosDestination', ${l}.ios_destination, 'androidDestination', ${l}.android_destination,
+		'startsAt', ${isoTime(`${l}.starts_at`)}, 'endsAt', ${isoTime(`${l}.ends_at`)},
+		'endedDestination', ${l}.ended_destination,
+		'hasPassword', json(CASE WHEN ${l}.password_hash IS NULL THEN 'false' ELSE 'true' END),
 		'enabled', json(CASE ${l}.status WHEN 'active' THEN 'true' ELSE 'false' END),
 		'blocked', json(CASE WHEN ${l}.blocked_reason IS NULL THEN 'null' ELSE json_object('reason', ${l}.blocked_reason) END),
 		'createdAt', ${isoTime(`${l}.created_at`)}, 'updatedAt', ${isoTime(`${l}.updated_at`)})`;

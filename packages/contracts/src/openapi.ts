@@ -23,7 +23,9 @@ import {
 	blockReasons,
 	maxDestinationLength,
 	maxIdempotencyKeyLength,
+	maxLinkPasswordLength,
 	maxTitleLength,
+	minLinkPasswordLength,
 	recentClickDays
 } from './links';
 import { tokenScopes, type TokenScope } from './tokens';
@@ -39,7 +41,7 @@ import {
 // Duplicated from the client's QR module, which this package cannot import.
 const qrSizes = { minimum: 128, maximum: 2048, default: 512 };
 
-export const openApiVersion = '1.9.0';
+export const openApiVersion = '1.10.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const dateTime = { type: 'string', format: 'date-time' };
@@ -56,6 +58,29 @@ const object = (properties: Record<string, unknown>, required = Object.keys(prop
 	properties,
 	required
 });
+
+const accessNote =
+	' Setting it needs link access on the plan (LINK_ACCESS_REQUIRES_PLAN otherwise); clearing it does not.';
+const linkStart = {
+	...dateTime,
+	description: `The link opens at this time: ISO 8601 with Z or an offset.${accessNote}`
+};
+const linkEnd = {
+	...dateTime,
+	description: `The link stops at this time, after startsAt: ISO 8601 with Z or an offset.${accessNote}`
+};
+const endedDestination = {
+	type: 'string',
+	format: 'uri',
+	maxLength: maxDestinationLength,
+	description: `Where visitors go after endsAt; needs endsAt. Without it, visitors see that the link has ended.${accessNote}`
+};
+const linkPassword = {
+	type: 'string',
+	minLength: minLinkPasswordLength,
+	maxLength: maxLinkPasswordLength,
+	description: `Visitors enter it before the redirect. It is stored as a hash and never returned; reads show hasPassword.${accessNote}`
+};
 
 const endsAt = {
 	...dateTime,
@@ -86,6 +111,16 @@ const schemas = {
 		title: nullable({ type: 'string' }),
 		iosDestination: nullable(device('iPhone')),
 		androidDestination: nullable(device('Android')),
+		startsAt: { ...nullable(dateTime), description: 'The link opens at this time; null is now.' },
+		endsAt: { ...nullable(dateTime), description: 'The link stops at this time; null is never.' },
+		endedDestination: {
+			...nullable({ type: 'string', format: 'uri' }),
+			description: 'Where visitors go after endsAt.'
+		},
+		hasPassword: {
+			type: 'boolean',
+			description: 'Visitors enter a password before the redirect.'
+		},
 		enabled: { type: 'boolean' },
 		blocked: {
 			...nullable(object({ reason: { type: 'string', enum: [...blockReasons] } })),
@@ -131,7 +166,11 @@ const schemas = {
 			title: { type: 'string', maxLength: maxTitleLength },
 			domainId: { type: 'string', description: 'Omit for the default short-link domain.' },
 			iosDestination: nullable(device('iPhone')),
-			androidDestination: nullable(device('Android'))
+			androidDestination: nullable(device('Android')),
+			startsAt: nullable(linkStart),
+			endsAt: nullable(linkEnd),
+			endedDestination: nullable(endedDestination),
+			password: nullable(linkPassword)
 		},
 		['destination']
 	),
@@ -142,6 +181,22 @@ const schemas = {
 				title: nullable({ type: 'string', maxLength: maxTitleLength }),
 				iosDestination: { ...nullable(device('iPhone')), description: 'null clears it.' },
 				androidDestination: { ...nullable(device('Android')), description: 'null clears it.' },
+				startsAt: {
+					...nullable(linkStart),
+					description: `null clears it. ${linkStart.description}`
+				},
+				endsAt: {
+					...nullable(linkEnd),
+					description: `null clears it and endedDestination. ${linkEnd.description}`
+				},
+				endedDestination: {
+					...nullable(endedDestination),
+					description: `null clears it. ${endedDestination.description}`
+				},
+				password: {
+					...nullable(linkPassword),
+					description: `null clears it. ${linkPassword.description}`
+				},
 				enabled: { type: 'boolean' }
 			},
 			[]

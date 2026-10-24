@@ -250,7 +250,11 @@ async function addLink(tenantId: string, title: string | null = null): Promise<s
 			title,
 			domainId: null,
 			iosDestination: null,
-			androidDestination: null
+			androidDestination: null,
+			startsAt: null,
+			endsAt: null,
+			endedDestination: null,
+			password: null
 		},
 		requestId: 'request-1',
 		now: clock
@@ -1158,9 +1162,9 @@ describe('post_message', () => {
 });
 
 describe('contracts', () => {
-	it('describe OpenAPI 1.9.0 with post_message and target_missing, and keep the 15 MCP tools', () => {
+	it('describe OpenAPI 1.10.0 with post_message and target_missing, and keep the 15 MCP tools', () => {
 		const document = openApiDocument('https://api.example/v1');
-		expect(document.info.version).toBe('1.9.0');
+		expect(document.info.version).toBe('1.10.0');
 		expect(
 			document.components.schemas.AutomationAction.oneOf.map((item) =>
 				Reflect.get(Object(item.properties.type), 'const')

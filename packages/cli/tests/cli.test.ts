@@ -370,6 +370,7 @@ describe('flared CLI', () => {
 			WEBHOOK_LIMIT_REACHED: 7,
 			AUTOMATION_LIMIT_REACHED: 7,
 			LINK_AUTOMATION_LIMIT_REACHED: 7,
+			LINK_ACCESS_REQUIRES_PLAN: 7,
 			ACCOUNT_DELETING: 4,
 			WORKSPACE_SUSPENDED: 4,
 			// Only the dashboard receives these; a token never does.
@@ -477,6 +478,50 @@ describe('flared CLI', () => {
 			env: signedIn
 		});
 		expect(notUrl.code).toBe(exitCodes.usage);
+	});
+
+	it('sends times and a password that is never an argument', async () => {
+		const api = fakeApi();
+		await cli(
+			[
+				'link',
+				'create',
+				'https://example.com/launch',
+				'--starts-at',
+				'2026-11-01T09:00:00+09:00',
+				'--ends-at',
+				'2026-12-01T00:00:00Z',
+				'--ended-destination',
+				'https://example.com/after',
+				'--password-stdin'
+			],
+			{ env: signedIn, api, stdin: 'open sesame\n' }
+		);
+		expect(api.seen.at(-1)?.body).toEqual({
+			destination: 'https://example.com/launch',
+			startsAt: '2026-11-01T09:00:00+09:00',
+			endsAt: '2026-12-01T00:00:00Z',
+			endedDestination: 'https://example.com/after',
+			password: 'open sesame'
+		});
+		await cli(['link', 'update', launch.id, '--password'], {
+			env: signedIn,
+			api,
+			tty: true,
+			stdin: 'typed in'
+		});
+		expect(api.seen.at(-1)?.body).toEqual({ password: 'typed in' });
+		await cli(['link', 'update', launch.id, '--clear-ends-at', '--clear-password'], {
+			env: signedIn,
+			api
+		});
+		expect(api.seen.at(-1)?.body).toEqual({ endsAt: null, password: null });
+		const noTerminal = await cli(['link', 'update', launch.id, '--password'], { env: signedIn });
+		expect(noTerminal.code).toBe(exitCodes.usage);
+		const both = await cli(['link', 'update', launch.id, '--password-stdin', '--clear-password'], {
+			env: signedIn
+		});
+		expect(both.code).toBe(exitCodes.usage);
 	});
 
 	it('finds a link by slug and refuses an ambiguous or unknown slug', async () => {

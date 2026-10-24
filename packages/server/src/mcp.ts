@@ -148,6 +148,10 @@ const linkOutput = z.looseObject({
 	title: z.string().nullable(),
 	iosDestination: z.string().nullable(),
 	androidDestination: z.string().nullable(),
+	startsAt: z.string().nullable(),
+	endsAt: z.string().nullable(),
+	endedDestination: z.string().nullable(),
+	hasPassword: z.boolean(),
 	enabled: z.boolean(),
 	blocked: z.looseObject({ reason: z.enum(blockReasons) }).nullable(),
 	createdAt: z.string(),
@@ -197,11 +201,13 @@ function importSummary({ dryRun, results }: ImportOutput): string {
 		: `Created ${done} of ${results.length} links; ${failed} failed.`;
 }
 
-// An exported link: item holds only fields of create_link, so it goes to import_links as is.
+// An exported link: item holds only fields of create_link, so it goes to import_links as is. The
+// password never leaves Flared: hasPassword says that the item needs one.
 const exportedLinkOutput = z.looseObject({
 	id: z.string(),
 	shortUrl: z.string(),
 	status: z.enum(['active', 'disabled', 'blocked']),
+	hasPassword: z.boolean(),
 	createdAt: z.string(),
 	updatedAt: z.string(),
 	item: z.looseObject({
@@ -210,17 +216,21 @@ const exportedLinkOutput = z.looseObject({
 		domain: z.string(),
 		title: z.string().optional(),
 		iosDestination: z.string().optional(),
-		androidDestination: z.string().optional()
+		androidDestination: z.string().optional(),
+		startsAt: z.string().optional(),
+		endsAt: z.string().optional(),
+		endedDestination: z.string().optional()
 	})
 });
 type ExportedLinkOutput = z.infer<typeof exportedLinkOutput>;
 
 function exportedLink(link: Link): ExportedLinkOutput {
-	const { title, iosDestination, androidDestination } = link;
+	const { title, iosDestination, androidDestination, startsAt, endsAt, endedDestination } = link;
 	return {
 		id: link.id,
 		shortUrl: link.shortUrl,
 		status: link.blocked !== null ? 'blocked' : link.enabled ? 'active' : 'disabled',
+		hasPassword: link.hasPassword ?? false,
 		createdAt: link.createdAt,
 		updatedAt: link.updatedAt,
 		item: {
@@ -229,7 +239,10 @@ function exportedLink(link: Link): ExportedLinkOutput {
 			domain: link.hostname,
 			...(title !== null ? { title } : {}),
 			...(iosDestination ? { iosDestination } : {}),
-			...(androidDestination ? { androidDestination } : {})
+			...(androidDestination ? { androidDestination } : {}),
+			...(startsAt ? { startsAt } : {}),
+			...(endsAt ? { endsAt } : {}),
+			...(endedDestination ? { endedDestination } : {})
 		}
 	};
 }
@@ -300,6 +313,10 @@ function linkResult(link: Link): LinkOutput {
 		title: link.title,
 		iosDestination: link.iosDestination ?? null,
 		androidDestination: link.androidDestination ?? null,
+		startsAt: link.startsAt ?? null,
+		endsAt: link.endsAt ?? null,
+		endedDestination: link.endedDestination ?? null,
+		hasPassword: link.hasPassword ?? false,
 		enabled: link.enabled,
 		blocked: link.blocked,
 		createdAt: link.createdAt,
@@ -382,6 +399,28 @@ function base64(bytes: Uint8Array): string {
 
 const slug = z.string().regex(/^[a-z0-9-]{3,64}$/);
 
+const linkTime = (moment: string) =>
+	z
+		.string()
+		.max(40)
+		.describe(
+			`When the link ${moment}: ISO 8601 with Z or an offset, such as 2026-11-01T09:00:00Z. Some plans do not include it.`
+		);
+const endedDestination = z
+	.string()
+	.min(1)
+	.max(4096)
+	.describe(
+		'Where visitors go after endsAt, starting with https://. Without it, the link shows that it has ended.'
+	);
+const linkPassword = z
+	.string()
+	.min(4)
+	.max(128)
+	.describe(
+		'Visitors enter this password before the redirect. Flared stores only a hash and never shows it again. Some plans do not include it.'
+	);
+
 const createLinkInput = z.object({
 	destination: z.string().min(1).max(4096).describe('The full URL, starting with https://.'),
 	slug: slug.optional().describe('The path after the domain. Generated when absent.'),
@@ -394,6 +433,10 @@ const createLinkInput = z.object({
 		.describe('An active hostname from list_domains. The default domain when absent.'),
 	iosDestination: deviceDestination('iPhone').optional(),
 	androidDestination: deviceDestination('Android').optional(),
+	startsAt: linkTime('opens').optional(),
+	endsAt: linkTime('stops').optional(),
+	endedDestination: endedDestination.optional(),
+	password: linkPassword.optional(),
 	utm: utmInput.optional()
 });
 type CreateLinkFields = z.infer<typeof createLinkInput>;
@@ -401,6 +444,12 @@ type CreateLinkFields = z.infer<typeof createLinkInput>;
 // A create request's fields: utm goes into the destination, and domain becomes domainId.
 function createFields({ domain: _domain, utm, ...given }: CreateLinkFields) {
 	return utm ? { ...given, destination: withUtm(given.destination, utm) } : given;
+}
+
+// The fields that make a create key. A password counts only as set, so no key in the store is a
+// fast hash of it.
+function keyFields<T extends { password?: string }>({ password, ...fields }: T) {
+	return password === undefined ? fields : { ...fields, password: true };
 }
 
 // A hostname from list_domains; platform hostnames such as flared.link count too.
@@ -653,7 +702,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 		{
 			title: 'Export links',
 			description:
-				"Exports every link in the workspace, on and off, newest first, 50 per page by default and up to 100. Each result has the link's status and an item with the fields of import_links: send items to import_links three at a time to move links. Imported links start on; status is not copied. No analytics. Pass nextCursor for the next page.",
+				"Exports every link in the workspace, on and off, newest first, 50 per page by default and up to 100. Each result has the link's status and an item with the fields of import_links: send items to import_links three at a time to move links. Imported links start on; status is not copied. A link with hasPassword true needs a new password in its item: ask the person for it. No analytics. Pass nextCursor for the next page.",
 			inputSchema: z.object({
 				limit: z.number().int().min(1).max(maxExportPageSize).optional(),
 				cursor: z.string().max(500).optional().describe('nextCursor from the previous page.')
@@ -677,7 +726,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 					return { value, bytes: new TextEncoder().encode(JSON.stringify(value)).byteLength };
 				};
 				// A page over the byte cap is asked for again with half as many links. One link at
-				// its longest is about 13 KB, so the loop always ends within the cap. The API makes
+				// its longest is about 17 KB, so the loop always ends within the cap. The API makes
 				// every cursor, so a cut page still continues where it ends.
 				let page = await read(limit);
 				while (page.bytes > mcpExportResultBytes && page.value.links.length > 1)
@@ -728,7 +777,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 		{
 			title: 'Create a link',
 			description:
-				'Creates a public short link to a destination URL. Optional utm values are added to the destination; optional iPhone and Android destinations, such as app links, receive visitors on those devices. The same request repeated within five minutes returns the first link.',
+				'Creates a public short link to a destination URL. Optional utm values are added to the destination; optional iPhone and Android destinations, such as app links, receive visitors on those devices. The link can also open and stop at set times and ask visitors for a password, on plans that include them. The same request repeated within five minutes returns the first link.',
 			inputSchema: createLinkInput,
 			outputSchema: z.looseObject({ link: linkOutput, replayed: z.boolean() }),
 			annotations: {
@@ -748,7 +797,8 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 				const domainId = hostname === undefined ? undefined : (await findActiveDomain(hostname)).id;
 				const window = Math.floor(now() / 300_000);
 				// The key input for a call without a domain is unchanged from before domains existed.
-				const keyed = hostname === undefined ? fields : { ...fields, domain: hostname };
+				const keyed =
+					hostname === undefined ? keyFields(fields) : { ...keyFields(fields), domain: hostname };
 				const key = `mcp-${await sha256(JSON.stringify([grantKey, window, keyed]))}`;
 				const created = await client.createLink({
 					...fields,
@@ -802,7 +852,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 					});
 					const window = Math.floor(now() / 300_000);
 					// The API gives item n the key `${key}:${n}`, so a retry replays each item.
-					const key = `mcp-import-${await sha256(JSON.stringify([grantKey, window, requested]))}`;
+					const key = `mcp-import-${await sha256(JSON.stringify([grantKey, window, requested.map(keyFields)]))}`;
 					return importResult(
 						await client.importLinks({ dryRun, items: requested, idempotencyKey: key })
 					);
@@ -816,13 +866,20 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 		{
 			title: 'Update a link',
 			description:
-				'Changes the destination, title, UTM parameters, or iPhone and Android destinations of a link. The short URL stays the same.',
+				'Changes the destination, title, UTM parameters, iPhone and Android destinations, start and end times, or password of a link. The short URL stays the same.',
 			inputSchema: z.object({
 				link: z.string().min(1).max(100).describe('The link ID or slug.'),
 				destination: z.string().min(1).max(4096).optional(),
 				title: z.string().max(200).nullable().optional().describe('null removes the title.'),
 				iosDestination: deviceDestination('iPhone', ' null removes it.').nullable().optional(),
 				androidDestination: deviceDestination('Android', ' null removes it.').nullable().optional(),
+				startsAt: linkTime('opens').nullable().optional().describe('null removes the start.'),
+				endsAt: linkTime('stops')
+					.nullable()
+					.optional()
+					.describe('null removes the end and the destination after it.'),
+				endedDestination: endedDestination.nullable().optional(),
+				password: linkPassword.nullable().optional().describe('null removes the password.'),
 				utm: utmInput
 					.optional()
 					.describe(
@@ -838,19 +895,12 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 				openWorldHint: true
 			}
 		},
-		({ link, destination, title, iosDestination, androidDestination, utm }) =>
+		({ link, destination, utm, ...change }) =>
 			attempt(async () => {
 				const found = await findLink(link);
 				const target = utm ? withUtm(destination ?? found.destination, utm) : destination;
 				return {
-					link: linkResult(
-						await client.updateLink(found.id, {
-							destination: target,
-							title,
-							iosDestination,
-							androidDestination
-						})
-					)
+					link: linkResult(await client.updateLink(found.id, { destination: target, ...change }))
 				};
 			})
 	);

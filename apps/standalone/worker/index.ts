@@ -60,8 +60,10 @@ const initialLimits = {
 	domainLimit: 5,
 	memberLimit: 10,
 	webhookEndpointLimit: 10,
-	automationLimit: 25
-};
+	automationLimit: 25,
+	// A single installation has every feature; the Limits page does not change it.
+	linkAccess: 1
+} as const;
 
 const deadLetterQueue = 'flared-clicks-dlq';
 
@@ -193,7 +195,8 @@ class Installation {
 			},
 			// No email in this edition, so templates cannot email the owner. The scheduled job
 			// checks destinations at :30.
-			automations: { email: false, destinationChecks: true }
+			automations: { email: false, destinationChecks: true },
+			linkPasswords: config.linkPasswords?.keys
 		});
 	}
 
@@ -227,7 +230,8 @@ class Installation {
 			routing: config.routing,
 			appOrigin: config.origin,
 			clicks: config.clicks,
-			fixedTenantId: this.fixedTenantId
+			fixedTenantId: this.fixedTenantId,
+			linkPasswords: config.linkPasswords
 		});
 	}
 
