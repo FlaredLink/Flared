@@ -451,6 +451,8 @@ export async function listPages(
 export interface PageLink {
 	id: string;
 	destination: string;
+	iosDestination: string | null;
+	androidDestination: string | null;
 }
 
 export const maxPageLinkReads = 100;
@@ -466,13 +468,15 @@ export async function readPageLinks(
 	if (linkIds.length > maxPageLinkReads) throw new Error('Too many links');
 	const { results } = await db
 		.prepare(
-			'SELECT l.id, l.destination FROM json_each(?2) j JOIN links l ON l.id = j.value AND l.tenant_id = ?1'
+			'SELECT l.id, l.destination, l.ios_destination, l.android_destination FROM json_each(?2) j JOIN links l ON l.id = j.value AND l.tenant_id = ?1'
 		)
 		.bind(tenantId, JSON.stringify([...new Set(linkIds)]))
 		.all<Record<string, unknown>>();
 	return results.map((row) => ({
 		id: text(row.id, 'link'),
-		destination: text(row.destination, 'destination')
+		destination: text(row.destination, 'destination'),
+		iosDestination: optionalText(row.ios_destination, 'iPhone destination'),
+		androidDestination: optionalText(row.android_destination, 'Android destination')
 	}));
 }
 

@@ -67,6 +67,9 @@ export const errorStatus = {
 	PAGE_DOMAIN_TAKEN: 409,
 	// Flared blocked the page for abuse; its owner cannot change or delete it.
 	PAGE_BLOCKED: 409,
+	// The installation's URL reputation check lists a destination of a link that the page change
+	// adds to a button or card as harmful.
+	PAGE_DESTINATION_UNSAFE: 422,
 	NOT_FOUND: 404,
 	METHOD_NOT_ALLOWED: 405,
 	PAYLOAD_TOO_LARGE: 413,

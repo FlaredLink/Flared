@@ -31,6 +31,7 @@ import {
 	storedBlock,
 	updatePage,
 	type PageBlockRow,
+	type PageLink,
 	type PageRow
 } from '@flared/data/pages';
 import { ApiError } from './links';
@@ -39,6 +40,10 @@ import { ApiError } from './links';
 // only at the root of a workspace domain.
 export interface PageSettings {
 	host?: string;
+	// The installation's URL reputation check: it gets the destinations of the links that a page
+	// change adds to buttons and cards, and returns those listed as harmful, which refuse the
+	// change. A check that throws lets the change through; the installation checks again later.
+	checkDestinations?: (destinations: readonly string[]) => Promise<readonly string[]>;
 }
 
 const iso = (value: number | null) => (value === null ? null : new Date(value).toISOString());
@@ -145,30 +150,74 @@ export function toApiPage(row: PageRow, blocks: PageBlockRow[], settings: PageSe
 export const pageExtrasMessage =
 	'Your plan does not include payment, embed, or sign-up blocks, or a page on your own domain.';
 
+const destinationsOf = (link: PageLink) =>
+	[link.destination, link.iosDestination, link.androidDestination].filter(
+		(destination): destination is string => destination !== null
+	);
+
+// The installation's check of the links that the change adds; a link the page already opens was
+// checked when it was added.
+async function checkAddedDestinations(
+	settings: PageSettings,
+	blocks: readonly PageBlockInput[],
+	links: ReadonlyMap<string, PageLink>,
+	kept: ReadonlySet<string>
+): Promise<void> {
+	const check = settings.checkDestinations;
+	if (!check) return;
+	const added = [...links.values()].filter((link) => !kept.has(link.id));
+	const destinations = [...new Set(added.flatMap(destinationsOf))];
+	if (destinations.length === 0) return;
+	let unsafe: ReadonlySet<string>;
+	try {
+		unsafe = new Set(await check(destinations));
+	} catch {
+		console.error(JSON.stringify({ event: 'page_destination_check_failed' }));
+		return;
+	}
+	if (unsafe.size === 0) return;
+	const block = blocks.find((item) => {
+		if (item.kind !== 'button' && item.kind !== 'payment') return false;
+		const link = links.get(item.linkId);
+		return (
+			link !== undefined && !kept.has(link.id) && destinationsOf(link).some((d) => unsafe.has(d))
+		);
+	});
+	throw new ApiError(
+		'PAGE_DESTINATION_UNSAFE',
+		block && 'label' in block && block.label
+			? `The link of "${block.label}" leads to a site that is listed as harmful. Use another link.`
+			: 'A link leads to a site that is listed as harmful. Use another link.'
+	);
+}
+
 // Every button and card names a link of the workspace; a card's link opens its provider's
-// checkout.
+// checkout. kept: the links that the page opens already.
 async function checkBlockLinks(
 	routing: D1Database,
 	tenantId: string,
-	blocks: readonly PageBlockInput[]
+	blocks: readonly PageBlockInput[],
+	settings: PageSettings,
+	kept: ReadonlySet<string> = new Set()
 ): Promise<void> {
 	const ids = blocks.flatMap((block) =>
 		block.kind === 'button' || block.kind === 'payment' ? [block.linkId] : []
 	);
 	const links = new Map(
-		(await readPageLinks(routing, tenantId, ids)).map((link) => [link.id, link.destination])
+		(await readPageLinks(routing, tenantId, ids)).map((link) => [link.id, link])
 	);
 	blocks.forEach((block, index) => {
 		if (block.kind !== 'button' && block.kind !== 'payment') return;
-		const destination = links.get(block.linkId);
-		if (destination === undefined)
+		const link = links.get(block.linkId);
+		if (link === undefined)
 			throw new PageInputError(`blocks.${index}.linkId`, 'Use a link of this workspace.');
-		if (block.kind === 'payment' && !isPaymentDestination(block.provider, destination))
+		if (block.kind === 'payment' && !isPaymentDestination(block.provider, link.destination))
 			throw new PageInputError(
 				`blocks.${index}.linkId`,
 				'Use a link that opens the checkout page of this payment provider.'
 			);
 	});
+	await checkAddedDestinations(settings, blocks, links, kept);
 }
 
 // Turns a refused write into the error that explains it. The write decided under its own
@@ -235,7 +284,7 @@ export async function createPage(
 	}
 ): Promise<Page> {
 	const { tenantId, input, now } = request;
-	await checkBlockLinks(routing, tenantId, input.blocks);
+	await checkBlockLinks(routing, tenantId, input.blocks, request.settings);
 	const pageId = request.newId?.() ?? crypto.randomUUID();
 	const usesExtras = usesPageExtras(input);
 	let result;
@@ -347,12 +396,16 @@ export async function changePage(
 	const row = await readPage(routing, tenantId, pageId);
 	if (!row) throw new ApiError('NOT_FOUND', 'Page not found.');
 	if (row.blockedReason) throw new ApiError('PAGE_BLOCKED', 'Flared blocked this page for abuse.');
-	if (change.blocks) await checkBlockLinks(routing, tenantId, change.blocks);
-	const needsExtras = changeNeedsExtras(
-		change,
-		row,
-		await readPageBlocks(routing, tenantId, pageId)
-	);
+	const stored = await readPageBlocks(routing, tenantId, pageId);
+	if (change.blocks)
+		await checkBlockLinks(
+			routing,
+			tenantId,
+			change.blocks,
+			request.settings,
+			new Set(stored.flatMap((block) => (block.linkId === null ? [] : [block.linkId])))
+		);
+	const needsExtras = changeNeedsExtras(change, row, stored);
 	const handle =
 		change.handle !== undefined && change.handle !== row.handle ? change.handle : undefined;
 	let result;

@@ -42,6 +42,7 @@ export function exitCodeFor(code: ClientErrorCode): number {
 		case 'DOMAIN_TAKEN':
 		case 'HANDLE_TAKEN':
 		case 'PAGE_DOMAIN_TAKEN':
+		case 'PAGE_DESTINATION_UNSAFE':
 			return exitCodes.rejected;
 		case 'PLAN_LIMIT_REACHED':
 		case 'TOKEN_LIMIT_REACHED':

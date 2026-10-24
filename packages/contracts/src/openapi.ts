@@ -122,6 +122,8 @@ const blockSchedule = {
 	endsAt: { ...nullable(dateTime), description: 'The block hides after this time; null is never.' }
 };
 const blockLabel = { type: 'string', minLength: 1, maxLength: maxBlockLabelLength };
+const destinationNote =
+	' An installation can check the destinations of a link that the change adds (PAGE_DESTINATION_UNSAFE when one is listed as harmful).';
 const colour = { type: 'string', pattern: '^#[0-9a-fA-F]{6}$' };
 const socialLink = object({
 	network: { type: 'string', enum: Object.keys(socialNetworks) },
@@ -133,7 +135,10 @@ const socialLink = object({
 });
 // The fields of each block kind as a request sends them; reads add shortUrl and visible.
 const blockFields = {
-	button: { linkId: { type: 'string' }, label: blockLabel },
+	button: {
+		linkId: { type: 'string', description: `A link of the workspace.${destinationNote}` },
+		label: blockLabel
+	},
 	header: { label: blockLabel },
 	social: {
 		links: { type: 'array', minItems: 1, maxItems: maxSocialLinks, items: socialLink }
@@ -141,7 +146,7 @@ const blockFields = {
 	payment: {
 		linkId: {
 			type: 'string',
-			description: "A link of the workspace that opens the provider's checkout page."
+			description: `A link of the workspace that opens the provider's checkout page.${destinationNote}`
 		},
 		provider: { type: 'string', enum: Object.keys(paymentProviders) },
 		label: blockLabel,

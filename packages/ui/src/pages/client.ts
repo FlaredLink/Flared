@@ -183,6 +183,7 @@ export function pageErrorMessage(failure: PageFailure): string {
 		case 'PAGE_LIMIT_REACHED':
 		case 'PAGE_EXTRAS_REQUIRES_PLAN':
 		case 'PAGE_DOMAIN_TAKEN':
+		case 'PAGE_DESTINATION_UNSAFE':
 		case 'DOMAIN_UNAVAILABLE':
 		case 'PLAN_LIMIT_REACHED':
 		case 'DEFAULT_DOMAIN_UNAVAILABLE':

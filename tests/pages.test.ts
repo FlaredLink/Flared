@@ -27,6 +27,10 @@ const routing = () => env.PAGES_ROUTING;
 const stores = () => ({ routing: routing(), analytics: { 'analytics-1': env.PAGES_ANALYTICS } });
 let clock = Date.UTC(2026, 10, 1, 9);
 
+// The URL reputation check that the next API calls use, and the destinations it was given.
+let checkDestinations:
+	((destinations: readonly string[]) => Promise<readonly string[]>) | undefined;
+
 function api() {
 	return createApi({
 		identity: identity(),
@@ -46,7 +50,7 @@ function api() {
 		},
 		now: () => clock,
 		creationsPerMinute: 1000,
-		pages: { host: 'pages.example' }
+		pages: { host: 'pages.example', checkDestinations }
 	});
 }
 
@@ -623,5 +627,109 @@ describe('blocked pages and deletion', () => {
 			)
 			.first();
 		expect(counts).toEqual({ pages: 0, blocks: 0, links: 0, handles: 1 });
+	});
+});
+
+describe('destination checks', () => {
+	it('refuses a button whose destination is listed, and checks only the links a change adds', async () => {
+		const checked: string[][] = [];
+		const listed = 'https://phish.example/login';
+		checkDestinations = async (destinations) => {
+			checked.push([...destinations]);
+			return destinations.filter((destination) => destination === listed);
+		};
+		try {
+			const safe = await createLink('user-plus', 'https://shop.example/');
+			const unsafe = await createLink('user-plus', listed);
+			const refused = await expectError(
+				await createPage('user-plus', {
+					blocks: [
+						{ kind: 'button', linkId: safe.id, label: 'Shop' },
+						{ kind: 'button', linkId: unsafe.id, label: 'Sign in' }
+					]
+				}),
+				422,
+				'PAGE_DESTINATION_UNSAFE'
+			);
+			expect(refused.error.message).toContain('"Sign in"');
+			expect(checked.at(-1)?.sort()).toEqual([listed, 'https://shop.example/']);
+
+			const created = await createPage('user-plus', {
+				blocks: [{ kind: 'button', linkId: safe.id, label: 'Shop' }]
+			});
+			expect(created.status).toBe(201);
+			const page = (await json(created)).page as { id: string };
+
+			// The page's own link is not checked again; the added one is.
+			const other = await createLink('user-plus', 'https://blog.example/');
+			checked.length = 0;
+			const changed = await call('user-plus', 'PATCH', `/v1/pages/${page.id}`, {
+				blocks: [
+					{ kind: 'button', linkId: safe.id, label: 'Shop' },
+					{ kind: 'button', linkId: other.id, label: 'Blog' }
+				]
+			});
+			expect(changed.status).toBe(200);
+			expect(checked).toEqual([['https://blog.example/']]);
+
+			checked.length = 0;
+			expect(
+				(await call('user-plus', 'PATCH', `/v1/pages/${page.id}`, { title: 'Renamed' })).status
+			).toBe(200);
+			expect(checked).toEqual([]);
+
+			await expectError(
+				await call('user-plus', 'PATCH', `/v1/pages/${page.id}`, {
+					blocks: [{ kind: 'button', linkId: unsafe.id, label: 'Sign in' }]
+				}),
+				422,
+				'PAGE_DESTINATION_UNSAFE'
+			);
+		} finally {
+			checkDestinations = undefined;
+		}
+	});
+
+	it('checks the iPhone and Android destinations too', async () => {
+		const checked: string[][] = [];
+		checkDestinations = async (destinations) => {
+			checked.push([...destinations]);
+			return destinations.filter((destination) => destination.startsWith('https://bad.example'));
+		};
+		try {
+			slugCounter += 1;
+			const response = await call('user-plus', 'POST', '/v1/links', {
+				destination: 'https://good.example/',
+				iosDestination: 'https://bad.example/ios',
+				slug: `page-${slugCounter}`
+			});
+			expect(response.status).toBe(201);
+			const link = (await json(response)).link as { id: string };
+			await expectError(
+				await createPage('user-plus', {
+					blocks: [{ kind: 'button', linkId: link.id, label: 'App' }]
+				}),
+				422,
+				'PAGE_DESTINATION_UNSAFE'
+			);
+			expect(checked.at(-1)?.sort()).toEqual(['https://bad.example/ios', 'https://good.example/']);
+		} finally {
+			checkDestinations = undefined;
+		}
+	});
+
+	it('saves the page when the check fails, so an outage of the check stops no edit', async () => {
+		checkDestinations = async () => {
+			throw new Error('reputation service down');
+		};
+		try {
+			const link = await createLink('user-plus', 'https://unknown.example/');
+			const created = await createPage('user-plus', {
+				blocks: [{ kind: 'button', linkId: link.id, label: 'Go' }]
+			});
+			expect(created.status).toBe(201);
+		} finally {
+			checkDestinations = undefined;
+		}
 	});
 });
