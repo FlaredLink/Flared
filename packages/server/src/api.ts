@@ -16,14 +16,17 @@ import {
 } from './analytics';
 import type { AnalyticsShards } from './shards';
 import type { LinkPasswords } from './link-passwords';
+import { removePreviewImage, setPreviewImage, type PreviewImageStore } from './preview-images';
 import {
 	ImportRequestError,
 	LinkInputError,
 	maxDestinationLength,
+	maxPreviewImageBytes,
 	parseCreateLink,
 	parseIdempotencyKey,
 	parseImportRequest,
-	parseUpdateLink
+	parseUpdateLink,
+	previewImageTypes
 } from '@flared/contracts/links';
 import {
 	isTokenScope,
@@ -286,6 +289,9 @@ export interface ApiDependencies {
 	// The installation's link password key. Without it, a password cannot be set, and a link
 	// that has one does not open.
 	linkPasswords?: LinkPasswords;
+	// Where uploaded preview images are kept. Without it, an image upload answers 503; the
+	// preview texts still work.
+	previewImages?: PreviewImageStore;
 	// Automations, with what this installation offers: without email, the email action is
 	// refused; without destination checks, the destination-down trigger is; without messages
 	// (which needs webhooks.transports), post_message is. Without them, the automation routes
@@ -463,6 +469,37 @@ async function readJson(request: Request, limit = maxBodyBytes): Promise<unknown
 	} catch {
 		throw new ApiError('INVALID_INPUT', 'Send valid JSON.');
 	}
+}
+
+// The raw body of an image upload, read up to the size limit. The handler checks the bytes.
+async function readImage(request: Request): Promise<Uint8Array> {
+	const type = request.headers.get('content-type')?.toLowerCase().split(';')[0]?.trim() ?? '';
+	if (!(Object.values(previewImageTypes) as string[]).includes(type))
+		throw new ApiError('UNSUPPORTED_MEDIA_TYPE', 'Upload a PNG, JPEG, or WebP image.');
+	const tooLarge = () => new ApiError('PAYLOAD_TOO_LARGE', 'Use an image of at most 5 MB.');
+	if (Number(request.headers.get('content-length') ?? '0') > maxPreviewImageBytes) throw tooLarge();
+	const reader = request.body?.getReader();
+	if (!reader) throw new ApiError('INVALID_INPUT', 'Upload an image.');
+	const chunks: Uint8Array[] = [];
+	let size = 0;
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		size += value.byteLength;
+		if (size > maxPreviewImageBytes) {
+			await reader.cancel();
+			throw tooLarge();
+		}
+		chunks.push(value);
+	}
+	if (size === 0) throw new ApiError('INVALID_INPUT', 'Upload an image.');
+	const body = new Uint8Array(size);
+	let offset = 0;
+	for (const chunk of chunks) {
+		body.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return body;
 }
 
 function pageSize(value: string | undefined): number {
@@ -831,6 +868,27 @@ export function createApi(dependencies: ApiDependencies): Hono<{ Variables: Vari
 			dependencies.linkPasswords
 		);
 		if (eventStaged) deliverLater(tenantId, requestId);
+		return respond({ status: 200, body: JSON.stringify({ link }) });
+	});
+
+	// The image goes to the image store first; the link names it only after the store has it.
+	app.put('/links/:id/preview-image', requireScope('links:write'), async (context) => {
+		const body = await readImage(context.req.raw);
+		const link = await setPreviewImage(routing, dependencies.previewImages, {
+			tenantId: context.var.tenantId,
+			linkId: context.req.param('id'),
+			body,
+			now: now()
+		});
+		return respond({ status: 200, body: JSON.stringify({ link }) });
+	});
+
+	app.delete('/links/:id/preview-image', requireScope('links:write'), async (context) => {
+		const link = await removePreviewImage(routing, dependencies.previewImages, {
+			tenantId: context.var.tenantId,
+			linkId: context.req.param('id'),
+			now: now()
+		});
 		return respond({ status: 200, body: JSON.stringify({ link }) });
 	});
 

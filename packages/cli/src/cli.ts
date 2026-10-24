@@ -7,6 +7,9 @@ import { defaultQrSize, qrPng, qrSvg } from '@flared/client/qr';
 import { normalizeHostname, type Domain } from '@flared/contracts/domains';
 import {
 	LinkInputError,
+	maxPreviewImageBytes,
+	previewImageTypes,
+	sniffPreviewImage,
 	withUtm,
 	type ListedLink,
 	type Utm,
@@ -41,6 +44,7 @@ export interface CliIo {
 	stdinIsTTY: boolean;
 	readSecret(question: string): Promise<string>;
 	readStdin(): Promise<string>;
+	readFile(path: string): Promise<Uint8Array>;
 	writeFile(path: string, data: string | Uint8Array): Promise<void>;
 	// A file written in parts. finish() makes it appear at path; discard() leaves nothing there.
 	openFile(path: string): Promise<{
@@ -89,6 +93,12 @@ const optionTypes = {
 	password: { type: 'boolean' },
 	'password-stdin': { type: 'boolean' },
 	'clear-password': { type: 'boolean' },
+	'preview-title': { type: 'string' },
+	'preview-description': { type: 'string' },
+	'preview-image': { type: 'string' },
+	'clear-preview-title': { type: 'boolean' },
+	'clear-preview-description': { type: 'boolean' },
+	'clear-preview-image': { type: 'boolean' },
 	yes: { type: 'boolean' }
 } as const;
 
@@ -99,6 +109,31 @@ const accessOptions = [
 	'password',
 	'password-stdin'
 ] as const;
+
+const previewOptions = ['preview-title', 'preview-description', 'preview-image'] as const;
+
+// The image file for --preview-image, read and checked before the link changes, so a wrong file
+// changes nothing.
+async function previewImageFrom(
+	options: Options,
+	io: CliIo
+): Promise<
+	{ body: Uint8Array; type: (typeof previewImageTypes)[keyof typeof previewImageTypes] } | undefined
+> {
+	const path = options['preview-image'];
+	if (path === undefined) return undefined;
+	let body: Uint8Array;
+	try {
+		body = await io.readFile(path);
+	} catch {
+		throw new UsageError(`Could not read ${path}.`);
+	}
+	if (body.byteLength > maxPreviewImageBytes)
+		throw new UsageError('Use a preview image of at most 5 MB.');
+	const extension = sniffPreviewImage(body);
+	if (!extension) throw new UsageError('Use a PNG, JPEG, or WebP file for --preview-image.');
+	return { body, type: previewImageTypes[extension] };
+}
 
 // --password asks in the terminal without echo; --password-stdin reads it from standard input.
 // A password is never an argument, so it stays out of shell history and process lists.
@@ -270,9 +305,9 @@ const commands: Record<string, Command> = {
 	},
 	'link create': {
 		usage:
-			'flared link create URL [--slug SLUG] [--title TITLE] [--domain HOSTNAME] [--ios URL] [--android URL] [--utm-source VALUE] [--utm-medium VALUE] [--utm-campaign VALUE] [--utm-term VALUE] [--utm-content VALUE] [--starts-at TIME] [--ends-at TIME] [--ended-destination URL] [--password | --password-stdin] [--idempotency-key KEY]',
+			'flared link create URL [--slug SLUG] [--title TITLE] [--domain HOSTNAME] [--ios URL] [--android URL] [--utm-source VALUE] [--utm-medium VALUE] [--utm-campaign VALUE] [--utm-term VALUE] [--utm-content VALUE] [--starts-at TIME] [--ends-at TIME] [--ended-destination URL] [--password | --password-stdin] [--preview-title TEXT] [--preview-description TEXT] [--preview-image FILE] [--idempotency-key KEY]',
 		summary:
-			'Create a short link and print its URL. Without --domain, it uses the default domain. --ios and --android send visitors on those devices to an app link; --utm-* adds UTM parameters to URL. --starts-at and --ends-at (ISO 8601 with Z or an offset) set when the link opens and stops, --ended-destination where it goes after the end, and --password asks visitors for a password; not every plan includes these.',
+			'Create a short link and print its URL. Without --domain, it uses the default domain. --ios and --android send visitors on those devices to an app link; --utm-* adds UTM parameters to URL. --starts-at and --ends-at (ISO 8601 with Z or an offset) set when the link opens and stops, --ended-destination where it goes after the end, and --password asks visitors for a password. --preview-* sets what link cards in chat apps and social networks show; the image is PNG, JPEG, or WebP. Not every plan includes these.',
 		options: [
 			'slug',
 			'title',
@@ -281,11 +316,13 @@ const commands: Record<string, Command> = {
 			'android',
 			...utmOptions,
 			...accessOptions,
+			...previewOptions,
 			'idempotency-key'
 		],
 		args: 1,
 		async run({ args, options, io, client, print }) {
 			const password = await passwordFrom(options, io);
+			const image = await previewImageFrom(options, io);
 			const api = await client();
 			let domainId: string | undefined;
 			if (options.domain !== undefined) {
@@ -309,9 +346,15 @@ const commands: Record<string, Command> = {
 				...(options['ends-at'] ? { endsAt: options['ends-at'] } : {}),
 				...(options['ended-destination'] ? { endedDestination: options['ended-destination'] } : {}),
 				...(password !== undefined ? { password } : {}),
+				...(options['preview-title'] ? { previewTitle: options['preview-title'] } : {}),
+				...(options['preview-description']
+					? { previewDescription: options['preview-description'] }
+					: {}),
 				...(options['idempotency-key'] ? { idempotencyKey: options['idempotency-key'] } : {})
 			});
-			print(result.link.shortUrl, result);
+			// The image needs the link first. A failed upload leaves the link without an image.
+			const link = image ? await api.setPreviewImage(result.link.id, image) : result.link;
+			print(link.shortUrl, { ...result, link });
 		}
 	},
 	'link list': {
@@ -353,9 +396,9 @@ const commands: Record<string, Command> = {
 	},
 	'link update': {
 		usage:
-			'flared link update ID_OR_SLUG [--destination URL] [--title TITLE | --clear-title] [--ios URL | --clear-ios] [--android URL | --clear-android] [--utm-source VALUE] [--utm-medium VALUE] [--utm-campaign VALUE] [--utm-term VALUE] [--utm-content VALUE] [--starts-at TIME | --clear-starts-at] [--ends-at TIME | --clear-ends-at] [--ended-destination URL | --clear-ended-destination] [--password | --password-stdin | --clear-password]',
+			'flared link update ID_OR_SLUG [--destination URL] [--title TITLE | --clear-title] [--ios URL | --clear-ios] [--android URL | --clear-android] [--utm-source VALUE] [--utm-medium VALUE] [--utm-campaign VALUE] [--utm-term VALUE] [--utm-content VALUE] [--starts-at TIME | --clear-starts-at] [--ends-at TIME | --clear-ends-at] [--ended-destination URL | --clear-ended-destination] [--password | --password-stdin | --clear-password] [--preview-title TEXT | --clear-preview-title] [--preview-description TEXT | --clear-preview-description] [--preview-image FILE | --clear-preview-image]',
 		summary:
-			'Change the destination, title, UTM parameters, iPhone and Android destinations, start and end times, or password. An empty --utm-* value removes that parameter; --clear-ends-at also removes the destination after the end.',
+			'Change the destination, title, UTM parameters, iPhone and Android destinations, start and end times, password, or link card. An empty --utm-* value removes that parameter; --clear-ends-at also removes the destination after the end.',
 		options: [
 			'destination',
 			'title',
@@ -369,7 +412,11 @@ const commands: Record<string, Command> = {
 			'clear-starts-at',
 			'clear-ends-at',
 			'clear-ended-destination',
-			'clear-password'
+			'clear-password',
+			...previewOptions,
+			'clear-preview-title',
+			'clear-preview-description',
+			'clear-preview-image'
 		],
 		args: 1,
 		async run({ args, options, io, client, print }) {
@@ -379,13 +426,17 @@ const commands: Record<string, Command> = {
 				['android', 'clear-android'],
 				['starts-at', 'clear-starts-at'],
 				['ends-at', 'clear-ends-at'],
-				['ended-destination', 'clear-ended-destination']
+				['ended-destination', 'clear-ended-destination'],
+				['preview-title', 'clear-preview-title'],
+				['preview-description', 'clear-preview-description'],
+				['preview-image', 'clear-preview-image']
 			] as const)
 				if (options[set] !== undefined && options[clear])
 					throw new UsageError(`Use --${set} or --${clear}, not both.`);
 			if (options['clear-password'] && (options.password || options['password-stdin']))
 				throw new UsageError('Use --password or --clear-password, not both.');
 			const password = await passwordFrom(options, io);
+			const image = await previewImageFrom(options, io);
 			const utm = utmFrom(options);
 			const change = {
 				...(options.destination !== undefined ? { destination: options.destination } : {}),
@@ -404,11 +455,20 @@ const commands: Record<string, Command> = {
 					: {}),
 				...(options['clear-ended-destination'] ? { endedDestination: null } : {}),
 				...(password !== undefined ? { password } : {}),
-				...(options['clear-password'] ? { password: null } : {})
+				...(options['clear-password'] ? { password: null } : {}),
+				...(options['preview-title'] !== undefined
+					? { previewTitle: options['preview-title'] }
+					: {}),
+				...(options['clear-preview-title'] ? { previewTitle: null } : {}),
+				...(options['preview-description'] !== undefined
+					? { previewDescription: options['preview-description'] }
+					: {}),
+				...(options['clear-preview-description'] ? { previewDescription: null } : {})
 			};
-			if (Object.keys(change).length === 0 && !utm)
+			const imageChange = image !== undefined || options['clear-preview-image'] === true;
+			if (Object.keys(change).length === 0 && !utm && !imageChange)
 				throw new UsageError(
-					'Give --destination, --title, --ios, --android, a --utm-* option, a time, a password, or a --clear-* option.'
+					'Give --destination, --title, --ios, --android, a --utm-* option, a time, a password, a --preview-* option, or a --clear-* option.'
 				);
 			const api = await client();
 			const id = await resolveLink(api, args[0]);
@@ -417,7 +477,12 @@ const commands: Record<string, Command> = {
 				const base = change.destination ?? (await api.getLink(id)).destination;
 				change.destination = addUtm(base, utm);
 			}
-			const link = await api.updateLink(id, change);
+			let link =
+				Object.keys(change).length > 0 || utm
+					? await api.updateLink(id, change)
+					: await api.getLink(id);
+			if (image) link = await api.setPreviewImage(id, image);
+			else if (options['clear-preview-image']) link = await api.removePreviewImage(id);
 			print(linkDetails(link), { link });
 		}
 	},

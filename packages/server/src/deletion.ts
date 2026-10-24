@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Workspace and account deletion: the request ends the affected credentials at once, then a
 // resumable job for each workspace stops the redirects, waits out the redirect snapshots, and
-// deletes the analytics, routing, and identity records in bounded steps. Slug reservations
-// stay, so a deleted address is never reused.
+// deletes the analytics, preview images, routing, and identity records in bounded steps. Slug
+// reservations stay, so a deleted address is never reused.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
 import {
 	accountDeletionRunning,
@@ -25,6 +25,7 @@ import {
 import { listDomains } from '@flared/data/domains';
 import { listWorkspaces, readTenantShard } from '@flared/data/tenancy';
 import { removeDomain, type DomainSettings } from './domains';
+import { deleteTenantPreviewImages, type PreviewImageStore } from './preview-images';
 import type { EmailContent, EmailTransport } from './email/transport';
 import { resolveShard, type AnalyticsShards } from './shards';
 import { resolveTenant } from './tenancy';
@@ -48,6 +49,8 @@ export interface DeletionDependencies {
 	domains: DomainSettings;
 	// Without it, the job sends no email; standalone defaults to none.
 	email?: DeletionEmail;
+	// The installation's preview image store. The workspace's images go before its routing rows.
+	previewImages?: PreviewImageStore;
 	// An edition's own records of the tenant and user, deleted before the identity records.
 	// Must be safe to repeat.
 	extension?: (job: { tenantId: string; userId: string }) => Promise<void>;
@@ -304,13 +307,22 @@ async function advance(deps: DeletionDependencies, job: DeletionJob): Promise<bo
 				next = 'routing_data';
 				break;
 			}
-			case 'routing_data':
+			case 'routing_data': {
+				const images = deps.previewImages;
+				if (
+					images &&
+					!(await drain(() => deleteTenantPreviewImages(images, tenantId, rowsPerBatch)))
+				) {
+					await save('routing_data', now());
+					return false;
+				}
 				if (!(await drain(() => deleteRoutingData(routing, tenantId, rowsPerBatch)))) {
 					await save('routing_data', now());
 					return false;
 				}
 				next = 'extension';
 				break;
+			}
 			case 'extension':
 				await deps.extension?.({ tenantId, userId: job.userId });
 				next = 'identity';

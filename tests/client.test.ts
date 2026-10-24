@@ -57,6 +57,7 @@ function api() {
 			reservedHostnames: ['brand.dev']
 		},
 		automations: { email: false, destinationChecks: false },
+		previewImages: env.PREVIEW_IMAGES,
 		webhooks: {
 			secret: 'test-only-client-webhook-secret',
 			hooks: { allowedHosts: ['hooks.zapier.com'] }
@@ -206,7 +207,8 @@ beforeAll(async () => {
 			retentionDays: 30,
 			domainLimit: 1,
 			automationLimit: 5,
-			webhookEndpointLimit: 5
+			webhookEndpointLimit: 5,
+			linkPreviews: 1
 		},
 		now: 1
 	});
@@ -543,6 +545,19 @@ describe('domains and QR codes', () => {
 		expect((await client().listDomains()).used).toBe(0);
 		const gone = await failureOf(client().checkDomain(added.domain.id));
 		expect(gone.code).toBe('NOT_FOUND');
+	});
+
+	it('sets and removes the image of a link card', async () => {
+		const { link } = await client().createLink({
+			destination: 'https://example.com/card',
+			previewTitle: 'Card title'
+		});
+		const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+		const withImage = await client().setPreviewImage(link.id, { body: png, type: 'image/png' });
+		expect(withImage.previewImage).toMatch(/\/preview\/[A-Za-z0-9_-]{22}\.png$/);
+		const without = await client().removePreviewImage(link.id);
+		expect(without.previewImage).toBeNull();
+		expect(without.previewTitle).toBe('Card title');
 	});
 
 	it('serves QR codes as SVG and PNG', async () => {

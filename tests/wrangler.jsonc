@@ -482,6 +482,22 @@
 			"binding": "ACCESS_ANALYTICS",
 			"database_name": "access-analytics",
 			"database_id": "00000000-0000-0000-0000-000000000119"
+		},
+		{
+			"binding": "PREVIEW_IDENTITY",
+			"database_name": "preview-identity",
+			"database_id": "00000000-0000-0000-0000-000000000120"
+		},
+		{
+			"binding": "PREVIEW_ROUTING",
+			"database_name": "preview-routing",
+			"database_id": "00000000-0000-0000-0000-000000000121"
+		},
+		{
+			"binding": "PREVIEW_ANALYTICS",
+			"database_name": "preview-analytics",
+			"database_id": "00000000-0000-0000-0000-000000000122"
 		}
-	]
+	],
+	"r2_buckets": [{ "binding": "PREVIEW_IMAGES", "bucket_name": "preview-images" }]
 }

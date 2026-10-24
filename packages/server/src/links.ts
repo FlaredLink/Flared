@@ -6,7 +6,9 @@ import { errorStatus } from '@flared/contracts/errors';
 import { exportLinkPageSize, type ExportLinkPage } from '@flared/contracts/export';
 import {
 	checkLinkWindow,
+	previewImagePath,
 	setsLinkAccess,
+	setsLinkPreview,
 	type CreateLinkInput,
 	type Link,
 	type LinkPage,
@@ -23,7 +25,7 @@ import {
 	updateLink,
 	type LinkRow
 } from '@flared/data/links';
-import { readLinkAccess } from '@flared/data/routing-policy';
+import { readLinkAccess, readLinkPreviews } from '@flared/data/routing-policy';
 import type { LinkPasswords } from './link-passwords';
 
 export const createKeyLifetimeMs = 24 * 60 * 60 * 1000;
@@ -74,6 +76,12 @@ export function toApiLink(row: LinkRow): Link {
 		endsAt: row.endsAt === null ? null : new Date(row.endsAt).toISOString(),
 		endedDestination: row.endedDestination,
 		hasPassword: row.hasPassword,
+		previewTitle: row.previewTitle,
+		previewDescription: row.previewDescription,
+		previewImage:
+			row.previewImage === null
+				? null
+				: `https://${row.hostname}${previewImagePath(row.slug, row.previewImage)}`,
 		enabled: row.active,
 		blocked: row.blockedReason ? { reason: row.blockedReason } : null,
 		createdAt: new Date(row.createdAt).toISOString(),
@@ -98,9 +106,9 @@ export function generateSlug(
 }
 
 // Hash of the validated input. The omitted domain has its own marker, so a later change of
-// the default domain cannot make a replay match a different request. Device destinations and
-// link access are added only when set, so a request without them keeps the hash it had before
-// they existed. The password counts only as set: the stored hash must not depend on it.
+// the default domain cannot make a replay match a different request. Device destinations, link
+// access, and previews are added only when set, so a request without them keeps the hash it had
+// before they existed. The password counts only as set: the stored hash must not depend on it.
 export async function hashCreateInput(input: CreateLinkInput): Promise<string> {
 	const devices =
 		input.iosDestination === null && input.androidDestination === null
@@ -116,13 +124,17 @@ export async function hashCreateInput(input: CreateLinkInput): Promise<string> {
 				}
 			]
 		: [];
+	const preview = setsLinkPreview(input)
+		? [{ previewTitle: input.previewTitle, previewDescription: input.previewDescription }]
+		: [];
 	const canonical = JSON.stringify([
 		input.destination,
 		input.slug,
 		input.title,
 		input.domainId === null ? { default: true } : { id: input.domainId },
 		...devices,
-		...access
+		...access,
+		...preview
 	]);
 	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical));
 	return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -132,8 +144,14 @@ export const slugTakenMessage = 'This slug is already taken on this domain.';
 export const limitReachedMessage = 'Your workspace has reached its active link limit.';
 export const linkAccessMessage = 'Your plan does not include passwords or start and end dates.';
 
+export const linkPreviewMessage = 'Your plan does not include social previews.';
+
 function linkAccessRefused(): ApiError {
 	return new ApiError('LINK_ACCESS_REQUIRES_PLAN', linkAccessMessage);
+}
+
+export function linkPreviewRefused(): ApiError {
+	return new ApiError('LINK_PREVIEW_REQUIRES_PLAN', linkPreviewMessage);
 }
 
 // Without the installation's key, a password cannot be stored or checked.
@@ -178,6 +196,8 @@ export async function createLink(
 	// The create batch checks it again, so a plan change during the request cannot pass it.
 	if (setsLinkAccess(input) && !(await readLinkAccess(routing, tenantId)))
 		throw linkAccessRefused();
+	if (setsLinkPreview(input) && !(await readLinkPreviews(routing, tenantId)))
+		throw linkPreviewRefused();
 	const passwordHash =
 		input.password === null ? null : await hashPassword(request.passwords, input.password);
 	const slugTaken = errorBody('SLUG_TAKEN', slugTakenMessage, requestId, 'slug');
@@ -199,6 +219,9 @@ export async function createLink(
 			endsAt: input.endsAt,
 			endedDestination: input.endedDestination,
 			hasPassword: passwordHash !== null,
+			previewTitle: input.previewTitle,
+			previewDescription: input.previewDescription,
+			previewImage: null,
 			active: true,
 			blockedReason: null,
 			createdAt: now,
@@ -221,6 +244,8 @@ export async function createLink(
 			endsAt: input.endsAt,
 			endedDestination: input.endedDestination,
 			passwordHash,
+			previewTitle: input.previewTitle,
+			previewDescription: input.previewDescription,
 			now,
 			expiresAt: now + createKeyLifetimeMs,
 			bodies: { created: body, slugTaken, limitReached },
@@ -356,6 +381,27 @@ async function windowChange(
 	return { startsAt, endsAt, endedDestination };
 }
 
+type PreviewChange = Pick<UpdateLinkInput, 'previewTitle' | 'previewDescription'>;
+
+// As for the dates: a preview text equal to the stored one is no change.
+async function previewChange(
+	routing: D1Database,
+	tenantId: string,
+	linkId: string,
+	change: UpdateLinkInput
+): Promise<PreviewChange> {
+	if (change.previewTitle === undefined && change.previewDescription === undefined) return {};
+	const stored = await readLink(routing, tenantId, linkId);
+	if (!stored) throw new ApiError('NOT_FOUND', 'Link not found.');
+	return {
+		previewTitle: change.previewTitle === stored.previewTitle ? undefined : change.previewTitle,
+		previewDescription:
+			change.previewDescription === stored.previewDescription
+				? undefined
+				: change.previewDescription
+	};
+}
+
 export async function changeLink(
 	routing: D1Database,
 	tenantId: string,
@@ -372,6 +418,9 @@ export async function changeLink(
 			throw new ApiError('NOT_FOUND', 'Link not found.');
 		throw linkAccessRefused();
 	}
+	const preview = await previewChange(routing, tenantId, linkId, change);
+	const previews = setsLinkPreview(preview);
+	if (previews && !(await readLinkPreviews(routing, tenantId))) throw linkPreviewRefused();
 	const passwordHash =
 		typeof change.password === 'string'
 			? await hashPassword(passwords, change.password)
@@ -383,6 +432,7 @@ export async function changeLink(
 		androidDestination: change.androidDestination,
 		...window,
 		passwordHash,
+		...preview,
 		active: change.enabled,
 		now,
 		eventId: newWebhookEventId()
@@ -396,6 +446,7 @@ export async function changeLink(
 				'Flared blocked this link for abuse. You can only turn it off.'
 			);
 		if (access && !(await readLinkAccess(routing, tenantId))) throw linkAccessRefused();
+		if (previews && !(await readLinkPreviews(routing, tenantId))) throw linkPreviewRefused();
 		throw new ApiError('PLAN_LIMIT_REACHED', limitReachedMessage);
 	}
 	return { link: await getLink(routing, tenantId, linkId), eventStaged };

@@ -4,10 +4,12 @@ import { oldestRetainedDay, utcDay, type LinkAnalytics } from '@flared/contracts
 import type { AutomationPage } from '@flared/contracts/automations';
 import type { Link } from '@flared/contracts/links';
 import {
+	changePreviewImage,
 	fetchAutomations,
 	fetchLink,
 	fetchLinkAnalytics,
 	linkChangeOf,
+	previewImageOf,
 	updateLink,
 	type ApiFailure
 } from '@flared/server/web/api';
@@ -95,9 +97,16 @@ export const actions: Actions = {
 				status: 503,
 				field: null
 			});
+		// A wrong image file stops the form before the link changes.
+		const image = form && 'destination' in change ? await previewImageOf(form) : null;
+		if (image && !image.ok) return failure(image.failure);
 		try {
 			const result = await updateLink(service, request.headers, params.id, change);
 			if (!result.ok) return failure(result.failure);
+			if (image && image.upload.kind !== 'none') {
+				const changed = await changePreviewImage(service, request.headers, params.id, image.upload);
+				if (!changed.ok) return failure(changed.failure);
+			}
 			const updated: 'edit' | 'enable' | 'disable' =
 				'enabled' in change ? (change.enabled ? 'enable' : 'disable') : 'edit';
 			return { updated };

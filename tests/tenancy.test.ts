@@ -233,6 +233,7 @@ describe('policy projection', () => {
 			webhookEndpointLimit: 0,
 			automationLimit: 0,
 			linkAccess: 0,
+			linkPreviews: 0,
 			suspendedAt: null,
 			now: 22
 		});
@@ -302,6 +303,7 @@ describe('policy projection', () => {
 			webhookEndpointLimit: 9,
 			automationLimit: 0,
 			linkAccess: 0,
+			linkPreviews: 0,
 			suspendedAt: null,
 			now: 44
 		});

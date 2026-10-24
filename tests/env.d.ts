@@ -96,6 +96,10 @@ declare namespace Cloudflare {
 		ACCESS_IDENTITY: D1Database;
 		ACCESS_ROUTING: D1Database;
 		ACCESS_ANALYTICS: D1Database;
+		PREVIEW_IDENTITY: D1Database;
+		PREVIEW_ROUTING: D1Database;
+		PREVIEW_ANALYTICS: D1Database;
+		PREVIEW_IMAGES: R2Bucket;
 		IDENTITY_MIGRATIONS: import('cloudflare:test').D1Migration[];
 		ROUTING_MIGRATIONS: import('cloudflare:test').D1Migration[];
 		ANALYTICS_MIGRATIONS: import('cloudflare:test').D1Migration[];

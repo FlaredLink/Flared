@@ -22,6 +22,7 @@
 		"./api/compose": "./src/api/compose.ts",
 		"./redirect": "./src/redirect.ts",
 		"./link-passwords": "./src/link-passwords.ts",
+		"./preview-images": "./src/preview-images.ts",
 		"./analytics": "./src/analytics.ts",
 		"./clicks": "./src/clicks.ts",
 		"./shards": "./src/shards.ts",

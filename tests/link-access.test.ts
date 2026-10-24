@@ -358,6 +358,8 @@ describe('link access in the API', () => {
 			endsAt: null,
 			endedDestination: null,
 			passwordHash: await passwords.hash('racing'),
+			previewTitle: null,
+			previewDescription: null,
 			now: clock,
 			expiresAt: clock + 60_000,
 			bodies: { created: '{}', slugTaken: '{}', limitReached: '{}' },

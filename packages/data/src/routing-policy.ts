@@ -11,20 +11,21 @@ export interface RoutingPolicy {
 	webhookEndpointLimit: number;
 	automationLimit: number;
 	linkAccess: 0 | 1;
+	linkPreviews: 0 | 1;
 	// Set while the operator suspends the tenant; its links then do not redirect.
 	suspendedAt: number | null;
 	now: number;
 }
 
 // A row at the same revision is replaced only while its webhook endpoint limit, automation limit,
-// or link access is NULL: it was projected before routing stored that value, and no migration
-// takes a new revision for it.
+// link access, or link previews is NULL: it was projected before routing stored that value, and
+// no migration takes a new revision for it.
 export async function applyRoutingPolicy(db: D1Database, policy: RoutingPolicy): Promise<void> {
 	await db
 		.prepare(
-			`INSERT INTO tenant_policy (tenant_id, revision, analytics_shard_id, active_link_limit, domain_limit, webhook_endpoint_limit, automation_limit, link_access, suspended_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(tenant_id) DO UPDATE SET revision = excluded.revision, analytics_shard_id = excluded.analytics_shard_id, active_link_limit = excluded.active_link_limit, domain_limit = excluded.domain_limit, webhook_endpoint_limit = excluded.webhook_endpoint_limit, automation_limit = excluded.automation_limit, link_access = excluded.link_access, suspended_at = excluded.suspended_at, updated_at = excluded.updated_at
-			WHERE excluded.revision > tenant_policy.revision OR (excluded.revision = tenant_policy.revision AND (tenant_policy.webhook_endpoint_limit IS NULL OR tenant_policy.automation_limit IS NULL OR tenant_policy.link_access IS NULL))`
+			`INSERT INTO tenant_policy (tenant_id, revision, analytics_shard_id, active_link_limit, domain_limit, webhook_endpoint_limit, automation_limit, link_access, link_previews, suspended_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(tenant_id) DO UPDATE SET revision = excluded.revision, analytics_shard_id = excluded.analytics_shard_id, active_link_limit = excluded.active_link_limit, domain_limit = excluded.domain_limit, webhook_endpoint_limit = excluded.webhook_endpoint_limit, automation_limit = excluded.automation_limit, link_access = excluded.link_access, link_previews = excluded.link_previews, suspended_at = excluded.suspended_at, updated_at = excluded.updated_at
+			WHERE excluded.revision > tenant_policy.revision OR (excluded.revision = tenant_policy.revision AND (tenant_policy.webhook_endpoint_limit IS NULL OR tenant_policy.automation_limit IS NULL OR tenant_policy.link_access IS NULL OR tenant_policy.link_previews IS NULL))`
 		)
 		.bind(
 			policy.tenantId,
@@ -35,6 +36,7 @@ export async function applyRoutingPolicy(db: D1Database, policy: RoutingPolicy):
 			policy.webhookEndpointLimit,
 			policy.automationLimit,
 			policy.linkAccess,
+			policy.linkPreviews,
 			policy.suspendedAt,
 			policy.now
 		)
@@ -42,13 +44,13 @@ export async function applyRoutingPolicy(db: D1Database, policy: RoutingPolicy):
 }
 
 // Tenants whose routing row lacks a value that a later version added (the webhook endpoint limit,
-// the automation limit, or link access), for the scheduled heal.
+// the automation limit, link access, or link previews), for the scheduled heal.
 export async function listUnprojectedLimits(db: D1Database, limit: number): Promise<string[]> {
 	if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
 		throw new Error('Invalid projection batch size');
 	const { results } = await db
 		.prepare(
-			'SELECT tenant_id FROM tenant_policy WHERE webhook_endpoint_limit IS NULL OR automation_limit IS NULL OR link_access IS NULL ORDER BY tenant_id LIMIT ?'
+			'SELECT tenant_id FROM tenant_policy WHERE webhook_endpoint_limit IS NULL OR automation_limit IS NULL OR link_access IS NULL OR link_previews IS NULL ORDER BY tenant_id LIMIT ?'
 		)
 		.bind(limit)
 		.all<{ tenant_id: unknown }>();
@@ -160,6 +162,15 @@ export async function readLinkAccess(db: D1Database, tenantId: string): Promise<
 		.bind(tenantId)
 		.first<{ link_access: unknown }>();
 	return row?.link_access === 1;
+}
+
+// Whether the tenant may set social previews on links. A row not yet projected counts as no.
+export async function readLinkPreviews(db: D1Database, tenantId: string): Promise<boolean> {
+	const row = await db
+		.prepare('SELECT link_previews FROM tenant_policy WHERE tenant_id = ?')
+		.bind(tenantId)
+		.first<{ link_previews: unknown }>();
+	return row?.link_previews === 1;
 }
 
 export async function readLimitUsage(db: D1Database, tenantId: string): Promise<LimitUsage | null> {

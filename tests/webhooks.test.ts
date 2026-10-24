@@ -123,6 +123,8 @@ function create(
 			endsAt: null,
 			endedDestination: null,
 			password: null,
+			previewTitle: null,
+			previewDescription: null,
 			...input
 		},
 		requestId: 'request-1',
@@ -840,7 +842,9 @@ describe('statement budget', () => {
 				startsAt: null,
 				endsAt: null,
 				endedDestination: null,
-				password: null
+				password: null,
+				previewTitle: null,
+				previewDescription: null
 			},
 			requestId: 'request-1',
 			now: clock

@@ -81,7 +81,13 @@ function fakeApi(state: { failWith?: ErrorCode; links?: object[]; domains?: obje
 	const fetch: typeof globalThis.fetch = async (input, init) => {
 		const request = new Request(input, init);
 		const url = new URL(request.url);
-		const body = request.body ? await request.json() : undefined;
+		const type = request.headers.get('content-type') ?? '';
+		// An image body is recorded by its type and size.
+		const body = !request.body
+			? undefined
+			: type.startsWith('image/')
+				? { type, bytes: (await request.arrayBuffer()).byteLength }
+				: await request.json();
 		seen.push({
 			method: request.method,
 			url: request.url,
@@ -125,6 +131,16 @@ function fakeApi(state: { failWith?: ErrorCode; links?: object[]; domains?: obje
 			return Response.json({ link: launch });
 		if (path === `/links/${launch.id}` && request.method === 'PATCH')
 			return Response.json({ link: { ...launch, ...(body as object) } });
+		if (path === `/links/${launch.id}/preview-image`)
+			return Response.json({
+				link: {
+					...launch,
+					previewImage:
+						request.method === 'PUT'
+							? `https://flared.link/${launch.slug}/preview/AAAAAAAAAAAAAAAAAAAAAA.png`
+							: null
+				}
+			});
 		if (path === `/links/${launch.id}/analytics`)
 			return Response.json({
 				analytics: {
@@ -198,6 +214,7 @@ async function cli(
 		stdin?: string;
 		tty?: boolean;
 		dir?: string;
+		read?: Record<string, Uint8Array>;
 	} = {}
 ) {
 	const stdout: string[] = [];
@@ -211,6 +228,11 @@ async function cli(
 		stdinIsTTY: options.tty ?? false,
 		readSecret: async () => options.stdin ?? '',
 		readStdin: async () => options.stdin ?? '',
+		readFile: async (path) => {
+			const file = options.read?.[path];
+			if (!file) throw new Error('ENOENT');
+			return file;
+		},
 		writeFile: async (path, data) => {
 			files.set(path, data);
 		},
@@ -371,6 +393,7 @@ describe('flared CLI', () => {
 			AUTOMATION_LIMIT_REACHED: 7,
 			LINK_AUTOMATION_LIMIT_REACHED: 7,
 			LINK_ACCESS_REQUIRES_PLAN: 7,
+			LINK_PREVIEW_REQUIRES_PLAN: 7,
 			ACCOUNT_DELETING: 4,
 			WORKSPACE_SUSPENDED: 4,
 			// Only the dashboard receives these; a token never does.
@@ -522,6 +545,54 @@ describe('flared CLI', () => {
 			env: signedIn
 		});
 		expect(both.code).toBe(exitCodes.usage);
+	});
+
+	it('sets a link card with texts and an image file', async () => {
+		const api = fakeApi();
+		const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]);
+		const created = await cli(
+			[
+				'link',
+				'create',
+				'https://example.com/launch',
+				'--preview-title',
+				'Launch day',
+				'--preview-description',
+				'Doors open at nine.',
+				'--preview-image',
+				'card.png'
+			],
+			{ env: signedIn, api, read: { 'card.png': png } }
+		);
+		expect(created.code).toBe(0);
+		expect(api.seen.at(-2)?.body).toEqual({
+			destination: 'https://example.com/launch',
+			previewTitle: 'Launch day',
+			previewDescription: 'Doors open at nine.'
+		});
+		expect(api.seen.at(-1)).toMatchObject({
+			method: 'PUT',
+			body: { type: 'image/png', bytes: png.byteLength }
+		});
+		await cli(['link', 'update', launch.id, '--clear-preview-title', '--clear-preview-image'], {
+			env: signedIn,
+			api
+		});
+		expect(api.seen.at(-2)?.body).toEqual({ previewTitle: null });
+		expect(api.seen.at(-1)?.method).toBe('DELETE');
+		const before = api.seen.length;
+		const notImage = await cli(['link', 'update', launch.id, '--preview-image', 'card.txt'], {
+			env: signedIn,
+			api,
+			read: { 'card.txt': new TextEncoder().encode('hello') }
+		});
+		expect(notImage.code).toBe(exitCodes.usage);
+		const missing = await cli(['link', 'update', launch.id, '--preview-image', 'gone.png'], {
+			env: signedIn,
+			api
+		});
+		expect(missing.code).toBe(exitCodes.usage);
+		expect(api.seen.length).toBe(before);
 	});
 
 	it('finds a link by slug and refuses an ambiguous or unknown slug', async () => {

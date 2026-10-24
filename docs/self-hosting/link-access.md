@@ -3,7 +3,7 @@
 A link can open at a start time, stop at an end time, and send visitors to another address after the end. It can also ask visitors for a password before the redirect. Set these under **More options** when you create a link, or when you edit one, with the CLI (`--starts-at`, `--ends-at`, `--ended-destination`, `--password`), with the API, or through an AI assistant.
 
 - Before the start, visitors see that the link is not open yet. After the end, they go to the address for after the end, or see that the link has ended. These visits count no clicks.
-- A visitor who enters the right password goes to the destination, and the click counts. Link previews and other automated clients see the password page.
+- A visitor who enters the right password goes to the destination, and the click counts. Automated clients see the password page; card apps such as Slack see the link's [card](link-previews.md) when it has one.
 - Each link and visitor IP gets 10 tries a minute.
 
 ## What the installation needs

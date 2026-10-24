@@ -43,18 +43,18 @@
 
 ## ✨ Features
 
-|     |                       |                                                                                      |
-| --- | --------------------- | ------------------------------------------------------------------------------------ |
-| 🔗  | **Short links**       | Your own domain, custom slugs, UTM builder, iPhone and Android links, passwords      |
-| 📊  | **Click analytics**   | Clicks by day, country, device, browser, OS, and referrer                            |
-| 🔳  | **QR codes**          | PNG or SVG for every link                                                            |
-| 🤖  | **AI assistants**     | Remote MCP server with OAuth for Claude, ChatGPT, Cursor, and more                   |
-| ⌨️  | **API and CLI**       | REST API with OpenAPI, API tokens, and the `flared` command                          |
-| ⚡  | **Automations**       | Change or turn off a link on a date, after N clicks, or when the destination is down |
-| 🪝  | **Webhooks**          | Signed events for link changes and click milestones                                  |
-| 👥  | **Team**              | Invite members to your workspace                                                     |
-| 🔐  | **Sign-in**           | Passkeys, plus email codes in the cloud or passwords when self-hosted                |
-| 📦  | **Export and import** | Take all your links and analytics with you as JSON or CSV                            |
+|     |                       |                                                                                             |
+| --- | --------------------- | ------------------------------------------------------------------------------------------- |
+| 🔗  | **Short links**       | Your own domain, custom slugs, UTM builder, iPhone and Android links, passwords, link cards |
+| 📊  | **Click analytics**   | Clicks by day, country, device, browser, OS, and referrer                                   |
+| 🔳  | **QR codes**          | PNG or SVG for every link                                                                   |
+| 🤖  | **AI assistants**     | Remote MCP server with OAuth for Claude, ChatGPT, Cursor, and more                          |
+| ⌨️  | **API and CLI**       | REST API with OpenAPI, API tokens, and the `flared` command                                 |
+| ⚡  | **Automations**       | Change or turn off a link on a date, after N clicks, or when the destination is down        |
+| 🪝  | **Webhooks**          | Signed events for link changes and click milestones                                         |
+| 👥  | **Team**              | Invite members to your workspace                                                            |
+| 🔐  | **Sign-in**           | Passkeys, plus email codes in the cloud or passwords when self-hosted                       |
+| 📦  | **Export and import** | Take all your links and analytics with you as JSON or CSV                                   |
 
 <table>
   <tr>
@@ -137,19 +137,20 @@ All commands: [packages/cli](packages/cli/README.md).
 
 ## 📚 Self-hosting guides
 
-| Guide                                              | Topic                             |
-| -------------------------------------------------- | --------------------------------- |
-| 🚀 [Deploy](docs/self-hosting/deploy.md)           | Deploy and set up the owner       |
-| 🌐 [Domains](docs/self-hosting/domains.md)         | Short links on your own domains   |
-| 🏷️ [App address](docs/self-hosting/origin.md)      | Move the app to your own address  |
-| 👥 [Members](docs/self-hosting/members.md)         | Invite links and password resets  |
-| 📏 [Limits](docs/self-hosting/limits.md)           | Change the workspace limits       |
-| 🪝 [Webhooks](docs/self-hosting/webhooks.md)       | Send events to your endpoints     |
-| ⚡ [Automations](docs/self-hosting/automations.md) | Templates and destination checks  |
-| 🔒 [Link access](docs/self-hosting/link-access.md) | Start and end times, passwords    |
-| ⬆️ [Upgrade](docs/self-hosting/upgrade.md)         | Get new releases as pull requests |
-| 💾 [Backups](docs/self-hosting/backups.md)         | Restore with D1 Time Travel       |
-| 🔑 [Recovery](docs/self-hosting/recovery.md)       | Reset a forgotten owner password  |
+| Guide                                               | Topic                              |
+| --------------------------------------------------- | ---------------------------------- |
+| 🚀 [Deploy](docs/self-hosting/deploy.md)            | Deploy and set up the owner        |
+| 🌐 [Domains](docs/self-hosting/domains.md)          | Short links on your own domains    |
+| 🏷️ [App address](docs/self-hosting/origin.md)       | Move the app to your own address   |
+| 👥 [Members](docs/self-hosting/members.md)          | Invite links and password resets   |
+| 📏 [Limits](docs/self-hosting/limits.md)            | Change the workspace limits        |
+| 🪝 [Webhooks](docs/self-hosting/webhooks.md)        | Send events to your endpoints      |
+| ⚡ [Automations](docs/self-hosting/automations.md)  | Templates and destination checks   |
+| 🔒 [Link access](docs/self-hosting/link-access.md)  | Start and end times, passwords     |
+| 🖼️ [Link cards](docs/self-hosting/link-previews.md) | Card title, description, and image |
+| ⬆️ [Upgrade](docs/self-hosting/upgrade.md)          | Get new releases as pull requests  |
+| 💾 [Backups](docs/self-hosting/backups.md)          | Restore with D1 Time Travel        |
+| 🔑 [Recovery](docs/self-hosting/recovery.md)        | Reset a forgotten owner password   |
 
 ## 🛠️ Development
 

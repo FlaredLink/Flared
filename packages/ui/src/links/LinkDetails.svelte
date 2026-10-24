@@ -124,6 +124,16 @@
 					<dd>On</dd>{/if}
 			</dl>
 		{/if}
+		{#if link.previewTitle || link.previewDescription || link.previewImage}
+			<dl class="devices">
+				{#if link.previewTitle}<dt>Card title</dt>
+					<dd>{link.previewTitle}</dd>{/if}
+				{#if link.previewDescription}<dt>Card description</dt>
+					<dd>{link.previewDescription}</dd>{/if}
+				{#if link.previewImage}<dt>Card image</dt>
+					<dd>Set</dd>{/if}
+			</dl>
+		{/if}
 	</div>
 
 	<div class="block">

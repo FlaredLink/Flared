@@ -24,6 +24,9 @@ import {
 	maxDestinationLength,
 	maxIdempotencyKeyLength,
 	maxLinkPasswordLength,
+	maxPreviewDescriptionLength,
+	maxPreviewImageBytes,
+	maxPreviewTitleLength,
 	maxTitleLength,
 	minLinkPasswordLength,
 	recentClickDays
@@ -41,7 +44,7 @@ import {
 // Duplicated from the client's QR module, which this package cannot import.
 const qrSizes = { minimum: 128, maximum: 2048, default: 512 };
 
-export const openApiVersion = '1.10.0';
+export const openApiVersion = '1.11.0';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const dateTime = { type: 'string', format: 'date-time' };
@@ -82,6 +85,19 @@ const linkPassword = {
 	description: `Visitors enter it before the redirect. It is stored as a hash and never returned; reads show hasPassword.${accessNote}`
 };
 
+const previewNote =
+	' Setting it needs social previews on the plan (LINK_PREVIEW_REQUIRES_PLAN otherwise); clearing it does not.';
+const previewTitle = {
+	type: 'string',
+	maxLength: maxPreviewTitleLength,
+	description: `The title that link cards in chat apps and social networks show, instead of the destination page title.${previewNote}`
+};
+const previewDescription = {
+	type: 'string',
+	maxLength: maxPreviewDescriptionLength,
+	description: `The description that link cards show, instead of the destination page description.${previewNote}`
+};
+
 const endsAt = {
 	...dateTime,
 	description:
@@ -120,6 +136,19 @@ const schemas = {
 		hasPassword: {
 			type: 'boolean',
 			description: 'Visitors enter a password before the redirect.'
+		},
+		previewTitle: {
+			...nullable({ type: 'string' }),
+			description: 'The title that link cards show; null uses the destination page title.'
+		},
+		previewDescription: {
+			...nullable({ type: 'string' }),
+			description: 'The description that link cards show; null uses the destination page.'
+		},
+		previewImage: {
+			...nullable({ type: 'string', format: 'uri' }),
+			description:
+				'The image that link cards show, on the short-link host. Set it with PUT /links/{id}/preview-image.'
 		},
 		enabled: { type: 'boolean' },
 		blocked: {
@@ -170,7 +199,9 @@ const schemas = {
 			startsAt: nullable(linkStart),
 			endsAt: nullable(linkEnd),
 			endedDestination: nullable(endedDestination),
-			password: nullable(linkPassword)
+			password: nullable(linkPassword),
+			previewTitle: nullable(previewTitle),
+			previewDescription: nullable(previewDescription)
 		},
 		['destination']
 	),
@@ -196,6 +227,14 @@ const schemas = {
 				password: {
 					...nullable(linkPassword),
 					description: `null clears it. ${linkPassword.description}`
+				},
+				previewTitle: {
+					...nullable(previewTitle),
+					description: `null clears it. ${previewTitle.description}`
+				},
+				previewDescription: {
+					...nullable(previewDescription),
+					description: `null clears it. ${previewDescription.description}`
 				},
 				enabled: { type: 'boolean' }
 			},
@@ -807,6 +846,42 @@ export function openApiDocument(serverUrl: string) {
 							{ name: 'to', in: 'query', schema: day }
 						]
 					}
+				)
+			},
+			'/links/{id}/preview-image': {
+				put: operation(
+					'Set the image of a link card',
+					'links:write',
+					{
+						'200': {
+							description: 'The link with its new previewImage.',
+							content: json(object({ link: ref('Link') }))
+						}
+					},
+					{
+						parameters: [linkId],
+						description: `Needs the \`links:write\` scope and social previews on the plan (LINK_PREVIEW_REQUIRES_PLAN otherwise). Send the image itself as the body: PNG, JPEG, or WebP, at most ${maxPreviewImageBytes / 1024 / 1024} MB; 1200 x 630 pixels shows best. A new image replaces the old one.`,
+						requestBody: {
+							required: true,
+							content: Object.fromEntries(
+								['image/png', 'image/jpeg', 'image/webp'].map((type) => [
+									type,
+									{ schema: { type: 'string', format: 'binary' } }
+								])
+							)
+						}
+					}
+				),
+				delete: operation(
+					'Remove the image of a link card',
+					'links:write',
+					{
+						'200': {
+							description: 'The link without previewImage.',
+							content: json(object({ link: ref('Link') }))
+						}
+					},
+					{ parameters: [linkId] }
 				)
 			},
 			'/links/{id}/qr': {

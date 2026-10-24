@@ -8,7 +8,10 @@ import {
 	type Usage
 } from '@flared/contracts/analytics';
 import {
+	maxPreviewImageBytes,
+	previewImageTypes,
 	recentClickDays,
+	sniffPreviewImage,
 	type Link,
 	type LinkPage,
 	type ListedLink
@@ -42,7 +45,10 @@ export type ApiService = AuthService;
 
 export type ApiFailure = { code: string; message: string; status: number; field: string | null };
 
-function apiRequest(path: string, init: { method: string; headers: Headers; body?: string }) {
+function apiRequest(
+	path: string,
+	init: { method: string; headers: Headers; body?: string | Uint8Array<ArrayBuffer> }
+) {
 	return new Request(new URL(path, 'https://api.internal'), init);
 }
 
@@ -139,6 +145,8 @@ export async function createLink(
 		endsAt?: string;
 		endedDestination?: string;
 		password?: string;
+		previewTitle?: string;
+		previewDescription?: string;
 	}
 ): Promise<{ ok: true; link: Link } | { ok: false; failure: ApiFailure }> {
 	const response = await service.fetch(
@@ -158,6 +166,8 @@ export async function createLink(
 				endsAt: input.endsAt || null,
 				endedDestination: input.endedDestination || null,
 				password: input.password || null,
+				previewTitle: input.previewTitle || null,
+				previewDescription: input.previewDescription || null,
 				// Empty means the installation default.
 				...(input.domainId ? { domainId: input.domainId } : {})
 			})
@@ -264,9 +274,9 @@ export async function fetchLink(
 		: { ok: false, failure: malformed };
 }
 
-// The fields of PATCH /v1/links/:id. An empty title, device destination, date, or destination
-// after the end clears it; an absent one stays as it is. password: a new password, or null to
-// remove it; absent keeps it.
+// The fields of PATCH /v1/links/:id. An empty title, device destination, date, destination
+// after the end, or preview text clears it; an absent one stays as it is. password: a new
+// password, or null to remove it; absent keeps it.
 export type LinkChange =
 	| {
 			destination: string;
@@ -277,6 +287,8 @@ export type LinkChange =
 			endsAt?: string;
 			endedDestination?: string;
 			password?: string | null;
+			previewTitle?: string;
+			previewDescription?: string;
 	  }
 	| { enabled: boolean };
 
@@ -307,7 +319,13 @@ export function linkChangeOf(form: FormData): LinkChange | null {
 					? { password: null }
 					: text('password')
 						? { password: text('password') }
-						: {})
+						: {}),
+				// The box that removes the card texts sends them empty.
+				...Object.fromEntries(
+					(['previewTitle', 'previewDescription'] as const)
+						.filter((name) => form.has(name) || form.get('removePreviewText') === 'on')
+						.map((name) => [name, form.get('removePreviewText') === 'on' ? '' : text(name)])
+				)
 			};
 		case 'enable':
 			return { enabled: true };
@@ -341,7 +359,12 @@ export async function updateLink(
 							.filter((name) => change[name] !== undefined)
 							.map((name) => [name, change[name] || null])
 					),
-					...(change.password === undefined ? {} : { password: change.password })
+					...(change.password === undefined ? {} : { password: change.password }),
+					...Object.fromEntries(
+						(['previewTitle', 'previewDescription'] as const)
+							.filter((name) => change[name] !== undefined)
+							.map((name) => [name, change[name] || null])
+					)
 				};
 	const response = await service.fetch(
 		apiRequest(`/v1/links/${encodeURIComponent(id)}`, {
@@ -351,6 +374,61 @@ export async function updateLink(
 		})
 	);
 	if (!response.ok) return { ok: false, failure: await failureOf(response) };
+	const link = fields(await response.json().catch(() => null)).link;
+	return isLink(link) ? { ok: true, link } : { ok: false, failure: malformed };
+}
+
+// The image change that a link form submits: a chosen file in previewImage, or the box
+// removePreviewImage. The file is checked here, before the link is created or changed, so a wrong
+// file stops the whole form.
+export type PreviewImageUpload =
+	| { kind: 'set'; body: Uint8Array<ArrayBuffer>; type: string }
+	| { kind: 'remove' }
+	| { kind: 'none' };
+
+export async function previewImageOf(
+	form: FormData
+): Promise<{ ok: true; upload: PreviewImageUpload } | { ok: false; failure: ApiFailure }> {
+	const invalid = (code: string, message: string, status: number) => ({
+		ok: false as const,
+		failure: { code, message, status, field: 'previewImage' }
+	});
+	const file = form.get('previewImage');
+	if (typeof file === 'object' && file !== null && file.size > 0) {
+		if (file.size > maxPreviewImageBytes)
+			return invalid('PAYLOAD_TOO_LARGE', 'Use an image of at most 5 MB.', 413);
+		const body = new Uint8Array(await file.arrayBuffer());
+		const extension = sniffPreviewImage(body);
+		if (!extension)
+			return invalid('UNSUPPORTED_MEDIA_TYPE', 'Upload a PNG, JPEG, or WebP image.', 415);
+		return { ok: true, upload: { kind: 'set', body, type: previewImageTypes[extension] } };
+	}
+	return {
+		ok: true,
+		upload: { kind: form.get('removePreviewImage') === 'on' ? 'remove' : 'none' }
+	};
+}
+
+export async function changePreviewImage(
+	service: ApiService,
+	headers: Headers,
+	id: string,
+	upload: Exclude<PreviewImageUpload, { kind: 'none' }>
+): Promise<{ ok: true; link: Link } | { ok: false; failure: ApiFailure }> {
+	const response = await service.fetch(
+		apiRequest(`/v1/links/${encodeURIComponent(id)}/preview-image`, {
+			method: upload.kind === 'set' ? 'PUT' : 'DELETE',
+			headers: forwardedHeaders(
+				headers,
+				upload.kind === 'set' ? { 'content-type': upload.type } : {}
+			),
+			...(upload.kind === 'set' ? { body: upload.body } : {})
+		})
+	);
+	if (!response.ok) {
+		const failure = await failureOf(response);
+		return { ok: false, failure: { ...failure, field: failure.field ?? 'previewImage' } };
+	}
 	const link = fields(await response.json().catch(() => null)).link;
 	return isLink(link) ? { ok: true, link } : { ok: false, failure: malformed };
 }

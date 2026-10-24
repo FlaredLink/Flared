@@ -8,13 +8,14 @@ import {
 	isLink,
 	parseCreateLink,
 	setsLinkAccess,
+	setsLinkPreview,
 	type CreateLinkInput,
 	type ImportItemError,
 	type ImportItemResult,
 	type ImportLinksResult
 } from '@flared/contracts/links';
 import { findUsableDomain, readTakenSlugs, type DomainRow } from '@flared/data/links';
-import { readLimitUsage, readLinkAccess } from '@flared/data/routing-policy';
+import { readLimitUsage, readLinkAccess, readLinkPreviews } from '@flared/data/routing-policy';
 import type { LinkPasswords } from './link-passwords';
 import {
 	ApiError,
@@ -22,6 +23,7 @@ import {
 	domainUnavailable,
 	limitReachedMessage,
 	linkAccessMessage,
+	linkPreviewMessage,
 	slugTakenMessage
 } from './links';
 
@@ -60,7 +62,7 @@ function apiFailure(error: ApiError): ImportItemError {
 }
 
 // Reads only. Checks the items in order with the create's rules: a usable domain, link access for
-// dates and passwords, room under the active link limit (earlier ready items included), then a
+// dates and passwords, link previews for preview texts, room under the active link limit (earlier ready items included), then a
 // free slug, also against earlier ready items in the request. A generated slug is never taken.
 // passwords: the installation can store a link password.
 export async function previewImport(
@@ -74,6 +76,9 @@ export async function previewImport(
 		throw new ApiError('SERVICE_UNAVAILABLE', 'Link creation is not available. Try again.');
 	const linkAccess = items.some((item) => item.ok && setsLinkAccess(item.input))
 		? await readLinkAccess(routing, tenantId)
+		: false;
+	const linkPreviews = items.some((item) => item.ok && setsLinkPreview(item.input))
+		? await readLinkPreviews(routing, tenantId)
 		: false;
 	const domains = new Map<string | null, DomainRow | null>();
 	for (const item of items)
@@ -99,6 +104,8 @@ export async function previewImport(
 		if (!domain) return failed(index, apiFailure(domainUnavailable(item.input.domainId)));
 		if (setsLinkAccess(item.input) && !linkAccess)
 			return failed(index, { code: 'LINK_ACCESS_REQUIRES_PLAN', message: linkAccessMessage });
+		if (setsLinkPreview(item.input) && !linkPreviews)
+			return failed(index, { code: 'LINK_PREVIEW_REQUIRES_PLAN', message: linkPreviewMessage });
 		if (item.input.password !== null && !features.passwords)
 			return failed(index, {
 				code: 'SERVICE_UNAVAILABLE',

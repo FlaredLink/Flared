@@ -9,6 +9,7 @@
 	import FormField from '../molecules/FormField.svelte';
 	import AccessFields from './AccessFields.svelte';
 	import DeviceFields from './DeviceFields.svelte';
+	import PreviewFields from './PreviewFields.svelte';
 	import UtmFields from './UtmFields.svelte';
 
 	interface EditValues {
@@ -19,6 +20,8 @@
 		startsAt?: string;
 		endsAt?: string;
 		endedDestination?: string;
+		previewTitle?: string;
+		previewDescription?: string;
 	}
 
 	interface Props {
@@ -34,6 +37,8 @@
 		oncancel?: () => void;
 		// Why the workspace cannot set dates or a password, such as its plan. Without it, it can.
 		accessUnavailable?: string | null;
+		// Why the workspace cannot set a link card, such as its plan. Without it, it can.
+		previewUnavailable?: string | null;
 	}
 
 	let {
@@ -44,7 +49,8 @@
 		pending = false,
 		enhance = () => {},
 		oncancel,
-		accessUnavailable = null
+		accessUnavailable = null,
+		previewUnavailable = null
 	}: Props = $props();
 
 	// A submitted value wins; a device destination that was not submitted shows the link's.
@@ -55,7 +61,9 @@
 		androidDestination: values?.androidDestination ?? link.androidDestination ?? '',
 		startsAt: values?.startsAt ?? link.startsAt ?? '',
 		endsAt: values?.endsAt ?? link.endsAt ?? '',
-		endedDestination: values?.endedDestination ?? link.endedDestination ?? ''
+		endedDestination: values?.endedDestination ?? link.endedDestination ?? '',
+		previewTitle: values?.previewTitle ?? link.previewTitle ?? '',
+		previewDescription: values?.previewDescription ?? link.previewDescription ?? ''
 	});
 	// Bound to the destination field, so the UTM fields can write into it.
 	let destination = $state(untrack(() => shown.destination));
@@ -70,7 +78,10 @@
 		'startsAt',
 		'endsAt',
 		'endedDestination',
-		'password'
+		'password',
+		'previewTitle',
+		'previewDescription',
+		'previewImage'
 	];
 	const invalid = (field: string) => error?.field === field;
 	const fieldError = (field: string) => (invalid(field) ? error?.message : null);
@@ -80,7 +91,14 @@
 	);
 </script>
 
-<form method="post" {action} class="edit-form" use:enhance aria-label="Edit this link">
+<form
+	method="post"
+	{action}
+	enctype="multipart/form-data"
+	class="edit-form"
+	use:enhance
+	aria-label="Edit this link"
+>
 	<input type="hidden" name="intent" value="edit" />
 	<ShownWorkspaceField />
 	<FormField for="edit-destination" label="Destination URL" error={fieldError('destination')}>
@@ -118,6 +136,13 @@
 		hasPassword={link.hasPassword ?? false}
 		{error}
 		unavailable={accessUnavailable}
+	/>
+	<PreviewFields
+		idPrefix="edit"
+		values={shown}
+		image={link.previewImage ?? null}
+		{error}
+		unavailable={previewUnavailable}
 	/>
 	<p id="edit-hint" class="hint">
 		The short link {link.hostname}/{link.slug} stays the same. New clicks go to the new destination.

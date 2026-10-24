@@ -80,12 +80,16 @@ export interface CreateLinkRequest {
 	endsAt?: string;
 	endedDestination?: string;
 	password?: string;
+	// What link cards show instead of the destination's own title and description. These need
+	// social previews on the plan; the image is set with setPreviewImage.
+	previewTitle?: string;
+	previewDescription?: string;
 	// Reuse the same key to retry a create safely; a new one is generated when it is absent.
 	idempotencyKey?: string;
 }
 
-// null clears a title, a device destination, a date, the destination after the end, or the
-// password.
+// null clears a title, a device destination, a date, the destination after the end, the
+// password, or a preview text.
 export interface UpdateLinkRequest {
 	destination?: string;
 	title?: string | null;
@@ -95,7 +99,15 @@ export interface UpdateLinkRequest {
 	endsAt?: string | null;
 	endedDestination?: string | null;
 	password?: string | null;
+	previewTitle?: string | null;
+	previewDescription?: string | null;
 	enabled?: boolean;
+}
+
+// A PNG, JPEG, or WebP image of at most 5 MB, with its media type.
+export interface PreviewImage {
+	body: Uint8Array;
+	type: 'image/png' | 'image/jpeg' | 'image/webp';
 }
 
 export interface ImportLinksRequest {
@@ -121,6 +133,9 @@ export interface FlaredClient {
 	listLinks(request?: ListLinksRequest): Promise<LinkPage>;
 	getLink(id: string): Promise<Link>;
 	updateLink(id: string, change: UpdateLinkRequest): Promise<Link>;
+	// The image of the link's card; a new one replaces the old one.
+	setPreviewImage(id: string, image: PreviewImage): Promise<Link>;
+	removePreviewImage(id: string): Promise<Link>;
 	getAnalytics(id: string, range?: { from?: string; to?: string }): Promise<LinkAnalytics>;
 	getUsage(): Promise<Usage>;
 	listDomains(): Promise<DomainPage>;
@@ -201,21 +216,28 @@ export function createClient(options: ClientOptions): FlaredClient {
 	async function request(
 		method: string,
 		path: string,
-		init: { body?: unknown; headers?: Record<string, string>; retry: boolean }
+		init: {
+			body?: unknown;
+			image?: PreviewImage;
+			headers?: Record<string, string>;
+			retry: boolean;
+		}
 	): Promise<{ status: number; headers: Headers; body: unknown }> {
 		const headers = new Headers(init.headers);
 		headers.set('authorization', `Bearer ${options.token}`);
 		headers.set('accept', 'application/json');
 		if (options.userAgent) headers.set('user-agent', options.userAgent);
 		if (init.body !== undefined) headers.set('content-type', 'application/json');
+		if (init.image) headers.set('content-type', init.image.type);
+		const body = init.image
+			? init.image.body
+			: init.body === undefined
+				? undefined
+				: JSON.stringify(init.body);
 		for (let attempt = 0; ; attempt += 1) {
 			let response: Response;
 			try {
-				response = await send(`${baseUrl}${path}`, {
-					method,
-					headers,
-					body: init.body === undefined ? undefined : JSON.stringify(init.body)
-				});
+				response = await send(`${baseUrl}${path}`, { method, headers, body });
 			} catch {
 				if (init.retry && attempt < retries) {
 					await sleep(1000 * 2 ** attempt);
@@ -302,6 +324,14 @@ export function createClient(options: ClientOptions): FlaredClient {
 		},
 		updateLink(linkId, change) {
 			return linkFrom(request('PATCH', `/links/${id(linkId)}`, { body: change, retry: false }));
+		},
+		setPreviewImage(linkId, image) {
+			return linkFrom(
+				request('PUT', `/links/${id(linkId)}/preview-image`, { image, retry: false })
+			);
+		},
+		removePreviewImage(linkId) {
+			return linkFrom(request('DELETE', `/links/${id(linkId)}/preview-image`, { retry: false }));
 		},
 		async getAnalytics(linkId, range = {}) {
 			const params = new URLSearchParams();

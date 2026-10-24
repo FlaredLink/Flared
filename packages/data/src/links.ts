@@ -23,6 +23,10 @@ export interface LinkRow {
 	endedDestination: string | null;
 	// Reads never carry the hash itself.
 	hasPassword: boolean;
+	previewTitle: string | null;
+	previewDescription: string | null;
+	// The stored image name, such as 3q2-7wEAAAAAAAAAAAAAAA.png.
+	previewImage: string | null;
 	active: boolean;
 	blockedReason: BlockReason | null;
 	createdAt: number;
@@ -52,6 +56,8 @@ export interface NewLinkRecord {
 	endsAt: number | null;
 	endedDestination: string | null;
 	passwordHash: string | null;
+	previewTitle: string | null;
+	previewDescription: string | null;
 	now: number;
 	expiresAt: number;
 	bodies: { created: string; slugTaken: string; limitReached: string };
@@ -73,7 +79,7 @@ export interface StoredResult {
 }
 
 // undefined keeps a field; null clears a title, a device destination, a date, the destination
-// after the end, or the password hash.
+// after the end, the password hash, or a preview text.
 export interface LinkChange {
 	destination?: string;
 	title?: string | null;
@@ -83,6 +89,8 @@ export interface LinkChange {
 	endsAt?: number | null;
 	endedDestination?: string | null;
 	passwordHash?: string | null;
+	previewTitle?: string | null;
+	previewDescription?: string | null;
 	active?: boolean;
 	now: number;
 	// The ID of the webhook event staged with the change while the workspace has webhooks on.
@@ -90,7 +98,7 @@ export interface LinkChange {
 }
 
 const linkColumns =
-	'l.id, l.domain_id, n.hostname, l.slug, l.destination, l.title, l.ios_destination, l.android_destination, l.starts_at, l.ends_at, l.ended_destination, l.password_hash IS NOT NULL AS has_password, l.status, l.blocked_reason, l.created_at, l.updated_at';
+	'l.id, l.domain_id, n.hostname, l.slug, l.destination, l.title, l.ios_destination, l.android_destination, l.starts_at, l.ends_at, l.ended_destination, l.password_hash IS NOT NULL AS has_password, l.preview_title, l.preview_description, l.preview_image, l.status, l.blocked_reason, l.created_at, l.updated_at';
 
 function text(value: unknown, field: string): string {
 	if (typeof value !== 'string' || !value) throw new Error(`Invalid stored ${field}`);
@@ -131,6 +139,9 @@ function toLink(row: Record<string, unknown>): LinkRow {
 		endsAt: optionalTime(row.ends_at, 'end time'),
 		endedDestination: optionalText(row.ended_destination, 'destination after the end'),
 		hasPassword: row.has_password === 1,
+		previewTitle: optionalText(row.preview_title, 'preview title'),
+		previewDescription: optionalText(row.preview_description, 'preview description'),
+		previewImage: optionalText(row.preview_image, 'preview image'),
 		active: row.status === 'active',
 		blockedReason: row.blocked_reason,
 		createdAt: time(row.created_at, 'creation time'),
@@ -270,6 +281,10 @@ function usesLinkAccess(record: NewLinkRecord): boolean {
 	);
 }
 
+function usesLinkPreview(record: NewLinkRecord): boolean {
+	return record.previewTitle !== null || record.previewDescription !== null;
+}
+
 // One batch claims the key, decides the outcome with SQL conditions, and writes the
 // reservation, link, and stored response together. Expected rejections never raise an
 // error, so their stored result is not rolled back; the reservation key stays the final guard.
@@ -298,6 +313,7 @@ export async function createLinkRecord(
 						WHEN NOT EXISTS (SELECT 1 FROM tenant_policy WHERE tenant_id = ?1) THEN 'unavailable'
 						WHEN NOT EXISTS (SELECT 1 FROM domains WHERE id = ?3 AND state = 'active' AND (tenant_id IS NULL OR tenant_id = ?1)) THEN 'unavailable'
 						WHEN ?6 = 1 AND COALESCE((SELECT link_access FROM tenant_policy WHERE tenant_id = ?1), 0) = 0 THEN 'unavailable'
+						WHEN ?7 = 1 AND COALESCE((SELECT link_previews FROM tenant_policy WHERE tenant_id = ?1), 0) = 0 THEN 'unavailable'
 						WHEN (SELECT COUNT(*) FROM links WHERE tenant_id = ?1 AND status = 'active') >= (SELECT active_link_limit FROM tenant_policy WHERE tenant_id = ?1) THEN 'limit_reached'
 						WHEN EXISTS (SELECT 1 FROM slug_reservations WHERE domain_id = ?3 AND slug = ?4) THEN ?5
 						WHEN EXISTS (SELECT 1 FROM reserved_slugs WHERE slug = ?4) AND EXISTS (SELECT 1 FROM domains WHERE id = ?3 AND tenant_id IS NULL) THEN ?5
@@ -310,7 +326,8 @@ export async function createLinkRecord(
 					record.domainId,
 					record.slug,
 					record.generatedSlug ? 'retry' : 'slug_taken',
-					usesLinkAccess(record) ? 1 : 0
+					usesLinkAccess(record) ? 1 : 0,
+					usesLinkPreview(record) ? 1 : 0
 				),
 			db
 				.prepare(
@@ -319,8 +336,8 @@ export async function createLinkRecord(
 				.bind(t, k, record.domainId, record.slug),
 			db
 				.prepare(
-					`INSERT INTO links (id, tenant_id, domain_id, slug, destination, title, ios_destination, android_destination, starts_at, ends_at, ended_destination, password_hash, status, created_at, updated_at)
-					SELECT ?3, ?1, ?4, ?5, ?6, ?7, ?9, ?10, ?11, ?12, ?13, ?14, 'active', ?8, ?8 WHERE (${outcomeOf}) = 'created'`
+					`INSERT INTO links (id, tenant_id, domain_id, slug, destination, title, ios_destination, android_destination, starts_at, ends_at, ended_destination, password_hash, preview_title, preview_description, status, created_at, updated_at)
+					SELECT ?3, ?1, ?4, ?5, ?6, ?7, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 'active', ?8, ?8 WHERE (${outcomeOf}) = 'created'`
 				)
 				.bind(
 					t,
@@ -336,7 +353,9 @@ export async function createLinkRecord(
 					record.startsAt,
 					record.endsAt,
 					record.endedDestination,
-					record.passwordHash
+					record.passwordHash,
+					record.previewTitle,
+					record.previewDescription
 				),
 			db
 				.prepare(
@@ -481,18 +500,26 @@ export async function listLinks(
 
 // The conditions of a link change, bound as in updateLink: the owner may still turn a blocked
 // link off, which frees its place in the limit, and reactivation must fit the limit. Setting a
-// date, the destination after the end, or a password needs link access; clearing one does not.
+// date, the destination after the end, or a password needs link access, and setting a preview
+// text needs link previews; clearing one does not.
 const changeWhere = `tenant_id = ?1 AND id = ?2
-	AND (blocked_at IS NULL OR (?3 IS NULL AND ?4 = 0 AND ?8 = 0 AND ?10 = 0 AND ?13 = 0 AND ?15 = 0 AND ?17 = 0 AND ?19 = 0 AND ?6 = 'disabled'))
+	AND (blocked_at IS NULL OR (?3 IS NULL AND ?4 = 0 AND ?8 = 0 AND ?10 = 0 AND ?13 = 0 AND ?15 = 0 AND ?17 = 0 AND ?19 = 0 AND ?22 = 0 AND ?24 = 0 AND ?6 = 'disabled'))
 	AND NOT (
 		status = 'disabled' AND ?6 = 'active' AND
 		(SELECT COUNT(*) FROM links WHERE tenant_id = ?1 AND status = 'active') >=
 		COALESCE((SELECT active_link_limit FROM tenant_policy WHERE tenant_id = ?1), 0)
 	)
-	AND NOT (?21 = 1 AND COALESCE((SELECT link_access FROM tenant_policy WHERE tenant_id = ?1), 0) = 0)`;
+	AND NOT (?21 = 1 AND COALESCE((SELECT link_access FROM tenant_policy WHERE tenant_id = ?1), 0) = 0)
+	AND NOT (?26 = 1 AND COALESCE((SELECT link_previews FROM tenant_policy WHERE tenant_id = ?1), 0) = 0)`;
 
 export function changeSetsLinkAccess(change: LinkChange): boolean {
 	return [change.startsAt, change.endsAt, change.endedDestination, change.passwordHash].some(
+		(value) => value !== undefined && value !== null
+	);
+}
+
+export function changeSetsLinkPreview(change: LinkChange): boolean {
+	return [change.previewTitle, change.previewDescription].some(
 		(value) => value !== undefined && value !== null
 	);
 }
@@ -530,7 +557,12 @@ export async function updateLink(
 		change.endedDestination ?? null,
 		change.passwordHash === undefined ? 0 : 1,
 		change.passwordHash ?? null,
-		changeSetsLinkAccess(change) ? 1 : 0
+		changeSetsLinkAccess(change) ? 1 : 0,
+		change.previewTitle === undefined ? 0 : 1,
+		change.previewTitle ?? null,
+		change.previewDescription === undefined ? 0 : 1,
+		change.previewDescription ?? null,
+		changeSetsLinkPreview(change) ? 1 : 0
 	];
 	const previous = (field: string) => `json_extract(e.payload, '$.previous.${field}')`;
 	const results = await db.batch([
@@ -554,6 +586,8 @@ export async function updateLink(
 					ends_at = CASE WHEN ?15 = 1 THEN ?16 ELSE ends_at END,
 					ended_destination = CASE WHEN ?17 = 1 THEN ?18 ELSE ended_destination END,
 					password_hash = CASE WHEN ?19 = 1 THEN ?20 ELSE password_hash END,
+					preview_title = CASE WHEN ?22 = 1 THEN ?23 ELSE preview_title END,
+					preview_description = CASE WHEN ?24 = 1 THEN ?25 ELSE preview_description END,
 					status = COALESCE(?6, status),
 					updated_at = ?7
 				WHERE ${changeWhere}`
@@ -591,6 +625,24 @@ export async function updateLink(
 	};
 }
 
+// Replaces the preview image name only while it is still `from`, so of two uploads at once one
+// wins and the other learns it. A blocked link takes no image; setting one needs link previews,
+// removing one does not. No webhook event: previews are not part of link.updated.
+export async function replacePreviewImage(
+	db: D1Database,
+	change: { tenantId: string; linkId: string; from: string | null; to: string | null; now: number }
+): Promise<boolean> {
+	const result = await db
+		.prepare(
+			`UPDATE links SET preview_image = ?4, updated_at = ?5
+			WHERE tenant_id = ?1 AND id = ?2 AND preview_image IS ?3 AND blocked_at IS NULL
+			AND (?4 IS NULL OR COALESCE((SELECT link_previews FROM tenant_policy WHERE tenant_id = ?1), 0) = 1)`
+		)
+		.bind(change.tenantId, change.linkId, change.from, change.to, change.now)
+		.run();
+	return result.meta.changes === 1;
+}
+
 export async function deleteExpiredCreationRecords(
 	db: D1Database,
 	now: number,
@@ -623,6 +675,11 @@ export interface RedirectTarget {
 	endsAt: number | null;
 	endedDestination: string | null;
 	passwordHash: string | null;
+	// For the card that card bots get. title is the link's own title, a fallback for the card.
+	title: string | null;
+	previewTitle: string | null;
+	previewDescription: string | null;
+	previewImage: string | null;
 	// The edition forwards this workspace's clicks (routing migration 0011) and its plan allows
 	// integrations (a webhook endpoint limit above 0).
 	forwardClicks: boolean;
@@ -644,6 +701,7 @@ export async function findRedirectTarget(
 		.prepare(
 			`SELECT l.tenant_id, l.id, p.analytics_shard_id, l.destination, l.ios_destination, l.android_destination,
 				l.starts_at, l.ends_at, l.ended_destination, l.password_hash,
+				l.title, l.preview_title, l.preview_description, l.preview_image,
 				l.blocked_at IS NOT NULL OR p.suspended_at IS NOT NULL AS blocked,
 				(p.click_forwarding = 1 AND COALESCE(p.webhook_endpoint_limit, 0) > 0) AS forward
 			FROM domain_namespaces n
@@ -669,6 +727,10 @@ export async function findRedirectTarget(
 			endsAt: optionalTime(row.ends_at, 'end time'),
 			endedDestination: optionalText(row.ended_destination, 'destination after the end'),
 			passwordHash: optionalText(row.password_hash, 'password hash'),
+			title: optionalText(row.title, 'title'),
+			previewTitle: optionalText(row.preview_title, 'preview title'),
+			previewDescription: optionalText(row.preview_description, 'preview description'),
+			previewImage: optionalText(row.preview_image, 'preview image'),
 			forwardClicks: row.forward === 1
 		}
 	};

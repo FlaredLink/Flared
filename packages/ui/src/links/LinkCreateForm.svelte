@@ -13,6 +13,9 @@
 		startsAt?: string;
 		endsAt?: string;
 		endedDestination?: string;
+		// Empty or absent means the destination's own. An image is never sent back.
+		previewTitle?: string;
+		previewDescription?: string;
 	}
 
 	export interface LinkFormDomain {
@@ -31,6 +34,7 @@
 	import { utmOf } from '@flared/contracts/links';
 	import AccessFields from './AccessFields.svelte';
 	import DeviceFields from './DeviceFields.svelte';
+	import PreviewFields from './PreviewFields.svelte';
 	import UtmFields from './UtmFields.svelte';
 
 	interface Props {
@@ -49,6 +53,8 @@
 		destinationInput?: HTMLInputElement;
 		// Why the workspace cannot set dates or a password, such as its plan. Without it, it can.
 		accessUnavailable?: string | null;
+		// Why the workspace cannot set a link card, such as its plan. Without it, it can.
+		previewUnavailable?: string | null;
 	}
 
 	let {
@@ -61,7 +67,8 @@
 		enhance = () => {},
 		domains = [],
 		destinationInput = $bindable(),
-		accessUnavailable = null
+		accessUnavailable = null,
+		previewUnavailable = null
 	}: Props = $props();
 
 	const invalid = (field: string) => error?.field === field;
@@ -74,7 +81,9 @@
 			values.androidDestination ||
 			values.startsAt ||
 			values.endsAt ||
-			values.endedDestination
+			values.endedDestination ||
+			values.previewTitle ||
+			values.previewDescription
 		) ||
 			Object.keys(utmOf(values.destination)).length > 0 ||
 			[
@@ -84,7 +93,10 @@
 				'startsAt',
 				'endsAt',
 				'endedDestination',
-				'password'
+				'password',
+				'previewTitle',
+				'previewDescription',
+				'previewImage'
 			].some(invalid)
 	);
 	// Bound to the destination field, so the UTM fields can write into it.
@@ -150,6 +162,7 @@
 <form
 	method="post"
 	{action}
+	enctype="multipart/form-data"
 	class="link-form"
 	use:enhance
 	onsubmit={remember}
@@ -275,6 +288,16 @@
 			{error}
 			errorId="link-form-error"
 			unavailable={accessUnavailable}
+		/>
+		<PreviewFields
+			idPrefix="link"
+			values={{
+				previewTitle: values.previewTitle ?? '',
+				previewDescription: values.previewDescription ?? ''
+			}}
+			{error}
+			errorId="link-form-error"
+			unavailable={previewUnavailable}
 		/>
 	</div>
 	{#if error}<p id="link-form-error" class="error" role="alert">{error.message}</p>{/if}

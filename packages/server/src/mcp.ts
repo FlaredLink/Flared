@@ -152,6 +152,9 @@ const linkOutput = z.looseObject({
 	endsAt: z.string().nullable(),
 	endedDestination: z.string().nullable(),
 	hasPassword: z.boolean(),
+	previewTitle: z.string().nullable(),
+	previewDescription: z.string().nullable(),
+	previewImage: z.string().nullable(),
 	enabled: z.boolean(),
 	blocked: z.looseObject({ reason: z.enum(blockReasons) }).nullable(),
 	createdAt: z.string(),
@@ -219,13 +222,24 @@ const exportedLinkOutput = z.looseObject({
 		androidDestination: z.string().optional(),
 		startsAt: z.string().optional(),
 		endsAt: z.string().optional(),
-		endedDestination: z.string().optional()
+		endedDestination: z.string().optional(),
+		previewTitle: z.string().optional(),
+		previewDescription: z.string().optional()
 	})
 });
 type ExportedLinkOutput = z.infer<typeof exportedLinkOutput>;
 
 function exportedLink(link: Link): ExportedLinkOutput {
-	const { title, iosDestination, androidDestination, startsAt, endsAt, endedDestination } = link;
+	const {
+		title,
+		iosDestination,
+		androidDestination,
+		startsAt,
+		endsAt,
+		endedDestination,
+		previewTitle,
+		previewDescription
+	} = link;
 	return {
 		id: link.id,
 		shortUrl: link.shortUrl,
@@ -242,7 +256,9 @@ function exportedLink(link: Link): ExportedLinkOutput {
 			...(androidDestination ? { androidDestination } : {}),
 			...(startsAt ? { startsAt } : {}),
 			...(endsAt ? { endsAt } : {}),
-			...(endedDestination ? { endedDestination } : {})
+			...(endedDestination ? { endedDestination } : {}),
+			...(previewTitle ? { previewTitle } : {}),
+			...(previewDescription ? { previewDescription } : {})
 		}
 	};
 }
@@ -317,6 +333,9 @@ function linkResult(link: Link): LinkOutput {
 		endsAt: link.endsAt ?? null,
 		endedDestination: link.endedDestination ?? null,
 		hasPassword: link.hasPassword ?? false,
+		previewTitle: link.previewTitle ?? null,
+		previewDescription: link.previewDescription ?? null,
+		previewImage: link.previewImage ?? null,
 		enabled: link.enabled,
 		blocked: link.blocked,
 		createdAt: link.createdAt,
@@ -421,6 +440,19 @@ const linkPassword = z
 		'Visitors enter this password before the redirect. Flared stores only a hash and never shows it again. Some plans do not include it.'
 	);
 
+const previewTitle = z
+	.string()
+	.max(200)
+	.describe(
+		'The title that link cards in chat apps and social networks show, instead of the destination page title. Some plans do not include it.'
+	);
+const previewDescription = z
+	.string()
+	.max(500)
+	.describe(
+		'The description that link cards show, instead of the destination page description. Some plans do not include it.'
+	);
+
 const createLinkInput = z.object({
 	destination: z.string().min(1).max(4096).describe('The full URL, starting with https://.'),
 	slug: slug.optional().describe('The path after the domain. Generated when absent.'),
@@ -437,6 +469,8 @@ const createLinkInput = z.object({
 	endsAt: linkTime('stops').optional(),
 	endedDestination: endedDestination.optional(),
 	password: linkPassword.optional(),
+	previewTitle: previewTitle.optional(),
+	previewDescription: previewDescription.optional(),
 	utm: utmInput.optional()
 });
 type CreateLinkFields = z.infer<typeof createLinkInput>;
@@ -726,7 +760,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 					return { value, bytes: new TextEncoder().encode(JSON.stringify(value)).byteLength };
 				};
 				// A page over the byte cap is asked for again with half as many links. One link at
-				// its longest is about 17 KB, so the loop always ends within the cap. The API makes
+				// its longest is about 19 KB, so the loop always ends within the cap. The API makes
 				// every cursor, so a cut page still continues where it ends.
 				let page = await read(limit);
 				while (page.bytes > mcpExportResultBytes && page.value.links.length > 1)
@@ -777,7 +811,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 		{
 			title: 'Create a link',
 			description:
-				'Creates a public short link to a destination URL. Optional utm values are added to the destination; optional iPhone and Android destinations, such as app links, receive visitors on those devices. The link can also open and stop at set times and ask visitors for a password, on plans that include them. The same request repeated within five minutes returns the first link.',
+				'Creates a public short link to a destination URL. Optional utm values are added to the destination; optional iPhone and Android destinations, such as app links, receive visitors on those devices. The link can also open and stop at set times, ask visitors for a password, and carry its own title and description for link cards, on plans that include them. The same request repeated within five minutes returns the first link.',
 			inputSchema: createLinkInput,
 			outputSchema: z.looseObject({ link: linkOutput, replayed: z.boolean() }),
 			annotations: {
@@ -866,7 +900,7 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 		{
 			title: 'Update a link',
 			description:
-				'Changes the destination, title, UTM parameters, iPhone and Android destinations, start and end times, or password of a link. The short URL stays the same.',
+				'Changes the destination, title, UTM parameters, iPhone and Android destinations, start and end times, password, or link card title and description of a link. The short URL stays the same. A link card image is uploaded in the Flared app or with the API.',
 			inputSchema: z.object({
 				link: z.string().min(1).max(100).describe('The link ID or slug.'),
 				destination: z.string().min(1).max(4096).optional(),
@@ -880,6 +914,8 @@ function createTools(client: FlaredClient, grantKey: string, now: () => number):
 					.describe('null removes the end and the destination after it.'),
 				endedDestination: endedDestination.nullable().optional(),
 				password: linkPassword.nullable().optional().describe('null removes the password.'),
+				previewTitle: previewTitle.nullable().optional(),
+				previewDescription: previewDescription.nullable().optional(),
 				utm: utmInput
 					.optional()
 					.describe(

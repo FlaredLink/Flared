@@ -8,6 +8,7 @@ import { installationAuthSecret } from '@flared/data/setup';
 import type { AnalyticsShards } from '@flared/server/shards';
 import { keyedHash } from '@flared/server/auth/limits';
 import { createLinkPasswords, type LinkPasswords } from '@flared/server/link-passwords';
+import type { PreviewImageStore } from '@flared/server/preview-images';
 import type { AttemptLimiter, ClickSink } from '@flared/server/redirect';
 import { defaultSourceUrl } from '../src/lib/source';
 
@@ -28,6 +29,9 @@ export interface StandaloneEnv {
 	// The rate limiting binding for tries of a link password. Without it, no link password can
 	// be set, and a link that has one does not open.
 	LINK_PASSWORD_ATTEMPTS?: AttemptLimiter;
+	// An R2 bucket for link card images, which the operator adds (docs/self-hosting/link-previews.md).
+	// Without it, link cards have a title and description but no image.
+	PREVIEW_IMAGES?: PreviewImageStore;
 }
 
 export interface DeploymentConfig {
@@ -46,6 +50,7 @@ export interface DeploymentConfig {
 	// The link password key comes from the auth secret, so a new auth secret makes every link
 	// password stop working until it is set again.
 	linkPasswords: { keys: LinkPasswords; attempts: AttemptLimiter } | undefined;
+	previewImages: PreviewImageStore | undefined;
 }
 
 // The configuration of one request, with the app origin resolved.
@@ -116,6 +121,7 @@ export async function readConfig(
 	const setup = isSet(env.SETUP_SECRET) ? env.SETUP_SECRET : null;
 	const queue = env.CLICKS;
 	const attempts = env.LINK_PASSWORD_ATTEMPTS;
+	const images = env.PREVIEW_IMAGES;
 	return {
 		ok: true,
 		config: {
@@ -139,7 +145,8 @@ export async function readConfig(
 			linkPasswords:
 				attempts && typeof attempts.limit === 'function'
 					? { keys: createLinkPasswords(secret), attempts }
-					: undefined
+					: undefined,
+			previewImages: images && typeof images.put === 'function' ? images : undefined
 		}
 	};
 }

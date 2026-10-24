@@ -439,7 +439,9 @@ describe('hook delivery', () => {
 				startsAt: null,
 				endsAt: null,
 				endedDestination: null,
-				password: null
+				password: null,
+				previewTitle: null,
+				previewDescription: null
 			},
 			requestId: 'request-1',
 			now: clock

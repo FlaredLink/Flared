@@ -8,16 +8,25 @@
 // cookie, unless the request sends Sec-GPC: 1; a response that sets it is private. A link with a
 // start or end time opens only between them; after the end, visitors go to the destination for
 // after the end, which counts no click. A link with a password shows a form; a correct POST of
-// it answers 303 to the visitor's location and counts the click. Imports only routing and
-// contract code.
+// it answers 303 to the visitor's location and counts the click. A link with a social preview
+// gives card bots a page with its card tags and serves its image at /<slug>/preview/<file>.
+// Imports only routing and contract code.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
 import { visitorIdPattern, type ClickEvent } from '@flared/contracts/analytics';
-import { maxLinkPasswordLength, slugPattern } from '@flared/contracts/links';
+import {
+	maxLinkPasswordLength,
+	previewImageFilePattern,
+	previewImagePath,
+	previewImageTypes,
+	slugPattern
+} from '@flared/contracts/links';
 import { isReservedPath } from '@flared/contracts/reserved';
 import { activeDomainKind } from '@flared/data/domains';
 import { findRedirectTarget, type RedirectLookup, type RedirectTarget } from '@flared/data/links';
 import { buildClickEvent, isAutomated, osFamily, type ForwardContext } from './clicks';
 import type { LinkPasswords } from './link-passwords';
+import { isCardFetcher, linkCardHeaders, linkCardPage } from './link-previews';
+import { previewImageKey, type PreviewImageStore } from './preview-images';
 import {
 	passwordPage,
 	passwordPageHeaders,
@@ -54,6 +63,9 @@ export interface RedirectDependencies {
 	// The installation's link password key and a limit on tries for each link and visitor IP.
 	// Without them, a link that has a password does not open.
 	linkPasswords?: { keys: LinkPasswords; attempts: AttemptLimiter };
+	// Where uploaded preview images are kept. Without it, a preview image is not found; the
+	// preview texts still work.
+	previewImages?: PreviewImageStore;
 	now?: () => number;
 }
 
@@ -224,6 +236,10 @@ function toSnapshot(value: unknown): Snapshot | null {
 		!('endsAt' in value) ||
 		!('endedDestination' in value) ||
 		!('passwordHash' in value) ||
+		!('title' in value) ||
+		!('previewTitle' in value) ||
+		!('previewDescription' in value) ||
+		!('previewImage' in value) ||
 		!('forwardClicks' in value && typeof value.forwardClicks === 'boolean') ||
 		!('validUntil' in value && typeof value.validUntil === 'number')
 	)
@@ -234,13 +250,21 @@ function toSnapshot(value: unknown): Snapshot | null {
 	const endsAt = optionalTime(value.endsAt);
 	const endedDestination = optionalText(value.endedDestination);
 	const passwordHash = optionalText(value.passwordHash);
+	const title = optionalText(value.title);
+	const previewTitle = optionalText(value.previewTitle);
+	const previewDescription = optionalText(value.previewDescription);
+	const previewImage = optionalText(value.previewImage);
 	if (
 		iosDestination === undefined ||
 		androidDestination === undefined ||
 		startsAt === undefined ||
 		endsAt === undefined ||
 		endedDestination === undefined ||
-		passwordHash === undefined
+		passwordHash === undefined ||
+		title === undefined ||
+		previewTitle === undefined ||
+		previewDescription === undefined ||
+		previewImage === undefined
 	)
 		return null;
 	const { tenantId, linkId, analyticsShardId, destination, forwardClicks, validUntil } = value;
@@ -255,17 +279,29 @@ function toSnapshot(value: unknown): Snapshot | null {
 		endsAt,
 		endedDestination,
 		passwordHash,
+		title,
+		previewTitle,
+		previewDescription,
+		previewImage,
 		forwardClicks,
 		validUntil
 	};
+}
+
+function hasPreview(target: RedirectTarget): boolean {
+	return (
+		target.previewTitle !== null ||
+		target.previewDescription !== null ||
+		target.previewImage !== null
+	);
 }
 
 export function createRedirectHandler(dependencies: RedirectDependencies) {
 	const now = dependencies.now ?? Date.now;
 	// v2: snapshots carry the analytics shard ID. v3: and the device destinations. v4: and the
 	// click forwarding flag. v5: and the dates, the destination after the end, and the password
-	// hash.
-	const cacheName = dependencies.cacheName ?? 'flared-redirect-v5';
+	// hash. v6: and the title and the social preview.
+	const cacheName = dependencies.cacheName ?? 'flared-redirect-v6';
 
 	// A cache fault only costs a database read, so it counts as a miss.
 	async function readSnapshot(key: Request): Promise<Snapshot | null> {
@@ -340,7 +376,9 @@ export function createRedirectHandler(dependencies: RedirectDependencies) {
 		unlocked = false
 	): Promise<Response> | Response {
 		const { location, varies } = targetLocation(request, target);
-		const headers: Record<string, string> = varies ? { vary: 'User-Agent' } : {};
+		// A card bot gets the card instead, so a link with a preview varies too.
+		const headers: Record<string, string> =
+			varies || hasPreview(target) ? { vary: 'User-Agent' } : {};
 		let context: ForwardContext | undefined;
 		if (target.forwardClicks && counts(request, unlocked)) {
 			let visitorId: string | undefined;
@@ -408,7 +446,36 @@ export function createRedirectHandler(dependencies: RedirectDependencies) {
 		return redirectTo(request, target, address, background, work, true);
 	}
 
-	// The dates come before the password: a link that has not opened or has ended asks for none.
+	// The page that card bots get. The image is named only when this installation can serve it.
+	function linkCard(
+		request: Request,
+		target: RedirectTarget,
+		address: { hostname: string; slug: string }
+	): Response {
+		const shortUrl = `https://${address.hostname}/${address.slug}`;
+		const image =
+			target.previewImage !== null && dependencies.previewImages
+				? `https://${address.hostname}${previewImagePath(address.slug, target.previewImage)}`
+				: null;
+		const page = linkCardPage({
+			shortUrl,
+			title: target.previewTitle ?? target.title ?? `${address.hostname}/${address.slug}`,
+			description: target.previewDescription,
+			image
+		});
+		return new Response(request.method === 'HEAD' ? null : page, { headers: linkCardHeaders });
+	}
+
+	function opensAt(target: RedirectTarget, time: number): boolean {
+		return (
+			(target.startsAt === null || time >= target.startsAt) &&
+			(target.endsAt === null || time < target.endsAt)
+		);
+	}
+
+	// The dates come before the card and the password: a link that has not opened or has ended
+	// shows no card and asks for no password. A card bot gets the card also for a link with a
+	// password, because the card holds only what the owner wrote for it.
 	async function open(
 		request: Request,
 		target: RedirectTarget,
@@ -427,6 +494,12 @@ export function createRedirectHandler(dependencies: RedirectDependencies) {
 				background,
 				work
 			);
+		if (
+			request.method !== 'POST' &&
+			hasPreview(target) &&
+			isCardFetcher(request.headers.get('user-agent'))
+		)
+			return settle(linkCard(request, target, address), background, work);
 		if (target.passwordHash !== null)
 			return unlock(request, target, target.passwordHash, address, background, work);
 		if (request.method === 'POST')
@@ -443,6 +516,83 @@ export function createRedirectHandler(dependencies: RedirectDependencies) {
 	const notFound = (request: Request) => unavailable(request, 'not-found', dependencies);
 	const blocked = (request: Request) => unavailable(request, 'blocked', dependencies);
 	const failed = (request: Request) => unavailable(request, 'unavailable', dependencies);
+
+	// The link at an address, from its snapshot or the database, or the response that ends the
+	// request. work: the snapshot store to wait for.
+	async function resolve(
+		request: Request,
+		hostname: string,
+		slug: string
+	): Promise<{ target: RedirectTarget; work: Promise<unknown>[] } | Response> {
+		const key = new Request(`https://${hostname}/${slug}`);
+		const cached = await readSnapshot(key);
+		if (cached && now() < cached.validUntil)
+			return foreign(cached) ? notFound(request) : { target: cached, work: [] };
+
+		// The deadline counts from the query start, so a slow read cannot extend it.
+		const validUntil = now() + snapshotLifetimeMs;
+		let lookup: RedirectLookup | null;
+		try {
+			lookup = await findRedirectTarget(dependencies.routing, hostname, slug);
+		} catch {
+			console.error(JSON.stringify({ event: 'redirect_lookup_failed' }));
+			return failed(request);
+		}
+		// Neither result is cached, so an unblock or a new link opens on the next request.
+		if (!lookup) return notFound(request);
+		if (lookup.kind === 'blocked') return blocked(request);
+		if (now() >= validUntil) return failed(request);
+
+		const { target } = lookup;
+		if (foreign(target)) return notFound(request);
+		return { target, work: [storeSnapshot(key, { ...target, validUntil })] };
+	}
+
+	// An image of the link, only while the link is open: a disabled or blocked link, or a link
+	// outside its times, has no image. A replaced or removed image is deleted from the store, so
+	// only the current one is found; the name is not checked against the snapshot, which can be
+	// up to a minute old right after an upload.
+	async function previewImage(
+		request: Request,
+		hostname: string,
+		slug: string,
+		file: string,
+		background: BackgroundWork | undefined
+	): Promise<Response> {
+		if (request.method === 'POST')
+			return plain(request, 405, 'Method not allowed', { allow: 'GET, HEAD' });
+		const store = dependencies.previewImages;
+		if (!store || !slugPattern.test(slug) || !previewImageFilePattern.test(file))
+			return notFound(request);
+		const resolved = await resolve(request, hostname, slug);
+		if (resolved instanceof Response) return resolved;
+		const { target, work } = resolved;
+		if (!opensAt(target, now())) return settle(notFound(request), background, work);
+		let object: Awaited<ReturnType<PreviewImageStore['get']>>;
+		try {
+			object = await store.get(previewImageKey(target.tenantId, target.linkId, file));
+		} catch {
+			console.error(JSON.stringify({ event: 'preview_image_read_failed' }));
+			return settle(failed(request), background, work);
+		}
+		if (!object) return settle(notFound(request), background, work);
+		if (request.method === 'HEAD') await object.body.cancel();
+		const extension = file.slice(file.lastIndexOf('.') + 1) as keyof typeof previewImageTypes;
+		return settle(
+			new Response(request.method === 'HEAD' ? null : object.body, {
+				headers: {
+					'content-type': previewImageTypes[extension],
+					'content-length': String(object.size),
+					'cache-control': 'public, max-age=3600',
+					'content-security-policy': "default-src 'none'",
+					'x-content-type-options': 'nosniff',
+					'cross-origin-resource-policy': 'cross-origin'
+				}
+			}),
+			background,
+			work
+		);
+	}
 
 	async function fetch(request: Request, background?: BackgroundWork): Promise<Response> {
 		// POST is only for the password form of a link.
@@ -466,35 +616,15 @@ export function createRedirectHandler(dependencies: RedirectDependencies) {
 			return redirect(new URL(`${url.pathname}${url.search}`, dependencies.appOrigin).toString());
 		}
 
+		const image = /^\/([^/]+)\/preview\/([^/]+)$/.exec(url.pathname);
+		if (image) return previewImage(request, hostname, image[1], image[2], background);
+
 		const slug = url.pathname.slice(1);
 		if (!slugPattern.test(slug)) return notFound(request);
 
-		const key = new Request(`https://${hostname}/${slug}`);
-		const cached = await readSnapshot(key);
-		if (cached && now() < cached.validUntil)
-			return foreign(cached)
-				? notFound(request)
-				: open(request, cached, { hostname, slug }, background);
-
-		// The deadline counts from the query start, so a slow read cannot extend it.
-		const validUntil = now() + snapshotLifetimeMs;
-		let lookup: RedirectLookup | null;
-		try {
-			lookup = await findRedirectTarget(dependencies.routing, hostname, slug);
-		} catch {
-			console.error(JSON.stringify({ event: 'redirect_lookup_failed' }));
-			return failed(request);
-		}
-		// Neither result is cached, so an unblock or a new link opens on the next request.
-		if (!lookup) return notFound(request);
-		if (lookup.kind === 'blocked') return blocked(request);
-		if (now() >= validUntil) return failed(request);
-
-		const { target } = lookup;
-		if (foreign(target)) return notFound(request);
-		return open(request, target, { hostname, slug }, background, [
-			storeSnapshot(key, { ...target, validUntil })
-		]);
+		const resolved = await resolve(request, hostname, slug);
+		if (resolved instanceof Response) return resolved;
+		return open(request, resolved.target, { hostname, slug }, background, resolved.work);
 	}
 
 	return { fetch };

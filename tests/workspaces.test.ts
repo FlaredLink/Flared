@@ -590,7 +590,9 @@ describe('roles', () => {
 		['POST', '/automations/:id/links', 'member'],
 		['GET', '/links/:id/automations', 'member'],
 		['PUT', '/links/:id/automations/:automationId', 'member'],
-		['DELETE', '/links/:id/automations/:automationId', 'member']
+		['DELETE', '/links/:id/automations/:automationId', 'member'],
+		['PUT', '/links/:id/preview-image', 'member'],
+		['DELETE', '/links/:id/preview-image', 'member']
 	];
 
 	beforeAll(async () => {

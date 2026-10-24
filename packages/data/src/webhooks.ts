@@ -54,6 +54,8 @@ export function linkJson(l: string, n: string): string {
 		'startsAt', ${isoTime(`${l}.starts_at`)}, 'endsAt', ${isoTime(`${l}.ends_at`)},
 		'endedDestination', ${l}.ended_destination,
 		'hasPassword', json(CASE WHEN ${l}.password_hash IS NULL THEN 'false' ELSE 'true' END),
+		'previewTitle', ${l}.preview_title, 'previewDescription', ${l}.preview_description,
+		'previewImage', CASE WHEN ${l}.preview_image IS NULL THEN NULL ELSE 'https://' || ${n}.hostname || '/' || ${l}.slug || '/preview/' || ${l}.preview_image END,
 		'enabled', json(CASE ${l}.status WHEN 'active' THEN 'true' ELSE 'false' END),
 		'blocked', json(CASE WHEN ${l}.blocked_reason IS NULL THEN 'null' ELSE json_object('reason', ${l}.blocked_reason) END),
 		'createdAt', ${isoTime(`${l}.created_at`)}, 'updatedAt', ${isoTime(`${l}.updated_at`)})`;

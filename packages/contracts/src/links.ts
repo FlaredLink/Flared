@@ -35,6 +35,12 @@ export interface Link {
 	endsAt?: string | null;
 	endedDestination?: string | null;
 	hasPassword?: boolean;
+	// What card bots, such as Slack, X, and LinkedIn, show for the link instead of the
+	// destination's own tags. previewImage is the image's URL on the short-link host. Servers
+	// before social previews were added leave them out.
+	previewTitle?: string | null;
+	previewDescription?: string | null;
+	previewImage?: string | null;
 	enabled: boolean;
 	// Set while the operator blocks the link for abuse. A blocked link does not redirect, and
 	// its owner cannot edit it or turn it on.
@@ -70,9 +76,12 @@ export interface CreateLinkInput {
 	endsAt: number | null;
 	endedDestination: string | null;
 	password: string | null;
+	previewTitle: string | null;
+	previewDescription: string | null;
 }
 
-// null clears a device destination, a date, the destination after the end, or the password.
+// null clears a device destination, a date, the destination after the end, the password, or a
+// preview text.
 export interface UpdateLinkInput {
 	destination?: string;
 	title?: string | null;
@@ -82,6 +91,8 @@ export interface UpdateLinkInput {
 	endsAt?: number | null;
 	endedDestination?: string | null;
 	password?: string | null;
+	previewTitle?: string | null;
+	previewDescription?: string | null;
 	enabled?: boolean;
 }
 
@@ -90,6 +101,43 @@ export const linkAccessFields = ['startsAt', 'endsAt', 'endedDestination', 'pass
 
 export function setsLinkAccess(input: Partial<CreateLinkInput> | UpdateLinkInput): boolean {
 	return linkAccessFields.some((field) => input[field] !== undefined && input[field] !== null);
+}
+
+// The fields that need social previews on the plan. Setting one needs them; clearing one does
+// not. The image has its own route.
+export const linkPreviewFields = ['previewTitle', 'previewDescription'] as const;
+
+export function setsLinkPreview(input: Partial<CreateLinkInput> | UpdateLinkInput): boolean {
+	return linkPreviewFields.some((field) => input[field] !== undefined && input[field] !== null);
+}
+
+export const maxPreviewTitleLength = 200;
+export const maxPreviewDescriptionLength = 500;
+// An uploaded preview image: PNG, JPEG, or WebP, at most 5 MB. Card sites show 1200 x 630 best.
+export const maxPreviewImageBytes = 5 * 1024 * 1024;
+export const previewImageTypes = {
+	png: 'image/png',
+	jpg: 'image/jpeg',
+	webp: 'image/webp'
+} as const;
+export type PreviewImageExtension = keyof typeof previewImageTypes;
+// The stored name of an image: 16 random bytes in base64url and the extension.
+export const previewImageFilePattern = /^[A-Za-z0-9_-]{22}\.(?:png|jpg|webp)$/;
+
+// The type comes from the first bytes, never from the upload's content type.
+export function sniffPreviewImage(bytes: Uint8Array): PreviewImageExtension | null {
+	const starts = (...values: number[]) => values.every((value, index) => bytes[index] === value);
+	if (starts(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return 'png';
+	if (starts(0xff, 0xd8, 0xff)) return 'jpg';
+	if (starts(0x52, 0x49, 0x46, 0x46) && String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP')
+		return 'webp';
+	return null;
+}
+
+// The path of a link's preview image on its short-link host. A new image gets a new name, so
+// card sites that keep the old image fetch the new one.
+export function previewImagePath(slug: string, file: string): string {
+	return `/${slug}/preview/${file}`;
 }
 
 export type DeviceField = 'iosDestination' | 'androidDestination';
@@ -328,6 +376,24 @@ export function parseTitle(value: unknown): string | null {
 	return title;
 }
 
+// Trimmed; empty is none. Line breaks are refused like other control characters, because cards
+// show one paragraph.
+export function parsePreviewText(
+	value: unknown,
+	field: (typeof linkPreviewFields)[number]
+): string | null {
+	if (value === undefined || value === null) return null;
+	const label = field === 'previewTitle' ? 'title' : 'description';
+	const max = field === 'previewTitle' ? maxPreviewTitleLength : maxPreviewDescriptionLength;
+	if (typeof value !== 'string') throw new LinkInputError(field, `Enter the ${label} as text.`);
+	const text = value.trim();
+	if (!text) return null;
+	if (text.length > max)
+		throw new LinkInputError(field, `Use a ${label} of at most ${max} characters.`);
+	if (/\p{Cc}/u.test(text)) throw new LinkInputError(field, 'Remove control characters.');
+	return text;
+}
+
 export function parseCreateLink(value: unknown): CreateLinkInput {
 	const body = record(value);
 	onlyFields(body, [
@@ -340,7 +406,9 @@ export function parseCreateLink(value: unknown): CreateLinkInput {
 		'startsAt',
 		'endsAt',
 		'endedDestination',
-		'password'
+		'password',
+		'previewTitle',
+		'previewDescription'
 	]);
 	const domainId = body.domainId;
 	if (domainId !== undefined && domainId !== null && (typeof domainId !== 'string' || !domainId))
@@ -355,7 +423,9 @@ export function parseCreateLink(value: unknown): CreateLinkInput {
 		startsAt: parseLinkTime(body.startsAt, 'startsAt'),
 		endsAt: parseLinkTime(body.endsAt, 'endsAt'),
 		endedDestination: parseEndedDestination(body.endedDestination),
-		password: parseLinkPassword(body.password)
+		password: parseLinkPassword(body.password),
+		previewTitle: parsePreviewText(body.previewTitle, 'previewTitle'),
+		previewDescription: parsePreviewText(body.previewDescription, 'previewDescription')
 	};
 	checkLinkWindow(input);
 	return input;
@@ -372,6 +442,8 @@ export function parseUpdateLink(value: unknown): UpdateLinkInput {
 		'endsAt',
 		'endedDestination',
 		'password',
+		'previewTitle',
+		'previewDescription',
 		'enabled'
 	]);
 	const update: UpdateLinkInput = {};
@@ -384,6 +456,8 @@ export function parseUpdateLink(value: unknown): UpdateLinkInput {
 	if (body.endedDestination !== undefined)
 		update.endedDestination = parseEndedDestination(body.endedDestination);
 	if (body.password !== undefined) update.password = parseLinkPassword(body.password);
+	for (const field of linkPreviewFields)
+		if (body[field] !== undefined) update[field] = parsePreviewText(body[field], field);
 	if (body.enabled !== undefined) {
 		if (typeof body.enabled !== 'boolean')
 			throw new LinkInputError('enabled', 'Use true or false.');
@@ -392,7 +466,7 @@ export function parseUpdateLink(value: unknown): UpdateLinkInput {
 	if (Object.keys(update).length === 0)
 		throw new LinkInputError(
 			'body',
-			'Change the destination, title, a device destination, a date, the password, or the enabled state.'
+			'Change the destination, title, a device destination, a date, the password, a preview text, or the enabled state.'
 		);
 	if (update.startsAt !== undefined && update.endsAt !== undefined)
 		checkLinkWindow({

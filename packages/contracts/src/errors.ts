@@ -51,6 +51,9 @@ export const errorStatus = {
 	// The workspace's plan does not include start and end dates or passwords on links. Clearing
 	// them is always allowed.
 	LINK_ACCESS_REQUIRES_PLAN: 403,
+	// The workspace's plan does not include social previews on links. Clearing them is always
+	// allowed.
+	LINK_PREVIEW_REQUIRES_PLAN: 403,
 	LINK_BLOCKED: 409,
 	NOT_FOUND: 404,
 	METHOD_NOT_ALLOWED: 405,

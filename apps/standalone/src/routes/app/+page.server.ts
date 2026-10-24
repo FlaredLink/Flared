@@ -4,10 +4,12 @@ import type { AutomationPage } from '@flared/contracts/automations';
 import type { Domain } from '@flared/contracts/domains';
 import type { ListedLink } from '@flared/contracts/links';
 import {
+	changePreviewImage,
 	createLink,
 	fetchAutomations,
 	fetchDomains,
 	fetchLinks,
+	previewImageOf,
 	type ApiFailure
 } from '@flared/server/web/api';
 import { appRoutes } from '$lib/routes';
@@ -101,7 +103,9 @@ export const actions: Actions = {
 			androidDestination: form ? text(form, 'androidDestination') : '',
 			startsAt: form ? text(form, 'startsAt') : '',
 			endsAt: form ? text(form, 'endsAt') : '',
-			endedDestination: form ? text(form, 'endedDestination') : ''
+			endedDestination: form ? text(form, 'endedDestination') : '',
+			previewTitle: form ? text(form, 'previewTitle') : '',
+			previewDescription: form ? text(form, 'previewDescription') : ''
 		};
 		// Sent to the API only: a failed create never sends the password back to the page.
 		const password = form ? text(form, 'password') : '';
@@ -122,10 +126,31 @@ export const actions: Actions = {
 			field: null
 		};
 		if (!service || !key) return failure(unavailable);
+		// A wrong image file stops the form before the link exists.
+		const image = form ? await previewImageOf(form) : null;
+		if (image && !image.ok) return failure(image.failure);
 		try {
 			const result = await createLink(service, request.headers, key, { ...values, password });
 			if (!result.ok) return failure(result.failure);
-			return { created: result.link };
+			if (image?.upload.kind !== 'set') return { created: result.link };
+			const uploaded = await changePreviewImage(
+				service,
+				request.headers,
+				result.link.id,
+				image.upload
+			);
+			// The link exists: the same key replays it, so sending the form again retries the image.
+			if (!uploaded.ok)
+				return fail(uploaded.failure.status, {
+					error: {
+						code: uploaded.failure.code,
+						message: uploaded.failure.message,
+						field: uploaded.failure.field
+					},
+					values,
+					idempotencyKey: key
+				});
+			return { created: uploaded.link };
 		} catch {
 			console.error(JSON.stringify({ event: 'link_create_failed' }));
 			return failure(unavailable);
