@@ -114,9 +114,9 @@ describe('API tokens', () => {
 		const [listed] = await listTokens(identity(), 'user-1', 'tenant-1', Date.now());
 		expect(listed.id).toBe(created.token.id);
 		expect(listed.lastUsedAt).not.toBeNull();
-		expect(await verifyToken(auth(), identity(), `${created.secret.slice(0, -1)}x`)).toEqual({
-			status: 'invalid'
-		});
+		// Change the last character to one it is not, or the secret can stay the same.
+		const tampered = `${created.secret.slice(0, -1)}${created.secret.endsWith('x') ? 'y' : 'x'}`;
+		expect(await verifyToken(auth(), identity(), tampered)).toEqual({ status: 'invalid' });
 		expect(await verifyToken(auth(), identity(), 'not-a-token')).toEqual({ status: 'invalid' });
 	});
 
