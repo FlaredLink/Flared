@@ -39,7 +39,6 @@
 </script>
 
 <section class="consent" aria-labelledby="consent-heading">
-	<p class="eyebrow">Connect an app</p>
 	<h1 id="consent-heading">{request.client.name} wants to use your Flared account</h1>
 	<dl class="facts">
 		<div>
@@ -98,13 +97,10 @@
 	</p>
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
 	<div class="actions">
-		<Button
-			variant="primary"
-			size="lg"
-			disabled={pending !== null}
-			onclick={() => void decide(true)}>{pending === 'approve' ? 'Approving…' : 'Approve'}</Button
+		<Button variant="primary" disabled={pending !== null} onclick={() => void decide(true)}
+			>{pending === 'approve' ? 'Approving…' : 'Approve'}</Button
 		>
-		<Button size="lg" disabled={pending !== null} onclick={() => void decide(false)}
+		<Button disabled={pending !== null} onclick={() => void decide(false)}
 			>{pending === 'deny' ? 'Declining…' : 'Deny'}</Button
 		>
 	</div>
@@ -115,18 +111,13 @@
 		display: grid;
 		gap: 1rem;
 	}
-	.eyebrow {
-		color: var(--color-lead);
-		font-size: 0.8125rem;
-		font-weight: 600;
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-	}
 	h1 {
+		margin-bottom: 0.25rem;
 		color: var(--color-strong);
-		font-size: clamp(1.6rem, 4vw, 2.1rem);
-		font-weight: 800;
-		letter-spacing: -0.04em;
+		font-family: var(--font-display);
+		font-size: clamp(1.875rem, 2.6vw, 2.25rem);
+		font-weight: var(--weight-display);
+		letter-spacing: -0.03em;
 		line-height: 1.1;
 		overflow-wrap: anywhere;
 	}
@@ -139,14 +130,19 @@
 	.facts {
 		display: grid;
 		margin: 0;
-		border-top: 1px solid var(--color-rule);
+		padding: 0 1rem;
+		border-radius: var(--radius-md);
+		background: var(--color-paper);
+		box-shadow: var(--shadow-ring);
 	}
 	.facts div {
 		display: grid;
-		grid-template-columns: 7rem minmax(0, 1fr);
+		grid-template-columns: 6.5rem minmax(0, 1fr);
 		gap: 0.75rem;
-		padding: 0.7rem 0;
-		border-bottom: 1px solid var(--color-rule);
+		padding: 0.75rem 0;
+	}
+	.facts div + div {
+		border-top: 1px solid var(--color-rule-soft);
 	}
 	dt {
 		color: var(--color-lead);
@@ -173,15 +169,16 @@
 		gap: 0.6rem;
 	}
 	li :global(svg) {
+		flex: none;
 		margin-top: 0.15rem;
-		color: var(--color-positive);
+		color: var(--color-strong);
 	}
 	.note {
 		display: flex;
 		align-items: flex-start;
 		gap: 0.6rem;
-		color: var(--color-lead);
-		font-size: 0.875rem;
+		color: var(--color-subtle);
+		font-size: var(--text-md);
 	}
 	.note :global(svg) {
 		margin-top: 0.1rem;

@@ -123,6 +123,10 @@
 		font-size: 1.0625rem;
 		font-weight: 500;
 	}
+	/* Without an icon, the label takes the free column and the mark stays at the end. */
+	.row:not(:has(.icon)) {
+		grid-template-columns: minmax(0, 1fr) auto;
+	}
 	.row .mark {
 		position: static;
 		width: 1.75rem;
