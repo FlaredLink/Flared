@@ -1179,7 +1179,7 @@ describe('contracts', () => {
 			'email_owner'
 		]);
 		expect(JSON.stringify(document.components.schemas.LinkAutomation)).toContain('target_missing');
-		expect(mcpServerCard('https://api.example/mcp').tools).toEqual([
+		expect(mcpServerCard('https://api.example/mcp', 'https://app.example').tools).toEqual([
 			'list_links',
 			'get_link',
 			'get_link_qr',

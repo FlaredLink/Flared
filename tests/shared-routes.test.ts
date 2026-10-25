@@ -569,8 +569,19 @@ describe('discovery documents', () => {
 		const get = new Request(`${origin}/x`);
 		const metadata = await protectedResourceDocument(get, resource, origin).json();
 		expect(metadata).toMatchObject({ resource, authorization_servers: [origin] });
-		const card = await serverCardDocument(get, resource).json();
+		const card = await serverCardDocument(get, resource, origin).json();
 		expect(card).toMatchObject({ transport: { endpoint: resource } });
+		// On another host, the icons stay on the app origin that serves them.
+		const onApi = await serverCardDocument(
+			new Request('https://api.example/.well-known/mcp/server-card.json'),
+			resource,
+			origin
+		).json();
+		expect(onApi).toMatchObject({
+			serverInfo: {
+				icons: [{ src: `${origin}/apple-touch-icon.png` }, { src: `${origin}/favicon.svg` }]
+			}
+		});
 		const catalog = aiCatalogDocument(get, { origin, resource, displayName: 'Flared' });
 		expect(catalog.headers.get('access-control-allow-origin')).toBe('*');
 		const body = await catalog.json();
@@ -582,7 +593,11 @@ describe('discovery documents', () => {
 		const queries: unknown = (body as { entries: { representativeQueries: unknown }[] }).entries[0]
 			.representativeQueries;
 		expect(Array.isArray(queries) && queries.length >= 2 && queries.length <= 5).toBe(true);
-		const post = serverCardDocument(new Request(`${origin}/x`, { method: 'POST' }), resource);
+		const post = serverCardDocument(
+			new Request(`${origin}/x`, { method: 'POST' }),
+			resource,
+			origin
+		);
 		expect(post.status).toBe(405);
 	});
 });

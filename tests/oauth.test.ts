@@ -922,8 +922,12 @@ describe('MCP endpoint', () => {
 		const listed = (await (await mcp()(rpc(tokens.access_token, 'tools/list'))).json()) as {
 			result: { tools: { name: string }[] };
 		};
-		const card = mcpServerCard(resource);
+		const card = mcpServerCard(resource, origin);
 		expect(card.transport).toEqual({ type: 'streamable-http', endpoint: resource });
+		expect(card.serverInfo.icons.map((icon) => icon.src)).toEqual([
+			`${origin}/apple-touch-icon.png`,
+			`${origin}/favicon.svg`
+		]);
 		expect(card.tools).toEqual(listed.result.tools.map((tool) => tool.name));
 	});
 
@@ -1002,6 +1006,7 @@ describe('MCP endpoint', () => {
 		expect(initialized.status).toBe(200);
 		const text = await initialized.text();
 		expect(text).toContain('2025-11-25');
+		expect(text).toContain(`"src":"${origin}/apple-touch-icon.png"`);
 		const tools = await legacy({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
 		expect(tools.status).toBe(200);
 		expect(await tools.text()).toContain('create_link');

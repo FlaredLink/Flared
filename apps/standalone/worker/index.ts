@@ -377,7 +377,7 @@ async function appHost(
 	)
 		return protectedResourceDocument(request, site.resource, config.origin);
 	if (path === '/.well-known/mcp/server-card.json')
-		return serverCardDocument(request, site.resource);
+		return serverCardDocument(request, site.resource, config.origin);
 	if (path === '/.well-known/ai-catalog.json')
 		return aiCatalogDocument(request, {
 			origin: config.origin,

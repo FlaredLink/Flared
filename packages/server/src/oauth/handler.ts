@@ -108,9 +108,14 @@ export function apiProtectedResourceDocument(
 	return discoveryDocument(request, protectedResourceMetadata(apiResource, issuer, tokenScopes));
 }
 
-// /.well-known/mcp/server-card.json
-export function serverCardDocument(request: Request, resource: string): Response {
-	return discoveryDocument(request, mcpServerCard(resource));
+// /.well-known/mcp/server-card.json. appOrigin serves the icons; an edition may serve the card on
+// its API host too, which has no icons.
+export function serverCardDocument(
+	request: Request,
+	resource: string,
+	appOrigin: string
+): Response {
+	return discoveryDocument(request, mcpServerCard(resource, appOrigin));
 }
 
 // /.well-known/ai-catalog.json (ARD): the MCP server. The OpenAPI description is listed in

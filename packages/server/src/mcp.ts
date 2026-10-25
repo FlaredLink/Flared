@@ -82,10 +82,19 @@ export function protectedResourceMetadata(
 	};
 }
 
+// The app's mark for assistants that show the server, served by the app at its origin. Clients
+// must support PNG and may support SVG, so the PNG comes first.
+export function mcpIcons(appOrigin: string) {
+	return [
+		{ src: `${appOrigin}/apple-touch-icon.png`, mimeType: 'image/png', sizes: ['180x180'] },
+		{ src: `${appOrigin}/favicon.svg`, mimeType: 'image/svg+xml', sizes: ['any'] }
+	];
+}
+
 // An MCP server card (SEP-1649) for discovery. The format is a draft and may change.
-export function mcpServerCard(resource: string) {
+export function mcpServerCard(resource: string, appOrigin: string) {
 	return {
-		serverInfo: { name: 'flared', title: 'Flared', version: '1.0.0' },
+		serverInfo: { name: 'flared', title: 'Flared', version: '1.0.0', icons: mcpIcons(appOrigin) },
 		description: 'Create, edit, and measure Flared short links.',
 		transport: { type: 'streamable-http', endpoint: resource },
 		protocolVersions: ['2026-07-28', '2025-11-25'],
@@ -510,8 +519,18 @@ function activeDomain(domains: Domain[], hostname: string, field: string): Domai
 	return match;
 }
 
-function createTools(client: FlaredClient, grantKey: string, now: () => number): McpServer {
-	const server = new McpServer({ name: 'flared', title: 'Flared', version: '1.0.0' });
+function createTools(
+	client: FlaredClient,
+	grantKey: string,
+	now: () => number,
+	appOrigin: string
+): McpServer {
+	const server = new McpServer({
+		name: 'flared',
+		title: 'Flared',
+		version: '1.0.0',
+		icons: mcpIcons(appOrigin)
+	});
 
 	async function findLink(idOrSlug: string): Promise<Link> {
 		try {
@@ -1174,10 +1193,13 @@ export function createMcpEndpoint(options: McpEndpointOptions) {
 			retries: 0,
 			fetch: async (input, init) => api.fetch(new Request(input, init))
 		});
-		const handler = createMcpHandler(() => createTools(client, grantKey, now), {
-			responseMode: 'json',
-			legacy: 'stateless'
-		});
+		const handler = createMcpHandler(
+			() => createTools(client, grantKey, now, new URL(options.issuer).origin),
+			{
+				responseMode: 'json',
+				legacy: 'stateless'
+			}
+		);
 		const headers = new Headers(request.headers);
 		headers.delete('authorization');
 		headers.delete('cookie');
