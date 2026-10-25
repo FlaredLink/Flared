@@ -456,7 +456,9 @@ export async function deleteTenantCredentials(db: D1Database, tenantId: string):
 			`DELETE FROM "apikey" WHERE json_extract("metadata", '$.tenantId') = ?`,
 			'DELETE FROM "oauthAccessToken" WHERE "referenceId" = ?',
 			'DELETE FROM "oauthRefreshToken" WHERE "referenceId" = ?',
-			'DELETE FROM "oauthConsent" WHERE "referenceId" = ?'
+			'DELETE FROM "oauthConsent" WHERE "referenceId" = ?',
+			'DELETE FROM oauth_grant_workspaces WHERE grant_tenant_id = ?',
+			'DELETE FROM oauth_grant_workspaces WHERE tenant_id = ?'
 		].map((statement) => db.prepare(statement).bind(tenantId))
 	);
 }

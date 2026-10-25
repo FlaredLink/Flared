@@ -51,7 +51,8 @@ import {
 	type SocialNetwork
 } from '@flared/contracts/pages';
 import { tokenScopes, type TokenScope } from '@flared/contracts/tokens';
-import { countMcpCall, findAccessToken } from '@flared/data/oauth';
+import { countMcpCall, findAccessToken, listGrantWorkspaces } from '@flared/data/oauth';
+import { listWorkspaces } from '@flared/data/tenancy';
 import { defaultImportItemsPerRequest, type ApiPrincipal } from './api';
 import { accessTokenPrefix, hashOAuthToken } from './oauth/provider';
 import { resolveTenant } from './tenancy';
@@ -138,6 +139,7 @@ const toolScopes: Record<string, TokenScope> = {
 	get_link_qr: 'links:read',
 	get_link_analytics: 'analytics:read',
 	get_usage: 'usage:read',
+	list_workspaces: 'links:read',
 	list_domains: 'domains:read',
 	export_links: 'links:read',
 	list_automations: 'links:read',
@@ -674,11 +676,33 @@ const pageOutput = pageSummaryOutput.extend({
 	blocks: z.array(pageBlockOutput)
 });
 
+// A workspace the grant can act in: its own, or one that the person added at approval.
+export interface GrantWorkspace {
+	id: string;
+	name: string;
+	role: 'owner' | 'member';
+}
+
+// Every tool takes the workspace of the call. The endpoint reads it and takes it out of the
+// arguments before the tool runs, so no tool handles it.
+const workspaceInput = z
+	.string()
+	.min(1)
+	.max(100)
+	.optional()
+	.describe(
+		'The workspace name or ID from list_workspaces. Needed only when this connection can use several workspaces; if it is missing then, ask the user which workspace to use.'
+	);
+function inWorkspace<Shape extends z.ZodRawShape>(schema: z.ZodObject<Shape>) {
+	return schema.extend({ workspace: workspaceInput });
+}
+
 function createTools(
 	client: FlaredClient,
 	grantKey: string,
 	now: () => number,
-	appOrigin: string
+	appOrigin: string,
+	workspaces: () => Promise<GrantWorkspace[]>
 ): McpServer {
 	const server = new McpServer({
 		name: 'flared',
@@ -733,15 +757,17 @@ function createTools(
 			title: 'List links',
 			description:
 				'Lists short links in the workspace, newest first, with clicks in the last 30 days.',
-			inputSchema: z.object({
-				search: z
-					.string()
-					.max(100)
-					.optional()
-					.describe('Text to find in the slug, title, or destination.'),
-				limit: z.number().int().min(1).max(100).optional(),
-				cursor: z.string().max(500).optional().describe('nextCursor from the previous page.')
-			}),
+			inputSchema: inWorkspace(
+				z.object({
+					search: z
+						.string()
+						.max(100)
+						.optional()
+						.describe('Text to find in the slug, title, or destination.'),
+					limit: z.number().int().min(1).max(100).optional(),
+					cursor: z.string().max(500).optional().describe('nextCursor from the previous page.')
+				})
+			),
 			outputSchema: z.looseObject({
 				links: z.array(linkOutput.extend({ clicksLast30Days: z.number().nullable() })),
 				nextCursor: z.string().nullable()
@@ -771,7 +797,9 @@ function createTools(
 		{
 			title: 'Get a link',
 			description: 'Gets one short link by its ID or slug.',
-			inputSchema: z.object({ link: z.string().min(1).max(100).describe('The link ID or slug.') }),
+			inputSchema: inWorkspace(
+				z.object({ link: z.string().min(1).max(100).describe('The link ID or slug.') })
+			),
 			outputSchema: z.looseObject({ link: linkOutput }),
 			annotations: {
 				title: 'Get a link',
@@ -788,7 +816,9 @@ function createTools(
 		{
 			title: 'Get a link QR code',
 			description: 'Gets a PNG QR code of a short URL, by link ID or slug.',
-			inputSchema: z.object({ link: z.string().min(1).max(100).describe('The link ID or slug.') }),
+			inputSchema: inWorkspace(
+				z.object({ link: z.string().min(1).max(100).describe('The link ID or slug.') })
+			),
 			outputSchema: z.looseObject({
 				shortUrl: z.string(),
 				mimeType: z.literal('image/png'),
@@ -820,19 +850,21 @@ function createTools(
 			title: 'Get link analytics',
 			description:
 				'Gets clicks for one link by day, country, device, referrer, browser, and operating system. The range is in UTC days and defaults to the last 30 days.',
-			inputSchema: z.object({
-				link: z.string().min(1).max(100).describe('The link ID or slug.'),
-				from: z
-					.string()
-					.regex(/^\d{4}-\d{2}-\d{2}$/)
-					.optional()
-					.describe('First day, YYYY-MM-DD.'),
-				to: z
-					.string()
-					.regex(/^\d{4}-\d{2}-\d{2}$/)
-					.optional()
-					.describe('Last day, YYYY-MM-DD.')
-			}),
+			inputSchema: inWorkspace(
+				z.object({
+					link: z.string().min(1).max(100).describe('The link ID or slug.'),
+					from: z
+						.string()
+						.regex(/^\d{4}-\d{2}-\d{2}$/)
+						.optional()
+						.describe('First day, YYYY-MM-DD.'),
+					to: z
+						.string()
+						.regex(/^\d{4}-\d{2}-\d{2}$/)
+						.optional()
+						.describe('Last day, YYYY-MM-DD.')
+				})
+			),
 			outputSchema: z.looseObject({
 				analytics: z.looseObject({
 					linkId: z.string(),
@@ -868,7 +900,7 @@ function createTools(
 			title: 'Get usage',
 			description:
 				'Gets usage against the limits of the workspace this app may use, with its name: clicks recorded this calendar month (UTC), clicks not recorded after the allowance was full, active links, custom domains, days of history, and a warning for each limit at 80% or 100%.',
-			inputSchema: z.object({}),
+			inputSchema: inWorkspace(z.object({})),
 			outputSchema: z.looseObject({
 				usage: z.looseObject({
 					workspace: z.looseObject({ id: z.string(), name: z.string() }),
@@ -900,12 +932,34 @@ function createTools(
 	);
 
 	server.registerTool(
+		'list_workspaces',
+		{
+			title: 'List workspaces',
+			description:
+				'Lists the workspaces this connection can use, with each ID, name, and your role. When there are several, every other tool needs the workspace argument: ask the user which workspace to use.',
+			inputSchema: z.object({}),
+			outputSchema: z.looseObject({
+				workspaces: z.array(
+					z.looseObject({ id: z.string(), name: z.string(), role: z.enum(['owner', 'member']) })
+				)
+			}),
+			annotations: {
+				title: 'List workspaces',
+				readOnlyHint: true,
+				destructiveHint: false,
+				openWorldHint: false
+			}
+		},
+		() => attempt(async () => ({ workspaces: await workspaces() }))
+	);
+
+	server.registerTool(
 		'list_domains',
 		{
 			title: 'List domains',
 			description:
 				'Lists the domains links can use, with their status and how to connect each one. Only active domains serve links.',
-			inputSchema: z.object({}),
+			inputSchema: inWorkspace(z.object({})),
 			outputSchema: z.looseObject({
 				domains: z.array(domainOutput),
 				used: z.number(),
@@ -931,10 +985,12 @@ function createTools(
 			title: 'Export links',
 			description:
 				"Exports every link in the workspace, on and off, newest first, 50 per page by default and up to 100. Each result has the link's status and an item with the fields of import_links: send items to import_links three at a time to move links. Imported links start on; status is not copied. A link with hasPassword true needs a new password in its item: ask the person for it. No analytics. Pass nextCursor for the next page.",
-			inputSchema: z.object({
-				limit: z.number().int().min(1).max(maxExportPageSize).optional(),
-				cursor: z.string().max(500).optional().describe('nextCursor from the previous page.')
-			}),
+			inputSchema: inWorkspace(
+				z.object({
+					limit: z.number().int().min(1).max(maxExportPageSize).optional(),
+					cursor: z.string().max(500).optional().describe('nextCursor from the previous page.')
+				})
+			),
 			outputSchema: z.looseObject({
 				links: z.array(exportedLinkOutput),
 				nextCursor: z.string().nullable()
@@ -969,9 +1025,11 @@ function createTools(
 			title: 'List automations',
 			description:
 				"Lists the workspace's automation templates (a trigger, then actions) and how many links each is on. With link, lists the templates applied to that link with their state: waiting, done, failed, or skipped.",
-			inputSchema: z.object({
-				link: z.string().min(1).max(100).optional().describe('A link ID or slug.')
-			}),
+			inputSchema: inWorkspace(
+				z.object({
+					link: z.string().min(1).max(100).optional().describe('A link ID or slug.')
+				})
+			),
 			outputSchema: z.looseObject({
 				automations: z.array(z.union([automationOutput, linkAutomationOutput])),
 				used: z.number().optional(),
@@ -1006,9 +1064,11 @@ function createTools(
 			title: 'List pages',
 			description:
 				'Lists the link pages in the workspace, newest first: a page shows a profile and buttons that open short links, at its address on the page host or at the root of a workspace domain.',
-			inputSchema: z.object({
-				cursor: z.string().max(500).optional().describe('nextCursor from the previous page.')
-			}),
+			inputSchema: inWorkspace(
+				z.object({
+					cursor: z.string().max(500).optional().describe('nextCursor from the previous page.')
+				})
+			),
 			outputSchema: z.looseObject({
 				pages: z.array(pageSummaryOutput),
 				nextCursor: z.string().nullable()
@@ -1033,9 +1093,11 @@ function createTools(
 			title: 'Get a page',
 			description:
 				"Gets one link page by its ID or handle, with its theme and every block. A block with startsAt or endsAt shows only between those times. A block with visible false does not show: its link is off or blocked, or a payment link no longer opens the provider's checkout.",
-			inputSchema: z.object({
-				page: z.string().min(1).max(100).describe('The page ID or handle.')
-			}),
+			inputSchema: inWorkspace(
+				z.object({
+					page: z.string().min(1).max(100).describe('The page ID or handle.')
+				})
+			),
 			outputSchema: z.looseObject({ page: pageOutput }),
 			annotations: {
 				title: 'Get a page',
@@ -1053,7 +1115,7 @@ function createTools(
 			title: 'Create a link',
 			description:
 				'Creates a public short link to a destination URL. Optional utm values are added to the destination; optional iPhone and Android destinations, such as app links, receive visitors on those devices. The link can also open and stop at set times, ask visitors for a password, and carry its own title and description for link cards, on plans that include them. The same request repeated within five minutes returns the first link.',
-			inputSchema: createLinkInput,
+			inputSchema: inWorkspace(createLinkInput),
 			outputSchema: z.looseObject({ link: linkOutput, replayed: z.boolean() }),
 			annotations: {
 				title: 'Create a link',
@@ -1089,14 +1151,16 @@ function createTools(
 		{
 			title: 'Import links',
 			description: `Creates up to ${mcpImportItemsPerCall} short links in one call; each item takes the fields of create_link. First call it with dryRun true and show the person the result: a dry run checks every item and creates nothing. Then call it again with dryRun false and the same items. Each item is created or fails on its own. The same call repeated within five minutes returns the first results and creates nothing twice. For more links, send several calls of up to ${mcpImportItemsPerCall} items.`,
-			inputSchema: z.object({
-				dryRun: z
-					.boolean()
-					.describe(
-						'true checks the items and creates nothing; use it first. false creates the links.'
-					),
-				items: z.array(createLinkInput).min(1).max(mcpImportItemsPerCall)
-			}),
+			inputSchema: inWorkspace(
+				z.object({
+					dryRun: z
+						.boolean()
+						.describe(
+							'true checks the items and creates nothing; use it first. false creates the links.'
+						),
+					items: z.array(createLinkInput).min(1).max(mcpImportItemsPerCall)
+				})
+			),
 			outputSchema: importOutput,
 			annotations: {
 				title: 'Import links',
@@ -1142,27 +1206,31 @@ function createTools(
 			title: 'Update a link',
 			description:
 				'Changes the destination, title, UTM parameters, iPhone and Android destinations, start and end times, password, or link card title and description of a link. The short URL stays the same. A link card image is uploaded in the Flared app or with the API.',
-			inputSchema: z.object({
-				link: z.string().min(1).max(100).describe('The link ID or slug.'),
-				destination: z.string().min(1).max(4096).optional(),
-				title: z.string().max(200).nullable().optional().describe('null removes the title.'),
-				iosDestination: deviceDestination('iPhone', ' null removes it.').nullable().optional(),
-				androidDestination: deviceDestination('Android', ' null removes it.').nullable().optional(),
-				startsAt: linkTime('opens').nullable().optional().describe('null removes the start.'),
-				endsAt: linkTime('stops')
-					.nullable()
-					.optional()
-					.describe('null removes the end and the destination after it.'),
-				endedDestination: endedDestination.nullable().optional(),
-				password: linkPassword.nullable().optional().describe('null removes the password.'),
-				previewTitle: previewTitle.nullable().optional(),
-				previewDescription: previewDescription.nullable().optional(),
-				utm: utmInput
-					.optional()
-					.describe(
-						'Set on the new destination, or on the current one when destination is absent. An empty value removes the parameter.'
-					)
-			}),
+			inputSchema: inWorkspace(
+				z.object({
+					link: z.string().min(1).max(100).describe('The link ID or slug.'),
+					destination: z.string().min(1).max(4096).optional(),
+					title: z.string().max(200).nullable().optional().describe('null removes the title.'),
+					iosDestination: deviceDestination('iPhone', ' null removes it.').nullable().optional(),
+					androidDestination: deviceDestination('Android', ' null removes it.')
+						.nullable()
+						.optional(),
+					startsAt: linkTime('opens').nullable().optional().describe('null removes the start.'),
+					endsAt: linkTime('stops')
+						.nullable()
+						.optional()
+						.describe('null removes the end and the destination after it.'),
+					endedDestination: endedDestination.nullable().optional(),
+					password: linkPassword.nullable().optional().describe('null removes the password.'),
+					previewTitle: previewTitle.nullable().optional(),
+					previewDescription: previewDescription.nullable().optional(),
+					utm: utmInput
+						.optional()
+						.describe(
+							'Set on the new destination, or on the current one when destination is absent. An empty value removes the parameter.'
+						)
+				})
+			),
 			outputSchema: z.looseObject({ link: linkOutput }),
 			annotations: {
 				title: 'Update a link',
@@ -1193,9 +1261,11 @@ function createTools(
 				description: enabled
 					? 'Turns a link back on, so its short URL redirects again.'
 					: 'Turns a link off, so its short URL stops redirecting. It can be turned on again.',
-				inputSchema: z.object({
-					link: z.string().min(1).max(100).describe('The link ID or slug.')
-				}),
+				inputSchema: inWorkspace(
+					z.object({
+						link: z.string().min(1).max(100).describe('The link ID or slug.')
+					})
+				),
 				outputSchema: z.looseObject({ link: linkOutput }),
 				annotations: {
 					title: enabled ? 'Turn on a link' : 'Turn off a link',
@@ -1218,21 +1288,23 @@ function createTools(
 			title: 'Apply an automation',
 			description:
 				'Applies an automation template to links. Each applied template runs once when its trigger is met; applying again re-arms one that already ran. A link keeps up to 5. Templates are created by the workspace owner in the Flared app.',
-			inputSchema: z.object({
-				automationId,
-				linkIds: z
-					.array(z.string().min(1).max(maxAutomationIdLength))
-					.min(1)
-					.max(maxApplyLinks)
-					.describe('Link IDs from list_links or get_link.'),
-				endsAt: z
-					.string()
-					.max(40)
-					.optional()
-					.describe(
-						'For an end date template only, and required by it: when it runs, in ISO 8601 with an offset, such as 2026-11-01T09:00:00Z.'
-					)
-			}),
+			inputSchema: inWorkspace(
+				z.object({
+					automationId,
+					linkIds: z
+						.array(z.string().min(1).max(maxAutomationIdLength))
+						.min(1)
+						.max(maxApplyLinks)
+						.describe('Link IDs from list_links or get_link.'),
+					endsAt: z
+						.string()
+						.max(40)
+						.optional()
+						.describe(
+							'For an end date template only, and required by it: when it runs, in ISO 8601 with an offset, such as 2026-11-01T09:00:00Z.'
+						)
+				})
+			),
 			outputSchema: z.looseObject({
 				results: z.array(
 					z.looseObject({
@@ -1269,10 +1341,12 @@ function createTools(
 			title: 'Remove an automation',
 			description:
 				'Takes an automation template off a link, by link ID or slug, so it does not run there. The template stays in the workspace.',
-			inputSchema: z.object({
-				automationId,
-				link: z.string().min(1).max(100).describe('The link ID or slug.')
-			}),
+			inputSchema: inWorkspace(
+				z.object({
+					automationId,
+					link: z.string().min(1).max(100).describe('The link ID or slug.')
+				})
+			),
 			outputSchema: z.looseObject({ removed: z.boolean() }),
 			annotations: {
 				title: 'Remove an automation',
@@ -1303,24 +1377,26 @@ function createTools(
 			title: 'Create a page',
 			description:
 				'Creates a public link page with a handle, a title, an optional bio, a theme, and blocks. A button or payment block opens a link of the workspace: create the link with create_link first and pass its ID. Images are added in the Flared app or with the API. The result has the page address (url).',
-			inputSchema: z.object({
-				handle: z
-					.string()
-					.min(3)
-					.max(30)
-					.describe(
-						'The page address: 3 to 30 lowercase letters, digits, and single hyphens, not at the start or end.'
-					),
-				title: z
-					.string()
-					.min(1)
-					.max(maxPageTitleLength)
-					.describe('The name at the top of the page.'),
-				bio: z.string().max(maxPageBioLength).optional(),
-				theme: pageThemeInput.optional(),
-				blocks: pageBlocksInput.optional(),
-				domain: pageDomain.optional()
-			}),
+			inputSchema: inWorkspace(
+				z.object({
+					handle: z
+						.string()
+						.min(3)
+						.max(30)
+						.describe(
+							'The page address: 3 to 30 lowercase letters, digits, and single hyphens, not at the start or end.'
+						),
+					title: z
+						.string()
+						.min(1)
+						.max(maxPageTitleLength)
+						.describe('The name at the top of the page.'),
+					bio: z.string().max(maxPageBioLength).optional(),
+					theme: pageThemeInput.optional(),
+					blocks: pageBlocksInput.optional(),
+					domain: pageDomain.optional()
+				})
+			),
 			outputSchema: z.looseObject({ page: pageOutput }),
 			annotations: {
 				title: 'Create a page',
@@ -1348,24 +1424,26 @@ function createTools(
 			title: 'Update a page',
 			description:
 				'Changes the handle, title, bio, theme, blocks, or domain of a link page, or turns it off or on. blocks replaces the whole list: call get_page first and send every block to keep, in order. After a handle change, the old address forwards to the new one for 90 days.',
-			inputSchema: z.object({
-				page: z.string().min(1).max(100).describe('The page ID or handle.'),
-				handle: z.string().min(3).max(30).optional().describe('A new page address.'),
-				title: z.string().min(1).max(maxPageTitleLength).optional(),
-				bio: z
-					.string()
-					.max(maxPageBioLength)
-					.nullable()
-					.optional()
-					.describe('null removes the bio.'),
-				theme: pageThemeInput.optional(),
-				blocks: pageBlocksInput.optional(),
-				domain: pageDomain.nullable().optional().describe('null takes the page off the domain.'),
-				enabled: z
-					.boolean()
-					.optional()
-					.describe('false takes the page offline; true shows it again.')
-			}),
+			inputSchema: inWorkspace(
+				z.object({
+					page: z.string().min(1).max(100).describe('The page ID or handle.'),
+					handle: z.string().min(3).max(30).optional().describe('A new page address.'),
+					title: z.string().min(1).max(maxPageTitleLength).optional(),
+					bio: z
+						.string()
+						.max(maxPageBioLength)
+						.nullable()
+						.optional()
+						.describe('null removes the bio.'),
+					theme: pageThemeInput.optional(),
+					blocks: pageBlocksInput.optional(),
+					domain: pageDomain.nullable().optional().describe('null takes the page off the domain.'),
+					enabled: z
+						.boolean()
+						.optional()
+						.describe('false takes the page offline; true shows it again.')
+				})
+			),
 			outputSchema: z.looseObject({ page: pageOutput }),
 			annotations: {
 				title: 'Update a page',
@@ -1409,6 +1487,65 @@ function calledTool(body: unknown): string | null {
 	if (message.method !== 'tools/call') return null;
 	const params = message.params as Record<string, unknown> | null;
 	return typeof params?.name === 'string' ? params.name : null;
+}
+
+// The arguments object of a tools/call request, or null.
+function toolArguments(body: unknown): Record<string, unknown> | null {
+	if (calledTool(body) === null) return null;
+	const params = (body as Record<string, unknown>).params as Record<string, unknown>;
+	const args = params.arguments;
+	return typeof args === 'object' && args !== null && !Array.isArray(args)
+		? (args as Record<string, unknown>)
+		: null;
+}
+
+// The grant's workspaces that the person can still use, its own first.
+async function grantWorkspaces(
+	db: D1Database,
+	grant: { clientId: string; userId: string; tenantId: string }
+): Promise<GrantWorkspace[]> {
+	const [added, memberships] = await Promise.all([
+		listGrantWorkspaces(db, grant.clientId, grant.userId, grant.tenantId),
+		listWorkspaces(db, grant.userId)
+	]);
+	return [grant.tenantId, ...added].flatMap((id) => {
+		const row = memberships.find((item) => item.id === id && item.status === 'active');
+		return row ? [{ id: row.id, name: row.name, role: row.role }] : [];
+	});
+}
+
+const workspaceList = (workspaces: readonly GrantWorkspace[]) =>
+	workspaces.map((workspace) => `${workspace.name} (ID ${workspace.id})`).join(', ');
+
+// The workspace that a call names, by ID or by name, or a message for the assistant to act on.
+function pickWorkspace(
+	workspaces: readonly GrantWorkspace[],
+	requested: unknown,
+	tool: string
+): GrantWorkspace | string {
+	if (requested === undefined) {
+		if (workspaces.length === 1) return workspaces[0];
+		return `This connection can use several Flared workspaces: ${workspaceList(workspaces)}. Ask the user which workspace to use, then call ${tool} again with the workspace argument set to its name or ID.`;
+	}
+	if (typeof requested === 'string') {
+		const byId = workspaces.find((workspace) => workspace.id === requested);
+		if (byId) return byId;
+		const wanted = requested.trim().toLowerCase();
+		const byName = workspaces.filter((workspace) => workspace.name.toLowerCase() === wanted);
+		if (byName.length === 1) return byName[0];
+		if (byName.length > 1)
+			return `Several workspaces are named ${requested}: ${workspaceList(byName)}. Call ${tool} again with the workspace ID.`;
+	}
+	return `This connection cannot use the workspace ${String(requested)}. It can use: ${workspaceList(workspaces)}. Ask the user which workspace to use.`;
+}
+
+// A tool result that the assistant reads as a failed call, so it can ask the user and try again.
+function toolError(body: unknown, text: string): Response {
+	const id = (body as Record<string, unknown>).id ?? null;
+	return Response.json(
+		{ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }], isError: true } },
+		{ headers: { 'cache-control': 'no-store' } }
+	);
 }
 
 export function createMcpEndpoint(options: McpEndpointOptions) {
@@ -1474,20 +1611,42 @@ export function createMcpEndpoint(options: McpEndpointOptions) {
 			});
 		}
 
-		const grantKey = `${stored.clientId}\u0000${stored.userId}\u0000${stored.tenantId}`;
-		const budget = await countMcpCall(options.identity, grantKey, time, mcpCallsPerMinute);
+		// The workspace of this call. A grant with one workspace needs no argument; with several,
+		// the assistant names one, or the call fails with the names so it can ask the user.
+		const tool = calledTool(body);
+		const args = toolArguments(body);
+		let workspaces: Promise<GrantWorkspace[]> | null = null;
+		const loadWorkspaces = () => (workspaces ??= grantWorkspaces(options.identity, stored));
+		let tenantId = stored.tenantId;
+		let forward: ArrayBuffer | string = bytes;
+		if (tool && tool in toolScopes && tool !== 'list_workspaces') {
+			if (stored.addsWorkspaces || args?.workspace !== undefined) {
+				const picked = pickWorkspace(await loadWorkspaces(), args?.workspace, tool);
+				if (typeof picked === 'string') return toolError(body, picked);
+				tenantId = picked.id;
+			}
+			if (args && 'workspace' in args) {
+				delete args.workspace;
+				forward = JSON.stringify(body);
+			}
+		}
+
+		// Repeat-call keys belong to the workspace of the call; the call budget to the whole grant,
+		// so more workspaces do not raise it.
+		const grantKey = `${stored.clientId}\u0000${stored.userId}\u0000${tenantId}`;
+		const budgetKey = `${stored.clientId}\u0000${stored.userId}\u0000${stored.tenantId}`;
+		const budget = await countMcpCall(options.identity, budgetKey, time, mcpCallsPerMinute);
 		if (!budget.allowed)
 			return jsonRpcError(429, 'Too many requests. Try again soon.', {
 				'retry-after': String(budget.retryAfterSeconds)
 			});
 
 		// Only the tools this endpoint serves; a client can name anything.
-		const tool = calledTool(body);
 		if (tool && tool in toolScopes)
 			await recordProductEvent(options.events, {
 				type: 'mcp_tool_called',
 				userId: stored.userId,
-				tenantId: stored.tenantId,
+				tenantId,
 				clientId: stored.clientId,
 				tool
 			});
@@ -1495,7 +1654,7 @@ export function createMcpEndpoint(options: McpEndpointOptions) {
 		const api = options.api({
 			kind: 'oauth',
 			userId: stored.userId,
-			tenantId: stored.tenantId,
+			tenantId,
 			scopes,
 			clientId: stored.clientId,
 			channel: 'mcp'
@@ -1507,7 +1666,7 @@ export function createMcpEndpoint(options: McpEndpointOptions) {
 			fetch: async (input, init) => api.fetch(new Request(input, init))
 		});
 		const handler = createMcpHandler(
-			() => createTools(client, grantKey, now, new URL(options.issuer).origin),
+			() => createTools(client, grantKey, now, new URL(options.issuer).origin, loadWorkspaces),
 			{
 				responseMode: 'json',
 				legacy: 'stateless'
@@ -1517,7 +1676,7 @@ export function createMcpEndpoint(options: McpEndpointOptions) {
 		headers.delete('authorization');
 		headers.delete('cookie');
 		const response = await handler.fetch(
-			new Request(request.url, { method: 'POST', headers, body: bytes })
+			new Request(request.url, { method: 'POST', headers, body: forward })
 		);
 		const result = new Response(response.body, response);
 		result.headers.set('cache-control', 'no-store');

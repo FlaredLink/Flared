@@ -1185,6 +1185,7 @@ describe('contracts', () => {
 			'get_link_qr',
 			'get_link_analytics',
 			'get_usage',
+			'list_workspaces',
 			'list_domains',
 			'export_links',
 			'list_automations',

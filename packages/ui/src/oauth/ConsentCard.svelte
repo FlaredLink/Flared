@@ -18,17 +18,39 @@
 	let { request, oauthQuery, account }: Props = $props();
 	// The choice starts at the session's active workspace and keeps what the person picks.
 	// svelte-ignore state_referenced_locally
-	let workspaceId = $state(request.selectedWorkspaceId);
-	const workspaceName = $derived(
-		request.workspaces.find((workspace) => workspace.id === workspaceId)?.name ?? ''
+	let chosen = $state<string[]>([request.selectedWorkspaceId]);
+	// In page order, with the session's workspace first: the grant is made in the first one.
+	const approved = $derived(
+		request.workspaces
+			.filter((workspace) => chosen.includes(workspace.id))
+			.sort(
+				(a, b) =>
+					Number(b.id === request.selectedWorkspaceId) -
+					Number(a.id === request.selectedWorkspaceId)
+			)
 	);
+	const workspaceNames = $derived.by(() => {
+		const names = approved.map((workspace) => workspace.name);
+		return names.length < 3
+			? names.join(' and ')
+			: `${names.slice(0, -1).join(', ')}, and ${names.at(-1)}`;
+	});
+
+	function choose(id: string) {
+		if (!request.multipleWorkspaces) chosen = [id];
+		else chosen = chosen.includes(id) ? chosen.filter((item) => item !== id) : [...chosen, id];
+	}
 	let pending = $state<'approve' | 'deny' | null>(null);
 	let error = $state('');
 
 	async function decide(accept: boolean) {
 		pending = accept ? 'approve' : 'deny';
 		error = '';
-		const result = await decideConsent(oauthQuery, accept, workspaceId);
+		const result = await decideConsent(
+			oauthQuery,
+			accept,
+			approved.map((workspace) => workspace.id)
+		);
 		if (!result.ok) {
 			pending = null;
 			error = consentErrorMessage(result.code);
@@ -48,7 +70,7 @@
 		{#if request.workspaces.length === 1}
 			<div>
 				<dt>Workspace</dt>
-				<dd>{workspaceName}</dd>
+				<dd>{workspaceNames}</dd>
 			</div>
 		{/if}
 		{#if request.client.uri}
@@ -69,15 +91,19 @@
 	{/if}
 	{#if request.workspaces.length > 1}
 		<fieldset class="workspaces" disabled={pending !== null}>
-			<legend><h2>Workspace it can use</h2></legend>
+			<legend
+				><h2>{request.multipleWorkspaces ? 'Workspaces it can use' : 'Workspace it can use'}</h2>
+				{#if request.multipleWorkspaces}<p class="hint">Choose one or more.</p>{/if}</legend
+			>
 			{#each request.workspaces as workspace (workspace.id)}
 				<ChoiceCard
 					name="workspace"
 					value={workspace.id}
-					checked={workspace.id === workspaceId}
+					checked={chosen.includes(workspace.id)}
 					label={workspace.name}
 					layout="row"
-					onselect={(id) => (workspaceId = id)}
+					multiple={request.multipleWorkspaces}
+					onselect={choose}
 				/>
 			{/each}
 		</fieldset>
@@ -91,14 +117,18 @@
 			<li><Glyph name="check" size={18} />Stay connected until you remove it</li>
 		{/if}
 	</ul>
-	<p class="note">
-		<Glyph name="lock" size={18} />It can do this only in {workspaceName}. You can disconnect it at
-		any time.
-	</p>
+	{#if approved.length > 0}
+		<p class="note">
+			<Glyph name="lock" size={18} />It can do this only in {workspaceNames}. You can disconnect it
+			at any time.
+		</p>
+	{/if}
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
 	<div class="actions">
-		<Button variant="primary" disabled={pending !== null} onclick={() => void decide(true)}
-			>{pending === 'approve' ? 'Approving…' : 'Approve'}</Button
+		<Button
+			variant="primary"
+			disabled={pending !== null || approved.length === 0}
+			onclick={() => void decide(true)}>{pending === 'approve' ? 'Approving…' : 'Approve'}</Button
 		>
 		<Button disabled={pending !== null} onclick={() => void decide(false)}
 			>{pending === 'deny' ? 'Declining…' : 'Deny'}</Button
@@ -194,6 +224,11 @@
 	.workspaces legend {
 		padding: 0;
 		margin-bottom: 0.5rem;
+	}
+	.hint {
+		margin-top: 0.15rem;
+		color: var(--color-subtle);
+		font-size: var(--text-md);
 	}
 	.workspaces :global(.choice) {
 		min-height: 3.25rem;

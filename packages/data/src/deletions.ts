@@ -76,7 +76,9 @@ const tenantCredentials = [
 	`DELETE FROM "apikey" WHERE json_extract("metadata", '$.tenantId') = ?1`,
 	'DELETE FROM "oauthAccessToken" WHERE "referenceId" = ?1',
 	'DELETE FROM "oauthRefreshToken" WHERE "referenceId" = ?1',
-	'DELETE FROM "oauthConsent" WHERE "referenceId" = ?1'
+	'DELETE FROM "oauthConsent" WHERE "referenceId" = ?1',
+	'DELETE FROM oauth_grant_workspaces WHERE grant_tenant_id = ?1',
+	'DELETE FROM oauth_grant_workspaces WHERE tenant_id = ?1'
 ];
 
 const notSuspended = (tenant: string) =>
@@ -180,6 +182,7 @@ export async function createAccountDeletion(
 			'DELETE FROM "oauthAccessToken" WHERE "userId" = ?1',
 			'DELETE FROM "oauthRefreshToken" WHERE "userId" = ?1',
 			'DELETE FROM "oauthConsent" WHERE "userId" = ?1',
+			'DELETE FROM oauth_grant_workspaces WHERE user_id = ?1',
 			"DELETE FROM tenant_memberships WHERE user_id = ?1 AND role <> 'owner'"
 		].map((statement) =>
 			db.prepare(`${statement} AND ${hasJob('?2')}`).bind(userId, first.tenantId)

@@ -11,6 +11,8 @@
 		description?: string;
 		// Tile: icon above the label. Row: icon, label, and a radio mark in one line.
 		layout?: 'tile' | 'row';
+		// A checkbox in a group where several can be chosen; onselect then toggles the value.
+		multiple?: boolean;
 		icon?: Snippet;
 		onselect: (value: string) => void;
 	}
@@ -21,13 +23,20 @@
 		label,
 		description,
 		layout = 'tile',
+		multiple = false,
 		icon,
 		onselect
 	}: Props = $props();
 </script>
 
-<label class="choice {layout}" class:checked>
-	<input type="radio" {name} {value} {checked} onchange={() => onselect(value)} />
+<label class="choice {layout}" class:checked class:multiple>
+	<input
+		type={multiple ? 'checkbox' : 'radio'}
+		{name}
+		{value}
+		{checked}
+		onchange={() => onselect(value)}
+	/>
 	{#if icon}<span class="icon">{@render icon()}</span>{/if}
 	<span class="text">
 		<span class="label">{label}</span>
@@ -106,6 +115,10 @@
 		border-radius: 50%;
 		background: var(--color-paper);
 		color: var(--color-on-primary);
+	}
+	/* A square mark says that several can be chosen. */
+	.multiple .mark {
+		border-radius: 0.375rem;
 	}
 	.checked .mark {
 		border-color: var(--color-strong);

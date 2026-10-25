@@ -350,6 +350,7 @@ export async function removeMember(
 			`DELETE FROM "oauthAccessToken" WHERE "referenceId" = ?1 AND "userId" = ?2 AND ${isMember}`,
 			`DELETE FROM "oauthRefreshToken" WHERE "referenceId" = ?1 AND "userId" = ?2 AND ${isMember}`,
 			`DELETE FROM "oauthConsent" WHERE "referenceId" = ?1 AND "userId" = ?2 AND ${isMember}`,
+			`DELETE FROM oauth_grant_workspaces WHERE user_id = ?2 AND (tenant_id = ?1 OR grant_tenant_id = ?1) AND ${isMember}`,
 			`DELETE FROM session_workspaces WHERE tenant_id = ?1 AND session_id IN (SELECT id FROM "session" WHERE "userId" = ?2) AND ${isMember}`,
 			`DELETE FROM user_workspace_preferences WHERE user_id = ?2 AND tenant_id = ?1 AND ${isMember}`,
 			`DELETE FROM tenant_transfers WHERE tenant_id = ?1 AND to_user_id = ?2 AND ${isMember}`,

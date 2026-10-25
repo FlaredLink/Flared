@@ -13,7 +13,9 @@ import {
 	deleteGrant,
 	deleteExpiredOAuthRecords,
 	disableOperatorClient,
-	listOperatorClients
+	listGrants,
+	listOperatorClients,
+	setGrantWorkspaces
 } from '../packages/data/src/oauth';
 import { projectPolicy } from '../packages/server/src/tenancy';
 import { reinstateTenant, suspendTenant } from '../packages/server/src/operator';
@@ -457,7 +459,8 @@ describe('authorization server', () => {
 			scopes: ['links:read', 'links:write', 'analytics:read', 'usage:read'],
 			offlineAccess: true,
 			workspaces: [{ id: 'tenant-1', name: 'Workspace' }],
-			selectedWorkspaceId: 'tenant-1'
+			selectedWorkspaceId: 'tenant-1',
+			multipleWorkspaces: false
 		});
 		productEvents.length = 0;
 		const callback = await approve(flow);
@@ -560,6 +563,99 @@ describe('authorization server', () => {
 			)
 			.run();
 		expect((await call(tokens.access_token, 'get_usage')).status).toBe(200);
+	});
+
+	it('lets an assistant use several workspaces and asks which one when a call names none', async () => {
+		await addTenant('user-41', 'tenant-41');
+		await addWorkspace('user-41', 'tenant-41-shop', 'Shop');
+		await addWorkspace('user-41', 'tenant-41-team', 'Team');
+		const flow = await startFlow('user-41');
+		const location = (await authorize(flow)).headers.get('location') ?? '';
+		const oauthQuery = location.slice(location.indexOf('?') + 1);
+		const details = await oauth().fetch(
+			new Request(`${origin}/oauth2/consent/request?${oauthQuery}`, {
+				headers: { cookie: flow.cookie }
+			})
+		);
+		expect(await details.json()).toMatchObject({ multipleWorkspaces: true });
+		const decide = (ids: unknown) =>
+			oauth().fetch(
+				new Request(`${origin}/oauth2/consent`, {
+					method: 'POST',
+					headers: { cookie: flow.cookie, origin, 'content-type': 'application/json' },
+					body: JSON.stringify({ accept: true, oauth_query: oauthQuery, workspace_ids: ids })
+				})
+			);
+		expect((await decide([])).status).toBe(400);
+		expect((await decide(['tenant-41', 'tenant-41'])).status).toBe(400);
+		// Another person's workspace.
+		expect((await decide(['tenant-41', 'tenant-2'])).status).toBe(409);
+		const approved = await decide(['tenant-41', 'tenant-41-shop']);
+		expect(approved.status).toBe(200);
+		const callback = new URL(
+			String(((await approved.json()) as Record<string, unknown>).redirectTo)
+		);
+		const exchanged = await exchange(flow, callback.searchParams.get('code') ?? '');
+		const token = ((await exchanged.json()) as Tokens).access_token;
+
+		expect((await call(token, 'list_workspaces')).body.result?.structuredContent).toEqual({
+			workspaces: [
+				{ id: 'tenant-41', name: 'Workspace', role: 'owner' },
+				{ id: 'tenant-41-shop', name: 'Shop', role: 'owner' }
+			]
+		});
+		// No workspace named: the assistant gets the names and asks the user.
+		const unnamed = await call(token, 'list_links');
+		expect(unnamed.status).toBe(200);
+		expect(unnamed.body.result?.isError).toBe(true);
+		expect(unnamed.body.result?.content[0].text).toContain('Ask the user which workspace to use');
+		expect(unnamed.body.result?.content[0].text).toContain('Shop (ID tenant-41-shop)');
+		// A name in any case, or an ID, picks the workspace; the tool never sees the argument.
+		const created = await call(token, 'create_link', {
+			destination: 'https://example.com/shop',
+			slug: 'mcp-shop',
+			workspace: 'shop'
+		});
+		expect(created.body.result?.isError).toBeFalsy();
+		const linksIn = async (workspace: string) =>
+			JSON.stringify((await call(token, 'list_links', { workspace })).body.result);
+		expect(await linksIn('tenant-41-shop')).toContain('mcp-shop');
+		expect(await linksIn('Workspace')).not.toContain('mcp-shop');
+		// A workspace the person did not approve.
+		expect((await call(token, 'list_links', { workspace: 'Team' })).body.result?.isError).toBe(
+			true
+		);
+
+		// Connections in the added workspace list the app, and ending it there keeps the grant.
+		expect(
+			(await listGrants(identity(), 'user-41', 'tenant-41-shop')).map((grant) => grant.clientId)
+		).toEqual([flow.clientId]);
+		expect(await deleteGrant(identity(), 'user-41', 'tenant-41-shop', flow.clientId)).toBe(true);
+		expect(await listGrants(identity(), 'user-41', 'tenant-41-shop')).toEqual([]);
+		expect((await call(token, 'list_links', { workspace: 'Shop' })).body.result?.isError).toBe(
+			true
+		);
+		// With one workspace left, a call needs no argument.
+		expect((await call(token, 'list_links')).body.result?.isError).toBeFalsy();
+
+		// Membership is checked on each call: after leaving, the workspace is refused.
+		await setGrantWorkspaces(
+			identity(),
+			{ clientId: flow.clientId, userId: 'user-41', grantTenantId: 'tenant-41' },
+			['tenant-41', 'tenant-41-team'],
+			Date.now()
+		);
+		expect(
+			(await call(token, 'list_links', { workspace: 'Team' })).body.result?.isError
+		).toBeFalsy();
+		await identity()
+			.prepare(
+				"DELETE FROM tenant_memberships WHERE user_id = 'user-41' AND tenant_id = 'tenant-41-team'"
+			)
+			.run();
+		expect((await call(token, 'list_links', { workspace: 'Team' })).body.result?.isError).toBe(
+			true
+		);
 	});
 
 	it('shows consent again for an app that was approved before', async () => {
@@ -954,6 +1050,7 @@ describe('MCP endpoint', () => {
 			'get_link_qr',
 			'get_link_analytics',
 			'get_usage',
+			'list_workspaces',
 			'list_domains',
 			'export_links',
 			'list_automations',
@@ -969,8 +1066,13 @@ describe('MCP endpoint', () => {
 			'create_page',
 			'update_page'
 		]);
-		// Ten tools only read; nine change links or pages.
-		expect(listed.result.tools.filter((tool) => tool.annotations.readOnlyHint)).toHaveLength(10);
+		// Eleven tools only read; nine change links or pages.
+		expect(listed.result.tools.filter((tool) => tool.annotations.readOnlyHint)).toHaveLength(11);
+		// Every tool but list_workspaces takes the workspace of the call.
+		const withWorkspace = listed.result.tools
+			.filter((tool) => JSON.stringify(tool.inputSchema).includes('"workspace"'))
+			.map((tool) => tool.name);
+		expect(withWorkspace).toEqual(names.filter((name) => name !== 'list_workspaces'));
 		for (const tool of listed.result.tools) {
 			expect(tool.title).toEqual(expect.any(String));
 			expect(tool.outputSchema).toEqual(expect.any(Object));
@@ -2130,6 +2232,33 @@ describe('REST API with OAuth', () => {
 		expect(response.status).toBe(200);
 		return { client, method, flow, tokens: (await response.json()) as Tokens };
 	}
+
+	it('lets an app registered for the REST API use one workspace only', async () => {
+		await addTenant('user-api-8', 'tenant-api-8');
+		await addWorkspace('user-api-8', 'tenant-api-8-shop', 'Shop');
+		const client = await registerApiClient('client_secret_post');
+		const flow = await apiFlow('user-api-8', client, undefined, redirectFor('client_secret_post'));
+		const location = (await authorize(flow)).headers.get('location') ?? '';
+		const oauthQuery = location.slice(location.indexOf('?') + 1);
+		const details = await oauth().fetch(
+			new Request(`${origin}/oauth2/consent/request?${oauthQuery}`, {
+				headers: { cookie: flow.cookie }
+			})
+		);
+		expect(await details.json()).toMatchObject({ multipleWorkspaces: false });
+		const response = await oauth().fetch(
+			new Request(`${origin}/oauth2/consent`, {
+				method: 'POST',
+				headers: { cookie: flow.cookie, origin, 'content-type': 'application/json' },
+				body: JSON.stringify({
+					accept: true,
+					oauth_query: oauthQuery,
+					workspace_ids: ['tenant-api-8', 'tenant-api-8-shop']
+				})
+			})
+		);
+		expect(response.status).toBe(400);
+	});
 
 	it('lists a client registered for the REST API as an app, not as an assistant', async () => {
 		const { client } = await connectApi('user-api-7', { method: 'none' });

@@ -10,18 +10,18 @@ function record(value: unknown): value is Record<string, unknown> {
 }
 
 // Sends the decision for the signed authorization request the consent page received, with the
-// workspace the app may act in. On success, the browser goes to redirectTo, which returns it to
-// the app.
+// workspaces the app may act in, the grant's own workspace first. On success, the browser goes to
+// redirectTo, which returns it to the app.
 export async function decideConsent(
 	oauthQuery: string,
 	accept: boolean,
-	workspaceId: string
+	workspaceIds: readonly string[]
 ): Promise<ConsentResult> {
 	try {
 		const response = await fetch('/oauth2/consent', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ accept, oauth_query: oauthQuery, workspace_id: workspaceId })
+			body: JSON.stringify({ accept, oauth_query: oauthQuery, workspace_ids: workspaceIds })
 		});
 		const body: unknown = await response.json().catch(() => null);
 		if (response.ok && record(body) && typeof body.redirectTo === 'string')

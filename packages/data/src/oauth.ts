@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Queries on the OAuth authorization server tables that the provider library does not offer:
-// access-token checks for the MCP endpoint, the connected-apps list, revocation, request
-// budgets, and cleanup. Every grant query is scoped to the user and the workspace.
+// access-token checks for the MCP endpoint, the workspaces a grant adds, the connected-apps list,
+// revocation, request budgets, and cleanup. Every grant query is scoped to the user and the workspace.
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
 
 export interface StoredAccessToken {
@@ -11,6 +11,8 @@ export interface StoredAccessToken {
 	scopes: string[];
 	resources: string[];
 	expiresAt: number;
+	// The grant adds other workspaces to its own (oauth_grant_workspaces).
+	addsWorkspaces: boolean;
 }
 
 export interface StoredGrant {
@@ -56,7 +58,9 @@ export async function findAccessToken(
 	const row = await db
 		.prepare(
 			`SELECT t."clientId", t."userId", t."referenceId", t."scopes", t."resources", t."expiresAt",
-			g."scopes" AS "grantScopes"
+			g."scopes" AS "grantScopes",
+			EXISTS (SELECT 1 FROM oauth_grant_workspaces w WHERE w.client_id = t."clientId"
+				AND w.user_id = t."userId" AND w.grant_tenant_id = t."referenceId") AS "addsWorkspaces"
 			FROM "oauthAccessToken" t
 			JOIN "oauthClient" c ON c."clientId" = t."clientId"
 			JOIN "oauthConsent" g ON g."clientId" = t."clientId" AND g."userId" = t."userId"
@@ -74,11 +78,13 @@ export async function findAccessToken(
 		tenantId: text(row.referenceId, 'workspace'),
 		scopes: list(row.scopes).filter((scope) => granted.has(scope)),
 		resources: list(row.resources),
-		expiresAt: number(row.expiresAt, 'expiry')
+		expiresAt: number(row.expiresAt, 'expiry'),
+		addsWorkspaces: row.addsWorkspaces === 1
 	};
 }
 
-// Apps with a consent in the workspace, newest first.
+// Apps that can act in the workspace, newest first: grants whose first workspace it is, and grants
+// that add it. An app with grants of both kinds is listed once, with the grant made here.
 export async function listGrants(
 	db: D1Database,
 	userId: string,
@@ -91,25 +97,81 @@ export async function listGrants(
 				AND t."userId" = g."userId" AND t."referenceId" = g."referenceId") AS "lastActiveAt",
 			EXISTS (SELECT 1 FROM oauth_operator_clients o WHERE o.client_id = g."clientId") AS "operator"
 			FROM "oauthConsent" g JOIN "oauthClient" c ON c."clientId" = g."clientId"
-			WHERE g."userId" = ? AND g."referenceId" = ?
-			ORDER BY g."createdAt" DESC, g."id" DESC LIMIT 100`
+			WHERE g."userId" = ?1 AND (g."referenceId" = ?2 OR EXISTS (SELECT 1 FROM oauth_grant_workspaces w
+				WHERE w.client_id = g."clientId" AND w.user_id = g."userId"
+				AND w.grant_tenant_id = g."referenceId" AND w.tenant_id = ?2))
+			ORDER BY g."referenceId" = ?2 DESC, g."createdAt" DESC, g."id" DESC LIMIT 100`
 		)
 		.bind(userId, tenantId)
 		.all<Record<string, unknown>>();
-	return results.map((row) => ({
-		clientId: text(row.clientId, 'client'),
-		name: typeof row.name === 'string' ? row.name : null,
-		uri: typeof row.uri === 'string' ? row.uri : null,
-		redirectUris: list(row.redirectUris),
-		scopes: list(row.scopes),
-		connectedAt: number(row.createdAt, 'consent time'),
-		lastActiveAt: row.lastActiveAt === null ? null : number(row.lastActiveAt, 'activity time'),
-		operator: row.operator === 1
-	}));
+	const seen = new Set<string>();
+	const grants: StoredGrant[] = [];
+	for (const row of results) {
+		const clientId = text(row.clientId, 'client');
+		if (seen.has(clientId)) continue;
+		seen.add(clientId);
+		grants.push({
+			clientId,
+			name: typeof row.name === 'string' ? row.name : null,
+			uri: typeof row.uri === 'string' ? row.uri : null,
+			redirectUris: list(row.redirectUris),
+			scopes: list(row.scopes),
+			connectedAt: number(row.createdAt, 'consent time'),
+			lastActiveAt: row.lastActiveAt === null ? null : number(row.lastActiveAt, 'activity time'),
+			operator: row.operator === 1
+		});
+	}
+	return grants.sort((a, b) => b.connectedAt - a.connectedAt);
 }
 
-// Ends the app's access in the workspace at once: its consent and every access and refresh
-// token. Returns false when the user had no consent for the app there.
+// The workspaces that a grant adds to its first one, oldest first.
+export async function listGrantWorkspaces(
+	db: D1Database,
+	clientId: string,
+	userId: string,
+	grantTenantId: string
+): Promise<string[]> {
+	const { results } = await db
+		.prepare(
+			`SELECT tenant_id FROM oauth_grant_workspaces
+			WHERE client_id = ? AND user_id = ? AND grant_tenant_id = ?
+			ORDER BY created_at, tenant_id LIMIT 100`
+		)
+		.bind(clientId, userId, grantTenantId)
+		.all<Record<string, unknown>>();
+	return results.map((row) => text(row.tenant_id, 'workspace'));
+}
+
+// Replaces the workspaces that a grant adds, after the person approves it again.
+export async function setGrantWorkspaces(
+	db: D1Database,
+	grant: { clientId: string; userId: string; grantTenantId: string },
+	tenantIds: readonly string[],
+	now: number
+): Promise<void> {
+	const { clientId, userId, grantTenantId } = grant;
+	await db.batch([
+		db
+			.prepare(
+				'DELETE FROM oauth_grant_workspaces WHERE client_id = ? AND user_id = ? AND grant_tenant_id = ?'
+			)
+			.bind(clientId, userId, grantTenantId),
+		...tenantIds
+			.filter((tenantId) => tenantId !== grantTenantId)
+			.map((tenantId) =>
+				db
+					.prepare(
+						`INSERT OR IGNORE INTO oauth_grant_workspaces (client_id, user_id, grant_tenant_id, tenant_id, created_at)
+						VALUES (?, ?, ?, ?, ?)`
+					)
+					.bind(clientId, userId, grantTenantId, tenantId, now)
+			)
+	]);
+}
+
+// Ends the app's access in the workspace at once: a grant made there, with its consent, its
+// tokens, and the workspaces it adds, and the workspace's place in grants made elsewhere. Returns
+// false when the app could not act in the workspace.
 export async function deleteGrant(
 	db: D1Database,
 	userId: string,
@@ -117,12 +179,22 @@ export async function deleteGrant(
 	clientId: string
 ): Promise<boolean> {
 	const scope = '"clientId" = ? AND "userId" = ? AND "referenceId" = ?';
-	const [, , consent] = await db.batch([
+	const [, , consent, , added] = await db.batch([
 		db.prepare(`DELETE FROM "oauthAccessToken" WHERE ${scope}`).bind(clientId, userId, tenantId),
 		db.prepare(`DELETE FROM "oauthRefreshToken" WHERE ${scope}`).bind(clientId, userId, tenantId),
-		db.prepare(`DELETE FROM "oauthConsent" WHERE ${scope}`).bind(clientId, userId, tenantId)
+		db.prepare(`DELETE FROM "oauthConsent" WHERE ${scope}`).bind(clientId, userId, tenantId),
+		db
+			.prepare(
+				'DELETE FROM oauth_grant_workspaces WHERE client_id = ? AND user_id = ? AND grant_tenant_id = ?'
+			)
+			.bind(clientId, userId, tenantId),
+		db
+			.prepare(
+				'DELETE FROM oauth_grant_workspaces WHERE client_id = ? AND user_id = ? AND tenant_id = ?'
+			)
+			.bind(clientId, userId, tenantId)
 	]);
-	return consent.meta.changes > 0;
+	return consent.meta.changes > 0 || added.meta.changes > 0;
 }
 
 // Ends every app's access for the user, such as before account deletion.
@@ -130,7 +202,8 @@ export async function deleteUserGrants(db: D1Database, userId: string): Promise<
 	await db.batch([
 		db.prepare('DELETE FROM "oauthAccessToken" WHERE "userId" = ?').bind(userId),
 		db.prepare('DELETE FROM "oauthRefreshToken" WHERE "userId" = ?').bind(userId),
-		db.prepare('DELETE FROM "oauthConsent" WHERE "userId" = ?').bind(userId)
+		db.prepare('DELETE FROM "oauthConsent" WHERE "userId" = ?').bind(userId),
+		db.prepare('DELETE FROM oauth_grant_workspaces WHERE user_id = ?').bind(userId)
 	]);
 }
 

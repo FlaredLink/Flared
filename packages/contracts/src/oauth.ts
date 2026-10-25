@@ -33,11 +33,17 @@ export interface ConsentRequest {
 	// True when the app asks to stay connected after this session (a refresh token).
 	offlineAccess: boolean;
 	// The person's active, unsuspended workspaces, oldest first; never empty. The app can act only
-	// in the one the person approves.
+	// in the ones the person approves.
 	workspaces: ConsentWorkspace[];
 	// The session's active workspace when it is listed, else the first one.
 	selectedWorkspaceId: string;
+	// True when the person may approve several workspaces: an assistant on the MCP server, which
+	// names the workspace in each call. An app registered for the REST API acts in one.
+	multipleWorkspaces: boolean;
 }
+
+// The most workspaces one approval can name.
+export const maxGrantWorkspaces = 20;
 
 // An assistant whose OAuth codes can reach only that assistant: every redirect URI of the client
 // is the assistant's own. The app chooses its name and icon, so they prove nothing; the redirect

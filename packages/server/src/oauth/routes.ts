@@ -5,8 +5,12 @@
 import type { D1Database } from '@cloudflare/workers-types/index.ts';
 import { verifyOAuthQueryParams } from '@better-auth/oauth-provider';
 import { isTokenScope, type TokenScope } from '@flared/contracts/tokens';
-import type { ConsentRequest, ConsentWorkspace } from '@flared/contracts/oauth';
-import { countRegistration } from '@flared/data/oauth';
+import {
+	maxGrantWorkspaces,
+	type ConsentRequest,
+	type ConsentWorkspace
+} from '@flared/contracts/oauth';
+import { countRegistration, setGrantWorkspaces } from '@flared/data/oauth';
 import { listWorkspaces } from '@flared/data/tenancy';
 import { authResponseHeaders } from '../web/forward';
 import { readPrincipal, type IdentityRule } from '../auth/session';
@@ -236,7 +240,11 @@ export function createOAuthRoutes(dependencies: OAuthRouteDependencies) {
 			return oauthError(400, 'invalid_request', 'This request has no valid redirect.');
 		}
 		const client = await db
-			.prepare('SELECT "name", "uri" FROM "oauthClient" WHERE "clientId" = ?')
+			.prepare(
+				`SELECT "name", "uri", EXISTS (SELECT 1 FROM oauth_operator_clients o
+					WHERE o.client_id = "oauthClient"."clientId") AS "operator"
+				FROM "oauthClient" WHERE "clientId" = ?`
+			)
 			.bind(clientId)
 			.first<Record<string, unknown>>();
 		if (!client) return oauthError(400, 'invalid_client', 'This app is not registered.');
@@ -260,7 +268,8 @@ export function createOAuthRoutes(dependencies: OAuthRouteDependencies) {
 			scopes: requested.filter(isTokenScope) satisfies TokenScope[],
 			offlineAccess: requested.includes('offline_access'),
 			workspaces,
-			selectedWorkspaceId: selected.id
+			selectedWorkspaceId: selected.id,
+			multipleWorkspaces: client.operator !== 1 && workspaces.length > 1
 		};
 		return respond(Response.json(body));
 	}
@@ -283,8 +292,24 @@ export function createOAuthRoutes(dependencies: OAuthRouteDependencies) {
 		});
 	}
 
+	// The workspaces of an approval: workspace_ids, first the one the grant is made in, or one
+	// workspace_id. Null when the input names none, repeats one, or names too many.
+	function approvedWorkspaces(input: Record<string, unknown> | null): string[] | null {
+		const ids = Array.isArray(input?.workspace_ids)
+			? input.workspace_ids
+			: typeof input?.workspace_id === 'string'
+				? [input.workspace_id]
+				: null;
+		if (!ids || ids.length === 0 || ids.length > maxGrantWorkspaces) return null;
+		if (
+			!ids.every((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 100)
+		)
+			return null;
+		return new Set(ids).size === ids.length ? ids : null;
+	}
+
 	// The consent page posts the decision with the session cookie, from the exact origin. An
-	// approval names the workspace the app may act in.
+	// approval names the workspaces the app may act in; an app registered for the REST API gets one.
 	async function consent(request: Request): Promise<Response> {
 		if (request.method !== 'POST') return methodNotAllowed('POST');
 		if (request.headers.get('origin') !== config.origin)
@@ -300,20 +325,29 @@ export function createOAuthRoutes(dependencies: OAuthRouteDependencies) {
 		}
 		const accept = (input as Record<string, unknown> | null)?.accept;
 		const query = (input as Record<string, unknown> | null)?.oauth_query;
-		const workspace = (input as Record<string, unknown> | null)?.workspace_id;
+		const approved = approvedWorkspaces(input as Record<string, unknown> | null);
 		if (typeof accept !== 'boolean' || typeof query !== 'string')
 			return oauthError(400, 'invalid_request', 'Send accept and oauth_query.');
+		const clientId = new URLSearchParams(query).get('client_id') ?? '';
 		let server = auth();
 		if (accept) {
-			if (typeof workspace !== 'string')
-				return oauthError(400, 'invalid_request', 'Choose a workspace.');
-			const tenant = await resolveTenant(db, { userId: principal.user.id, tenantId: workspace });
-			if (tenant.status !== 'active')
-				return oauthError(409, 'workspace_unavailable', 'This workspace is not available.');
-			if (tenant.suspension)
-				return oauthError(403, 'workspace_suspended', 'Flared suspended this workspace.');
+			if (!approved) return oauthError(400, 'invalid_request', 'Choose a workspace.');
+			if (approved.length > 1) {
+				const operator = await db
+					.prepare('SELECT 1 FROM oauth_operator_clients WHERE client_id = ?')
+					.bind(clientId)
+					.first();
+				if (operator) return oauthError(400, 'invalid_request', 'This app can use one workspace.');
+			}
+			for (const tenantId of approved) {
+				const tenant = await resolveTenant(db, { userId: principal.user.id, tenantId });
+				if (tenant.status !== 'active')
+					return oauthError(409, 'workspace_unavailable', 'This workspace is not available.');
+				if (tenant.suspension)
+					return oauthError(403, 'workspace_suspended', 'Flared suspended this workspace.');
+			}
 			// A separate instance per approval holds the choice, so no request sees another's.
-			server = createOAuthServer(db, config, workspace);
+			server = createOAuthServer(db, config, approved[0]);
 		}
 		const headers = copyHeaders(request, ['cookie', 'origin']);
 		headers.set('content-type', 'application/json');
@@ -328,8 +362,17 @@ export function createOAuthRoutes(dependencies: OAuthRouteDependencies) {
 		if (response.status !== 200) return respond(response);
 		const result = (await response.json()) as Record<string, unknown>;
 		if (typeof result.url !== 'string') throw new Error('Consent returned no redirect');
-		if (accept && typeof workspace === 'string')
-			await recordApproval(principal.user.id, workspace, query);
+		if (accept && approved) {
+			// The provider stored the grant in the first workspace; the rest join it, replacing the
+			// workspaces of an earlier approval there.
+			await setGrantWorkspaces(
+				db,
+				{ clientId, userId: principal.user.id, grantTenantId: approved[0] },
+				approved,
+				now()
+			);
+			await recordApproval(principal.user.id, approved[0], query);
+		}
 		return respond(Response.json({ redirectTo: result.url }));
 	}
 
